@@ -1,0 +1,33 @@
+name = "openconnect-api"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "../dashboard/dist"
+binding = "ASSETS"
+run_worker_first = ["/v1/*", "/management/*"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "openconnect"
+database_id = "REPLACE_WITH_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "TEAM_DO"
+class_name = "TeamDO"
+
+[[durable_objects.bindings]]
+name = "CONNECTION_DO"
+class_name = "ConnectionDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TeamDO", "ConnectionDO"]
+
+# Secrets (set with `wrangler secret put <NAME>`, never committed):
+#   MASTER_KEY_V1      - base64, 256-bit AES-GCM key, encrypts connector/connection secrets at rest
+#   STATE_SIGNING_KEY   - base64, HMAC-SHA256 key, signs the OAuth `state` param
+#   CLERK_SECRET_KEY    - from the Clerk dashboard
+#   CLERK_JWT_KEY       - Clerk's JWKS PEM key, for networkless session verification

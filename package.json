@@ -13,8 +13,8 @@
     "deploy:api": "bun --filter @openconnect/api deploy"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.0.0",
-    "ultracite": "^5.0.0",
+    "@biomejs/biome": "2.2.6",
+    "ultracite": "^5.6.4",
     "typescript": "^5.7.0"
   }
 }

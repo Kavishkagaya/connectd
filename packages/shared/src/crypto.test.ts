@@ -1,8 +1,18 @@
 import { expect, test } from "bun:test";
-import { decrypt, encrypt, importMasterKey } from "./crypto";
+import {
+  decrypt,
+  encrypt,
+  importMasterKey,
+  importSigningKey,
+  signState,
+  verifyState,
+} from "./crypto";
+
+const KEY_BYTES = 32;
+const BYTE_MODULUS = 256;
 
 function randomKeyBase64(): string {
-  const raw = crypto.getRandomValues(new Uint8Array(32));
+  const raw = crypto.getRandomValues(new Uint8Array(KEY_BYTES));
   return btoa(String.fromCharCode(...raw));
 }
 
@@ -30,8 +40,20 @@ test("fails decryption if ciphertext is tampered with", async () => {
   const key = await importMasterKey(randomKeyBase64());
   const packed = await encrypt("do-not-tamper", key, 1);
   const bytes = Uint8Array.from(atob(packed), (c) => c.charCodeAt(0));
-  bytes[bytes.length - 1] ^= 0xff; // flip last byte of the GCM auth tag
+  const lastByteIndex = bytes.length - 1;
+  bytes[lastByteIndex] = ((bytes[lastByteIndex] ?? 0) + 1) % BYTE_MODULUS; // corrupt the GCM auth tag
   const tampered = btoa(String.fromCharCode(...bytes));
 
   await expect(decrypt(tampered, { 1: key })).rejects.toThrow();
+});
+
+test("signState/verifyState round-trips and rejects tampering", async () => {
+  const key = await importSigningKey(randomKeyBase64());
+  const state = await signState("team:slack:T0123", key);
+
+  expect(await verifyState(state, key)).toBe("team:slack:T0123");
+  expect(await verifyState(`${state}x`, key)).toBeNull();
+
+  const otherKey = await importSigningKey(randomKeyBase64());
+  expect(await verifyState(state, otherKey)).toBeNull();
 });
