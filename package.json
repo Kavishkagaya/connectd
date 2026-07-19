@@ -1,0 +1,20 @@
+{
+  "name": "openconnect",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "dev:api": "bun --filter @openconnect/api dev",
+    "dev:dashboard": "bun --filter @openconnect/dashboard dev",
+    "deploy:api": "bun --filter @openconnect/api deploy"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "ultracite": "^5.0.0",
+    "typescript": "^5.7.0"
+  }
+}
