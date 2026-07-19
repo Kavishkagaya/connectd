@@ -24,7 +24,7 @@ export class TeamDO {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const [, provider] = url.pathname.split("/").filter(Boolean); // /connectors/:provider
+    const [provider] = url.pathname.split("/").filter(Boolean); // path is just /:provider
 
     if (request.method === "PUT" && provider) {
       return this.putConnector(provider, await request.json());
