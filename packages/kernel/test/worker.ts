@@ -8,4 +8,3 @@ g.ocNow ??= Date.now() + 10 * 365 * 86400_000;
 
 export class Probe extends durableObject(probe, { binding: "PROBE", now: () => g.ocNow! }) {}
 
-export default { fetch: () => new Response(null, { status: 404 }) };
