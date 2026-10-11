@@ -20,6 +20,6 @@
     "packages/*/src"
   ],
   "exclude": [
-    "packages/kernel/src/do.ts"
+    "packages/kernel/src/drivers/do.ts"
   ]
 }

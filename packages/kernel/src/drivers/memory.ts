@@ -1,4 +1,4 @@
-import type { Driver, Handler, Json, Program } from "./index.ts";
+import type { Driver, Handler, Json, Program } from "../driver.ts";
 
 type Entry = { v: number; value: Json; expiresAt?: number };
 type Timer = { at: number; payload: Json };

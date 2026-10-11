@@ -1,8 +1,8 @@
 import { listDurableObjectIds, reset, runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, expect, test } from "vitest";
-import type { Json } from "../src/index.ts";
-import { parity } from "../src/parity.ts";
+import type { Json } from "../src/driver.ts";
+import { parity } from "../src/drivers/parity.ts";
 
 const ns = (env as unknown as { PROBE: DurableObjectNamespace }).PROBE;
 const g = globalThis as { ocNow?: number };

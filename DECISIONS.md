@@ -16,7 +16,7 @@ Two repos.
 
 The driver provides infrastructure guarantees only, per instance. Everything an auth flow needs (handshake, credential record, single-flight, rate, outbox, config) is kernel code built on top.
 
-Driver: `packages/kernel/src/index.ts`
+Driver: `packages/kernel/src/driver.ts`
 - `store`: `get` / `put` (optional TTL) / `cas` (versioned compare-and-swap) / `take` (atomic read+delete) / `delete`
 - `timer`: durable named timers, `set` replaces, `cancel`; fired via `Handler.onTimer`
 - `call(instance, method, args)`: cross-instance call; args/results are serialized
@@ -37,7 +37,7 @@ Validation: in-memory driver + DO driver must pass one shared parity suite (#13,
 
 ## #13 Durable Object driver — decided
 
-`@openconnect/kernel/do` (`packages/kernel/src/do.ts`): `durableObject(program, { binding })` returns a DO class. No separate package; a subpath export keeps `cloudflare:workers` out of anything that doesn't import it. Split only when a driver brings heavy deps (e.g. `pg`).
+`@openconnect/kernel/do` (`packages/kernel/src/drivers/do.ts`): `durableObject(program, { binding })` returns a DO class. No separate package; a subpath export keeps `cloudflare:workers` out of anything that doesn't import it. Split only when a driver brings heavy deps (e.g. `pg`).
 
 - One DO per instance key, created with `idFromName`; the key comes from `ctx.id.name`.
 - SQLite storage: `kv(key, v, value, expires_at)`, `timers(name, at, payload)`, `seq(n)`. Every store op is synchronous SQL with no await inside, so it is atomic against other events.
@@ -52,3 +52,58 @@ Validation: in-memory driver + DO driver must pass one shared parity suite (#13,
 - Fake clock: `now` is a plain number; `advance(ms)` moves it, then fires due timers.
 - Timer semantics (both drivers): removed before firing (at-most-once; retries are the kernel's job, #11). `now()` during `onTimer` is the time it fired, not the scheduled time. A throwing timer is logged and doesn't block later ones. Timers set while firing run in the same advance if due.
 - `@openconnect/kernel/parity`: one runner-agnostic suite (`parity(name, world, { test, expect })`) driven through a `probe` program. Memory runs it under `bun test`, the DO driver under `@cloudflare/vitest-plugin` in workerd, with a fake clock far in the future so real alarms never fire on their own.
+
+## #7 Connection lifecycle — decided
+
+`packages/kernel/src/primitives/connection.ts`. One `record` key holds state, sealed credential and an event outbox, so one `cas` covers all three.
+
+- States: `pending`, `active`, `reauth_required`, `revoked`. "Refreshing" is in-memory single-flight, not a state. "Expired" is derived from `expiresAt`. Transient errors don't change state.
+- Legal: none → pending | active. pending → pending | active | revoked. active → active | reauth_required | revoked. reauth_required → reauth_required | active | revoked. revoked is terminal (reconnect = new connection). `active` requires a credential.
+- Triggers: `activate` (callback / re-auth), `revoke`, refresh `invalid_grant`, refresh retries exhausted, expired with no refresh token.
+- Events: `{ seq, at, from, to, reason? }` on every state change, appended to an outbox inside the record (same `cas`). L3 reads `events.pending()` and calls `events.ack(seq)` (#24). Capped at 100; oldest dropped.
+- Re-auth: the connection moves to `reauth_required` and keeps its id; a new handshake ends in `activate` on the same instance.
+- Handshake: flow data under a TTL key; `state` = HMAC-signed `[instance, id]`, so `routeState` finds the instance with no lookup. `take` is single-use.
+
+## #8 Token primitives — decided
+
+- Credential is a tagged union: `oauth2` (`accessToken`, `refreshToken?`, `expiresAt?`, `raw` = full token response, which keeps extras like `instance_url` / `id_token`) or `static` (`fields`: API keys, basic auth, anything that doesn't refresh).
+- Refresh is injected (`opts.refresh`); L2 wires it to `refreshGrant`. Single-flight per instance.
+- Scheduling: timer `kernel.refresh` at `expiresAt - lead`, lead = min(5 min, half the lifetime), plus up to 10% jitter. `token()` also refreshes on demand inside 60s of expiry, and hands out the old token if a refresh fails transiently while it is still valid.
+- Failures: `invalid_grant` → `reauth_required`. Anything else retries with backoff (30s base, 8 attempts) → `reauth_required` (`refresh_failed`).
+- Rotation: the old refresh token is kept if the response has none. A lost `cas` after a refresh retries the write unless the credential was replaced meanwhile, so a rotated token is never dropped.
+- Timer and `cas` aren't atomic; a crash between them leaves no timer, and `token()` covers it.
+
+## #9 Rate primitives — decided
+
+`packages/kernel/src/primitives/rate.ts`.
+
+- GCRA: one number per key (TAT), exact, cheap. Burst = `count`, then one per `periodMs / count`. Keys expire once TAT passes.
+- Scope = `{ instance, key, limit }`. Any scope (connection, app, workspace, custom) is just an instance key; remote ones go through `d.call(instance, RATE)`, so a Program routes `RATE` to `handleRate`. How a definition declares scopes is L2 (#17).
+- Multi-scope `acquire` is in order and all or nothing: on a deny, earlier grants are refunded. `refund` for requests that never reached the provider.
+- Provider headers via `observe`: `Retry-After` and `remaining: 0` + reset block until then; `remaining > 0` caps the burst. Only ever tightens.
+- Reject with `retryAfterMs`, no queue: waiting is the caller's choice (L3).
+- Deferred: cross-tenant fairness on a shared scope; sharding a scope hotter than one instance (~1k rps).
+
+## #10 Secrets primitive — decided
+
+`packages/kernel/src/primitives/secrets.ts`. v1 AES-GCM with a key-version byte, HMAC sign/verify, `importKeys` from env strings.
+
+- `secrets(d, keys)`: sealed values in the instance store. Connector client secrets live in a per-app instance (replaces TeamDO); which instance is L3.
+- Rotation: add the new version, make it current. Reads re-seal anything under an older key (both `secrets` and the connection credential). Retire the old key once nothing sealed under it remains.
+
+## #11 Schedule primitive — decided
+
+`packages/kernel/src/primitives/schedule.ts`.
+
+- Multiplexing is the driver's job (done in #13 / #14).
+- `retry(d, name, attempt, data, backoff)`: exponential with equal jitter (never 0), the attempt count rides in the payload so it survives restarts, false once attempts run out.
+- No cron: recurring work re-arms its own timer from `onTimer`.
+
+## #18 OAuth atoms — decided
+
+`packages/kernel/src/primitives/oauth.ts`. Lives in the kernel (L1 per the roadmap), not in L2.
+
+- Auth code + PKCE (`pkce`, `authorizeUrl`, `exchangeCode`), `refreshGrant`, `clientCredentials`, device code (`deviceAuthorize`, `devicePoll`; pending / slow_down come back as `OAuthError` codes), DCR (`register`), revocation (`revoke`).
+- Client auth `post` (default) or `basic`; `clientSecret` optional for public clients. `fetchFn` passed in.
+- Errors: `OAuthError(code, status, body)`, including 200-with-error (GitHub).
+- do-connect's `src/oauth.ts` wasn't available locally; per-provider quirks come with #19 / #20.
