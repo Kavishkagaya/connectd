@@ -1,61 +1,19 @@
-# openConnect
+# openconnect
 
-OAuth connection management on Cloudflare Durable Objects — see [DECISIONS.md](./DECISIONS.md) for the architecture.
+An OAuth connection platform with an open-source self-host path and a low-cost managed service on Cloudflare. A full solution (SDK, CLI, events, webhooks), not just an HTTP API.
 
-## Structure
+> Status: starting over. See the [roadmap](https://github.com/Kavishkagaya/openconnect/issues/1).
 
-- `apps/api` — the Manager Worker: `TeamDO`, `ConnectionDO`, D1 index, `/v1/*` (usage) and `/management/*` (dashboard) routes. Also serves `apps/dashboard`'s built assets.
-- `apps/dashboard` — Clerk-authed SPA (Vite + TanStack Router, no SSR) for managing connectors, API keys, and connections.
-- `packages/shared` — provider configs, crypto (AES-GCM + key versioning, HMAC state signing), and shared types.
+## Architecture
 
-## Setup
-
-```bash
-bun install
+```
+ L4  DevX        SDK (server + frontend connect UI) · CLI (dev / deploy) · dashboard
+ L3  Runtime     proxy · webhook ingress · event/trigger delivery to user's server
+ L2  Connections defineConnection(): auth flow, rate policy, webhooks, lifecycle hooks
+ L1  Kernel      primitives: lifecycle · tokens · rate · secrets · schedule · oauth atoms
+ L0  Drivers     Durable Objects (prod) · in-memory (dev/tests) · server (deferred)
 ```
 
-### Secrets (`apps/api`, via `wrangler secret put <NAME>`)
+## License
 
-| Name | What |
-|---|---|
-| `MASTER_KEY_V1` | base64, 256-bit — `openssl rand -base64 32` |
-| `STATE_SIGNING_KEY` | base64, 256-bit — same command |
-| `CLERK_SECRET_KEY` | from the Clerk dashboard |
-| `CLERK_JWT_KEY` | Clerk's JWKS PEM key (for networkless verification) |
-
-### D1
-
-Create the database and update `database_id` in `apps/api/wrangler.toml`:
-
-```bash
-cd apps/api
-bunx wrangler d1 create openconnect
-bun run db:migrate:local   # or db:migrate:remote
-```
-
-### Dashboard env
-
-Copy `apps/dashboard/.env.example` to `.env.local` and fill in `VITE_CLERK_PUBLISHABLE_KEY`.
-
-## Dev
-
-```bash
-bun run dev:api         # apps/api, wrangler dev
-bun run dev:dashboard   # apps/dashboard, vite dev (proxies /management to :8787)
-```
-
-## Deploy
-
-```bash
-bun run --cwd apps/dashboard build   # dist/ consumed by apps/api's assets binding
-bun run deploy:api
-```
-
-## Checks
-
-```bash
-bun run lint             # biome/ultracite, whole repo
-bun --filter @openconnect/shared test
-bun --filter @openconnect/api typecheck
-bun --filter @openconnect/dashboard typecheck
-```
+[Apache 2.0](LICENSE)

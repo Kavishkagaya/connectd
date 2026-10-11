@@ -1,7 +1,0 @@
-{
-  "$schema": "https://biomejs.dev/schemas/2.2.6/schema.json",
-  "extends": ["ultracite"],
-  "files": {
-    "includes": ["**", "!**/dist", "!**/.wrangler", "!**/node_modules"]
-  }
-}
