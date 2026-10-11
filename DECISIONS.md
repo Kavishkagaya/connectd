@@ -33,4 +33,4 @@ Defaults for open points (revisit when building the first flow):
 - Lifecycle state lives inside the credential record, so one `cas` covers both.
 - Connection index by external id (#26) stays out of the driver until L3.
 
-Validation: build GitHub OAuth end-to-end on the in-memory driver (#14) and adjust this interface from what breaks.
+Validation: in-memory driver + DO driver must pass one shared parity suite (#13, #14).
