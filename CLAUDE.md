@@ -7,7 +7,7 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
 ```
  L4  DevX        SDK · CLI · dashboard                         (not started)
  L3  Runtime     proxy · webhook ingress · event delivery      (not started)
- L2  Connections defineConnection(), providers                 (not started)
+ L2  Connections defineConnection(), providers                 (in progress)
  L1  Kernel      connection · tokens · rate · secrets · schedule · oauth   (done)
  L0  Drivers     Durable Objects · in-memory · server (deferred)           (done)
 ```
@@ -23,9 +23,13 @@ packages/kernel/
   src/drivers/        memory.ts, do.ts, parity.ts (shared driver suite)
   src/primitives/     connection, oauth, rate, schedule, secrets; tests next to each
   test/               DO driver tests in workerd (vitest)
+
+packages/connections/
+  src/define.ts       defineConnection, Definition, bind (runs a definition on one instance)
+  src/auth.ts         auth step builders: oauth2, apiKey
 ```
 
-Subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`.
+Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`.
 
 ## Commands
 
