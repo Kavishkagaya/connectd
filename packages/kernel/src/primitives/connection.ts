@@ -244,8 +244,9 @@ export async function routeState(state: string, key: CryptoKey): Promise<{ insta
   return typeof instance === "string" && typeof id === "string" ? { instance, id } : null;
 }
 
-/** Credential from a token response; keeps the old refresh token if the provider didn't rotate it. */
+/** Credential from a token response (throws if it has no access_token); keeps the old refresh token if the provider didn't rotate it. */
 export function credentialFrom(tok: TokenResponse, now: number, prev?: Credential | null): OAuth2 {
+  if (typeof tok.access_token !== "string") throw new OAuthError("invalid_response", 200, tok);
   const refresh = typeof tok.refresh_token === "string" ? tok.refresh_token : prev?.kind === "oauth2" ? prev.refreshToken : undefined;
   return {
     kind: "oauth2",

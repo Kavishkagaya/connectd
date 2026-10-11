@@ -52,12 +52,12 @@ async function post(fetchFn: typeof fetch, endpoint: string, client: Client, par
   return { res, json };
 }
 
-/** Any token-endpoint grant. Throws OAuthError on failure, including the device flow's `authorization_pending` / `slow_down`. */
+/** Any token-endpoint grant. Throws OAuthError on an error response, including the device flow's `authorization_pending` / `slow_down`. */
 export async function tokenRequest(fetchFn: typeof fetch, endpoint: string, client: Client, params: Record<string, string>) {
   const { res, json } = await post(fetchFn, endpoint, client, params);
-  // Some providers (GitHub) report errors with a 200.
-  if (!res.ok || !json || typeof json.error === "string" || typeof json.access_token !== "string")
-    throw new OAuthError(String(json?.error ?? "invalid_response"), res.status, json);
+  // Some providers (GitHub, Slack) report errors with a 200. A missing access_token is checked by
+  // credentialFrom, so a definition can reshape the response first (Slack user tokens are nested).
+  if (!res.ok || !json || typeof json.error === "string") throw new OAuthError(String(json?.error ?? "invalid_response"), res.status, json);
   return json as TokenResponse;
 }
 

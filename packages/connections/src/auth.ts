@@ -13,9 +13,10 @@ import type { Auth, Ctx } from "./define.ts";
 
 /** Auth step builders for the common flows. Quirks are config when they're data, hooks when they're behaviour. */
 
-export type OAuth2Config = { clientId: string; clientSecret?: string };
+/** Per-app connector config. `scopes` overrides the definition's defaults. */
+export type OAuth2Config = { clientId: string; clientSecret?: string; scopes?: string[] };
 
-export type OAuth2Spec = {
+export type OAuth2Spec<C> = {
   authorizeUrl: string;
   tokenUrl: string;
   revokeUrl?: string;
@@ -25,30 +26,30 @@ export type OAuth2Spec = {
   /** Default true. */
   pkce?: boolean;
   clientAuth?: "basic" | "post";
-  /** Extra authorize params, e.g. Google's `access_type: "offline"`. */
-  params?: Record<string, string>;
+  /** Extra authorize params, e.g. Google's `access_type: "offline"`; a function when they come from config. */
+  params?: Record<string, string> | ((config: C) => Record<string, string>);
   /** Provider error codes that mean the refresh token is dead (GitHub: `bad_refresh_token`). */
   invalidGrant?: string[];
   /** Reshape a non-standard token response before it becomes a credential. */
   token?: (raw: TokenResponse) => TokenResponse;
 };
 
-const client = <C extends OAuth2Config>(ctx: Ctx<C>, spec: OAuth2Spec): Client => ({
+const client = <C extends OAuth2Config>(ctx: Ctx<C>, spec: OAuth2Spec<C>): Client => ({
   clientId: ctx.config.clientId,
   redirectUri: ctx.redirectUri,
   ...(ctx.config.clientSecret !== undefined ? { clientSecret: ctx.config.clientSecret } : {}),
   ...(spec.clientAuth ? { auth: spec.clientAuth } : {}),
 });
 
-/** Authorization code (+ PKCE). `input.scope` overrides the default scopes. */
-export function oauth2<C extends OAuth2Config>(spec: OAuth2Spec): Auth<C> {
+/** Authorization code (+ PKCE). Scopes: `input.scope`, else `config.scopes`, else `spec.scopes`. */
+export function oauth2<C extends OAuth2Config>(spec: OAuth2Spec<C>): Auth<C> {
   const shape = spec.token ?? ((t: TokenResponse) => t);
   return {
     async start(ctx, input) {
       const p = spec.pkce === false ? null : await pkce();
-      const scope = input.scope ?? spec.scopes?.join(spec.scopeSeparator ?? " ");
+      const scope = input.scope ?? (ctx.config.scopes ?? spec.scopes)?.join(spec.scopeSeparator ?? " ");
       const params = {
-        ...spec.params,
+        ...(typeof spec.params === "function" ? spec.params(ctx.config) : spec.params),
         ...(scope ? { scope } : {}),
         ...(p ? { code_challenge: p.challenge, code_challenge_method: p.method } : {}),
       };

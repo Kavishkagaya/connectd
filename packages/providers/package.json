@@ -1,0 +1,16 @@
+{
+  "name": "@openconnect/providers",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@openconnect/connections": "workspace:*",
+    "@openconnect/kernel": "workspace:*"
+  }
+}

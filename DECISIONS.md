@@ -108,9 +108,9 @@ Validation: in-memory driver + DO driver must pass one shared parity suite (#13,
 - Errors: `OAuthError(code, status, body)`, including 200-with-error (GitHub).
 - do-connect's `src/oauth.ts` wasn't available locally; per-provider quirks come with #19 / #20.
 
-## #17 defineConnection API — provisional
+## #17 defineConnection API — decided
 
-`packages/connections` (`@openconnect/connections`). Provisional until #19 ports GitHub, Slack and Google on it unchanged.
+`packages/connections` (`@openconnect/connections`). Held up through #19 with the small changes listed there.
 
 - **Shape:** `defineConnection({ id, auth, metadata?, rate? })` is an identity function for inference. `auth` is steps, not a flow type: `start(ctx, input)` returns `{ redirect(state), data }` or `{ credential }` (done inline), then `callback(ctx, params, data)`, `refresh(ctx, cred)` and `revoke(ctx, cred)`, both optional. `ctx` = `{ config, fetch, redirectUri, now }`.
 - **Helpers build the steps:** `oauth2(spec)` (auth code + PKCE by default) and `apiKey(fields)`. A custom flow writes the steps itself; the kernel still owns state, handshake, refresh scheduling and the outbox.
@@ -121,4 +121,19 @@ Validation: in-memory driver + DO driver must pass one shared parity suite (#13,
 - **Rate:** declared as `rate: { connection?, app?, observe? }`. The proxy (#23) turns them into kernel scopes and decides which instance holds `app`.
 - **Webhooks:** not in the definition yet; #25 adds a `webhooks` field (verify, route to a connection by external id via #26).
 - **Versioning:** none. Definitions are code, and stored state is the kernel's own (record, credential, metadata), so deploying a new definition doesn't touch live connections. In-flight handshakes carry their own data and expire in 10 min. New scopes mean the app asks for re-auth (`connect` on the same instance). A definition must keep reading metadata it wrote before; add a version field when a definition first needs a migration.
-- Open for #19: Slack user-token-only responses have no top-level `access_token`, so `tokenRequest` rejects them before the `token` hook runs. Device code needs a `{ prompt }` start result and a timer-driven poll step.
+- Device code needs a `{ prompt }` start result and a timer-driven poll step; added when the first provider in #20 needs it.
+
+## #19 First providers: GitHub, Slack, Google — decided
+
+`packages/providers` (`@openconnect/providers`), each a `defineConnection` with tests against fakes shaped like the real responses (`fakeOAuth` + `harness` in `@openconnect/connections/testing`).
+
+The structure (steps, helpers, metadata, rate) held. What the port changed:
+- **Scopes are per-app config:** `OAuth2Config.scopes` overrides the definition's defaults, and `input.scope` overrides both. `params` can be a function of config (Slack's `user_scope`).
+- **`access_token` check moved from `tokenRequest` to `credentialFrom`** (kernel), so the `token` hook reshapes first: Slack with user scopes only nests the token under `authed_user`.
+- **`rate.observe(res, now)`** + `rateHeaders`: `Retry-After` (seconds or date) for all three, plus GitHub's `x-ratelimit-*`.
+- **Overriding one step is a spread:** `{ ...oauth2(spec), revoke }`. GitHub needs it (`DELETE /applications/{id}/grant`, not RFC 7009), and so does Slack (`auth.revoke`).
+
+Per provider:
+- **GitHub:** OAuth Apps and GitHub Apps in one definition (expiry is optional). PKCE S256. `bad_refresh_token` → `invalid_grant`. The REST API needs a `User-Agent`. Metadata `{ id, login }` from `/user`.
+- **Slack:** comma scopes, bot token as the credential, user token lifted up when only user scopes are asked for. Rotation is handled when the app turns it on. PKCE off until confirmed. Metadata `{ teamId, ... }` from the token response; `teamId` is what webhooks route by (#25, #26). Rate is one Tier-3 budget for now; per-method tiers wait for the proxy (#23).
+- **Google:** `access_type=offline` + `prompt=consent` so every authorization returns a refresh token; refresh tokens don't rotate (the kernel keeps the old one). Metadata `{ sub, email }` read from the `id_token` without a signature check (it comes straight from the token endpoint over TLS).
