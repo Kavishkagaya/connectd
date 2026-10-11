@@ -1,4 +1,4 @@
-import type { Json, Program } from "./index.ts";
+import type { Json, Program } from "../driver.ts";
 
 /**
  * One behaviour suite every driver must pass. Runner-agnostic: pass in `test`/`expect`

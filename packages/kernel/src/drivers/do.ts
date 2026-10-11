@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import type { Driver, Handler, Json, Program } from "./index.ts";
+import type { Driver, Handler, Json, Program } from "../driver.ts";
 
 /**
  * Durable Object driver. One DO class runs a Program; each instance key is one DO (idFromName).

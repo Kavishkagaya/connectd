@@ -5,9 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./memory": "./src/memory.ts",
-    "./do": "./src/do.ts",
-    "./parity": "./src/parity.ts"
+    "./memory": "./src/drivers/memory.ts",
+    "./do": "./src/drivers/do.ts",
+    "./parity": "./src/drivers/parity.ts"
   },
   "scripts": {
     "test": "bun test src && vitest run"
