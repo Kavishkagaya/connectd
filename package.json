@@ -1,10 +1,12 @@
 {
   "name": "openconnect",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
-    "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "test": "bun run --filter '*' test",
+    "typecheck": "tsc && tsc -p packages/kernel/tsconfig.workers.json"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

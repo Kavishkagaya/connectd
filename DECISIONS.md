@@ -34,3 +34,21 @@ Defaults for open points (revisit when building the first flow):
 - Connection index by external id (#26) stays out of the driver until L3.
 
 Validation: in-memory driver + DO driver must pass one shared parity suite (#13, #14).
+
+## #13 Durable Object driver — decided
+
+`@openconnect/kernel/do` (`packages/kernel/src/do.ts`): `durableObject(program, { binding })` returns a DO class. No separate package; a subpath export keeps `cloudflare:workers` out of anything that doesn't import it. Split only when a driver brings heavy deps (e.g. `pg`).
+
+- One DO per instance key, created with `idFromName`; the key comes from `ctx.id.name`.
+- SQLite storage: `kv(key, v, value, expires_at)`, `timers(name, at, payload)`, `seq(n)`. Every store op is synchronous SQL with no await inside, so it is atomic against other events.
+- Versions come from one per-DO counter, so they never repeat after a delete (no ABA on `cas`).
+- Expiry: filtered on read; expired rows swept on each write so abandoned handshakes don't pile up.
+- Timers multiplexed on the single alarm, always set to the earliest timer. On alarm, fire due timers earliest first.
+- `call` = RPC to `env[binding]` by `idFromName(instance)`, into the DO's `onCall`.
+- No v1 migration (starting over, no production data). D1 as a global index waits for L3 (#26).
+
+## #14 In-memory driver + parity — decided
+
+- Fake clock: `now` is a plain number; `advance(ms)` moves it, then fires due timers.
+- Timer semantics (both drivers): removed before firing (at-most-once; retries are the kernel's job, #11). `now()` during `onTimer` is the time it fired, not the scheduled time. A throwing timer is logged and doesn't block later ones. Timers set while firing run in the same advance if due.
+- `@openconnect/kernel/parity`: one runner-agnostic suite (`parity(name, world, { test, expect })`) driven through a `probe` program. Memory runs it under `bun test`, the DO driver under `@cloudflare/vitest-plugin` in workerd, with a fake clock far in the future so real alarms never fire on their own.

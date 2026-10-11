@@ -5,6 +5,16 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./memory": "./src/memory.ts"
+    "./memory": "./src/memory.ts",
+    "./do": "./src/do.ts",
+    "./parity": "./src/parity.ts"
+  },
+  "scripts": {
+    "test": "bun test src && vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.0",
+    "@cloudflare/workers-types": "^5.20261011.1",
+    "vitest": "5.0.3"
   }
 }

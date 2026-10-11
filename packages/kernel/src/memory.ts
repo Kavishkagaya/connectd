@@ -7,13 +7,14 @@ type Timer = { at: number; payload: Json };
 // so tests here catch the races the DO driver would hit.
 export function memory(program: Program, opts: { now?: number } = {}) {
   let now = opts.now ?? 0;
-  const instances = new Map<string, { handler: Handler; store: Map<string, Entry>; timers: Map<string, Timer> }>();
+  const instances = new Map<string, { handler: Handler; timers: Map<string, Timer> }>();
 
   const get = (id: string) => {
     let inst = instances.get(id);
     if (!inst) {
       const store = new Map<string, Entry>();
       const timers = new Map<string, Timer>();
+      let seq = 0; // versions never repeat, even after delete (no ABA on cas)
       const live = (key: string) => {
         const e = store.get(key);
         if (e?.expiresAt !== undefined && e.expiresAt <= now) {
@@ -24,7 +25,7 @@ export function memory(program: Program, opts: { now?: number } = {}) {
       };
       const write = (key: string, value: Json, ttlMs?: number) => {
         store.set(key, {
-          v: (live(key)?.v ?? 0) + 1,
+          v: ++seq,
           value: structuredClone(value),
           expiresAt: ttlMs === undefined ? undefined : now + ttlMs,
         });
@@ -63,7 +64,7 @@ export function memory(program: Program, opts: { now?: number } = {}) {
         },
         call: (instance, method, args) => call(instance, method, args),
       };
-      inst = { handler: program(driver, id), store, timers };
+      inst = { handler: program(driver, id), timers };
       instances.set(id, inst);
     }
     return inst;
@@ -75,20 +76,17 @@ export function memory(program: Program, opts: { now?: number } = {}) {
   return {
     call,
     now: () => now,
-    /** Move the fake clock forward, firing due timers in time order. */
+    /** Move the fake clock forward, then fire due timers earliest first (removed before firing). */
     async advance(ms: number) {
-      const target = now + ms;
+      now += ms;
       for (;;) {
-        let next: { id: string; name: string; t: Timer } | undefined;
-        for (const [id, inst] of instances)
-          for (const [name, t] of inst.timers)
-            if (t.at <= target && (!next || t.at < next.t.at)) next = { id, name, t };
-        if (!next) break;
-        now = Math.max(now, next.t.at);
-        instances.get(next.id)?.timers.delete(next.name);
-        await instances.get(next.id)?.handler.onTimer(next.name, next.t.payload);
+        let next: { inst: { handler: Handler; timers: Map<string, Timer> }; name: string; t: Timer } | undefined;
+        for (const inst of instances.values())
+          for (const [name, t] of inst.timers) if (t.at <= now && (!next || t.at < next.t.at)) next = { inst, name, t };
+        if (!next) return;
+        next.inst.timers.delete(next.name);
+        await next.inst.handler.onTimer(next.name, next.t.payload).catch((e) => console.error("timer", next.name, e));
       }
-      now = target;
     },
   };
 }

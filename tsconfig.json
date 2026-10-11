@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "module": "ES2022",
     "moduleResolution": "Bundler",
-    "types": ["bun"],
+    "types": [
+      "bun"
+    ],
     "strict": true,
     "skipLibCheck": true,
     "isolatedModules": true,
@@ -12,5 +16,10 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["packages/*/src"]
+  "include": [
+    "packages/*/src"
+  ],
+  "exclude": [
+    "packages/kernel/src/do.ts"
+  ]
 }
