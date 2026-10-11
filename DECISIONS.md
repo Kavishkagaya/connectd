@@ -107,3 +107,18 @@ Validation: in-memory driver + DO driver must pass one shared parity suite (#13,
 - Client auth `post` (default) or `basic`; `clientSecret` optional for public clients. `fetchFn` passed in.
 - Errors: `OAuthError(code, status, body)`, including 200-with-error (GitHub).
 - do-connect's `src/oauth.ts` wasn't available locally; per-provider quirks come with #19 / #20.
+
+## #17 defineConnection API — provisional
+
+`packages/connections` (`@openconnect/connections`). Provisional until #19 ports GitHub, Slack and Google on it unchanged.
+
+- **Shape:** `defineConnection({ id, auth, metadata?, rate? })` is an identity function for inference. `auth` is steps, not a flow type: `start(ctx, input)` returns `{ redirect(state), data }` or `{ credential }` (done inline), then `callback(ctx, params, data)`, `refresh(ctx, cred)` and `revoke(ctx, cred)`, both optional. `ctx` = `{ config, fetch, redirectUri, now }`.
+- **Helpers build the steps:** `oauth2(spec)` (auth code + PKCE by default) and `apiKey(fields)`. A custom flow writes the steps itself; the kernel still owns state, handshake, refresh scheduling and the outbox.
+- **`bind(def, d, instance, opts)`** runs a definition on one instance over `connection()`: `connect`, `callback`, `token`, `metadata`, `revoke`, `onTimer`. #22 wraps it in the DO and HTTP routing.
+- **Typing:** `C` = connector config (from the auth helper, e.g. `oauth2<{ clientId; clientSecret }>`), `M` = metadata (inferred from `metadata`'s return, must be `Json`). No schema library; config is validated where it's entered (L3/L4).
+- **Metadata:** `metadata(ctx, cred)` runs *before* activation, so it doubles as the credential check (a bad API key never activates). Stored in its own `meta` key, not inside the record's `cas`: it's derived, and re-auth rewrites it.
+- **Quirks:** config when they're data (`scopes`, `scopeSeparator`, `params`, `clientAuth`, `pkce`, `invalidGrant` codes such as GitHub's `bad_refresh_token`), hooks when they're behaviour (`token` reshapes a response, `metadata`, `rate.observe`). Anything weirder is a custom step.
+- **Rate:** declared as `rate: { connection?, app?, observe? }`. The proxy (#23) turns them into kernel scopes and decides which instance holds `app`.
+- **Webhooks:** not in the definition yet; #25 adds a `webhooks` field (verify, route to a connection by external id via #26).
+- **Versioning:** none. Definitions are code, and stored state is the kernel's own (record, credential, metadata), so deploying a new definition doesn't touch live connections. In-flight handshakes carry their own data and expire in 10 min. New scopes mean the app asks for re-auth (`connect` on the same instance). A definition must keep reading metadata it wrote before; add a version field when a definition first needs a migration.
+- Open for #19: Slack user-token-only responses have no top-level `access_token`, so `tokenRequest` rejects them before the `token` hook runs. Device code needs a `{ prompt }` start result and a timer-driven poll step.
