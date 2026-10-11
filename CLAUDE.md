@@ -27,6 +27,9 @@ packages/kernel/
 packages/connections/
   src/define.ts       defineConnection, Definition, bind (runs a definition on one instance)
   src/auth.ts         auth step builders: oauth2, apiKey
+  src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
+
+packages/providers/   one defineConnection per provider (github, slack, google); tests against fakes
 ```
 
 Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`.

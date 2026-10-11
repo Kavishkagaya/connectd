@@ -37,8 +37,23 @@ export type Definition<C, M extends Json> = {
   /** Who the credential belongs to (account id, team, instance URL). Runs before activation, so a throw rejects the credential. */
   metadata?(ctx: Ctx<C>, cred: Credential): Promise<M>;
   /** Limits per connection and per app; the proxy (#23) acquires them and feeds `observe` back. */
-  rate?: { connection?: Limit; app?: Limit; observe?(res: Response): Observed };
+  rate?: { connection?: Limit; app?: Limit; observe?(res: Response, now: number): Observed };
 };
+
+/** `Retry-After` (seconds or HTTP date), plus remaining/reset headers when named (reset in epoch seconds). */
+export function rateHeaders(res: Response, now: number, names?: { remaining: string; reset: string }): Observed {
+  const o: Observed = {};
+  const ra = res.headers.get("retry-after");
+  if (ra !== null) {
+    const ms = /^\d+$/.test(ra) ? Number(ra) * 1000 : Date.parse(ra) - now;
+    if (ms >= 0) o.retryAfterMs = ms;
+  }
+  const remaining = names && res.headers.get(names.remaining);
+  const reset = names && res.headers.get(names.reset);
+  if (remaining) o.remaining = Number(remaining);
+  if (reset) o.resetAt = Number(reset) * 1000;
+  return o;
+}
 
 export const defineConnection = <C, M extends Json = null>(def: Definition<C, M>) => def;
 
