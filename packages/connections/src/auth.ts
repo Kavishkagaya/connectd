@@ -9,7 +9,7 @@ import {
   revoke,
   type TokenResponse,
 } from "@openconnect/kernel";
-import type { Auth, Ctx } from "./define.ts";
+import { type Auth, type Ctx, InputError } from "./define.ts";
 
 /** Auth step builders for the common flows. Quirks are config when they're data, hooks when they're behaviour. */
 
@@ -91,7 +91,7 @@ export function oauth2<C extends OAuth2Config>(spec: OAuth2Spec<C>): Auth<C> {
 export const apiKey = <C = unknown>(fields: string[]): Auth<C> => ({
   async start(_ctx, input) {
     const missing = fields.filter((f) => !input[f]);
-    if (missing.length) throw new Error(`missing ${missing.join(", ")}`);
+    if (missing.length) throw new InputError(`missing ${missing.join(", ")}`);
     return { credential: { kind: "static", fields: Object.fromEntries(fields.map((f) => [f, input[f] as string])) } };
   },
 });

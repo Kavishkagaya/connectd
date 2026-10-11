@@ -33,6 +33,19 @@
         "@openconnect/kernel": "workspace:*",
       },
     },
+    "packages/runtime": {
+      "name": "@openconnect/runtime",
+      "version": "0.0.0",
+      "dependencies": {
+        "@openconnect/connections": "workspace:*",
+        "@openconnect/kernel": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-plugin": "1.4.0",
+        "@cloudflare/workers-types": "^5.20261011.1",
+        "vitest": "5.0.3",
+      },
+    },
   },
   "packages": {
     "@cloudflare/kv-asset-handler": ["@cloudflare/kv-asset-handler@0.5.0", "", {}, "sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg=="],
@@ -174,6 +187,8 @@
     "@openconnect/kernel": ["@openconnect/kernel@workspace:packages/kernel"],
 
     "@openconnect/providers": ["@openconnect/providers@workspace:packages/providers"],
+
+    "@openconnect/runtime": ["@openconnect/runtime@workspace:packages/runtime"],
 
     "@oxc-project/types": ["@oxc-project/types@0.153.0", "", {}, "sha512-jSNrRIyvPVLL5E1z/tS5zLAprosGz/FuI1PWwEOz59j3E4TTTzSpqKb/RDGqJhhW0QHYISGXxq582wGx6T11Tw=="],
 
