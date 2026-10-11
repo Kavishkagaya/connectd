@@ -12,7 +12,7 @@ Two repos.
 
 `openconnect` is Apache-2.0 (permissive, patent grant, best for adoption). `openconnect-cloud` is proprietary. Future versions may move to FSL if hosted competitors become a real threat.
 
-## #6 Driver interface — provisional
+## #6 Driver interface — decided
 
 The driver provides infrastructure guarantees only, per instance. Everything an auth flow needs (handshake, credential record, single-flight, rate, outbox, config) is kernel code built on top.
 
@@ -28,7 +28,7 @@ Kernel → driver: `Handler { onCall, onTimer }`. Every event reaches an instanc
 - **No full serialization guarantee.** Each store op is atomic, but handlers may interleave at awaits, as in Durable Objects. Races go through `cas`/`take`. The in-memory driver doesn't serialize either, so tests see the same races.
 - **Cross-instance is hidden by the driver.** An app-scope rate instance is just another instance key.
 
-Defaults for open points (revisit when building the first flow):
+Defaults for open points (held up through L1, #7–#11):
 - OAuth callback routing: `state` = signed `connId.random`, no global lookup.
 - Lifecycle state lives inside the credential record, so one `cas` covers both.
 - Connection index by external id (#26) stays out of the driver until L3.
