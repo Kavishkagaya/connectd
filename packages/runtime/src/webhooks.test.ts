@@ -16,6 +16,7 @@ const fake = {
   unregistered: [] as Json[],
   /** Runs inside register, before it returns (to race it). */
   during: null as (() => Promise<unknown>) | null,
+  externalThrows: false,
 };
 
 /**
@@ -26,7 +27,10 @@ const hooked = defineConnection({
   id: "hooked",
   auth: apiKey<{ appSecret: string }>(["key", "team"]),
   metadata: async (_ctx, cred) => ({ team: cred.kind === "static" ? (cred.fields.team ?? "") : "" }),
-  external: (m) => ({ team: m.team }),
+  external: (m) => {
+    if (fake.externalThrows) throw new Error("external blew up");
+    return { team: m.team };
+  },
   webhooks: {
     verify: async (ctx, req, secret) => safeEqual(req.headers.get("x-sig") ?? "", await hmacHex(secret ?? ctx.config.appSecret, req.body)),
     parse(req) {
@@ -52,7 +56,7 @@ const hooked = defineConnection({
 const plain = defineConnection({ id: "plain", auth: apiKey(["key"]) });
 
 async function setup(o: { events?: boolean; down?: string } = {}) {
-  Object.assign(fake, { fail: 0, ttl: null, n: 0, registered: [], unregistered: [], during: null });
+  Object.assign(fake, { fail: 0, ttl: null, n: 0, registered: [], unregistered: [], during: null, externalThrows: false });
   const got: ConnectionEvent[] = [];
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
@@ -285,4 +289,34 @@ test("app-level: a connection that fails to take it makes the route 503, so the 
   expect(r.body.error).toMatchObject({ code: "delivery_failed", message: "1 of 2 connections did not take the webhook" });
   // a1 took it; the provider's retry delivers it again with the same `delivery`.
   expect((await t.webhooksOf()).map((e) => [e.connection.id, e.data.delivery])).toEqual([["a1", "Ev1"]]);
+});
+
+test("auto-registration: a short-lived or already lapsed expiry renews after a floor, not in a loop", async () => {
+  const t = await setup();
+  fake.ttl = -1; // the provider says it has already expired
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  await t.w.advance(0);
+  await t.api("/connections/hooked/c1/status");
+  await t.w.advance(59_999);
+  expect(fake.n).toBe(1);
+  await t.w.advance(1);
+  expect(fake.n).toBe(2);
+  fake.ttl = 10 * 60_000; // 10 min: renewed at half its life
+  await t.w.advance(60_000);
+  expect(fake.n).toBe(3);
+  await t.w.advance(5 * 60_000 - 1);
+  expect(fake.n).toBe(3);
+  await t.w.advance(1);
+  expect(fake.n).toBe(4);
+});
+
+test("auto-registration: an external hook that throws is an unknown account, not a new one", async () => {
+  const t = await setup();
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  await t.w.advance(0);
+  fake.externalThrows = true;
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" }); // version moves
+  await t.w.advance(0);
+  expect(fake.n).toBe(1);
+  expect(fake.unregistered).toEqual([]);
 });

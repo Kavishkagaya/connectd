@@ -26,7 +26,7 @@ type Receive = { data: WebhookData; external?: { key: string; value: string } };
  * What `register` returned, kept until revoke. `hook` null = the definition registered nothing.
  * `account` = the external ids it was registered for; a re-auth to another account re-registers.
  */
-type Stored = { hook: Json; expiresAt: number | null; account: string | null };
+type Stored = { hook: Json; renewAt: number | null; account: string | null };
 
 // One event must fit one stored DO value (2 MB, #24); leave room for the envelope.
 // ponytail: past 1 MB the payload is dropped, not stored by reference; receivers re-read it from the provider (proxy). Add blob storage (R2) if that bites.
@@ -36,6 +36,8 @@ const KEY = "webhooks.hook";
 const PENDING = "webhooks.pending";
 const TIMER = "webhooks.sync";
 const RENEW_MS = 3_600_000;
+/** Never renew sooner than this after registering, however short-lived the provider makes it. */
+const MIN_RENEW_MS = 60_000;
 const BACKOFF = { baseMs: 30_000, maxAttempts: 8 };
 const utf8 = new TextEncoder();
 
@@ -130,9 +132,12 @@ export function webhooks(): Extension {
         }
       }
 
-      /** Nothing registered, due for renewal, or registered for another account. */
-      const due = async (cur: Stored | undefined) =>
-        !cur || (cur.expiresAt !== null && d.now() >= cur.expiresAt - RENEW_MS) || cur.account !== (await account());
+      /** Nothing registered, due for renewal, or registered for another account (an unknown account, null, is no change). */
+      async function due(cur: Stored | undefined) {
+        if (!cur || (cur.renewAt !== null && d.now() >= cur.renewAt)) return true;
+        const acct = await account();
+        return acct !== null && cur.account !== acct;
+      }
 
       async function arm(attempt: number, at: number) {
         await d.store.put(PENDING, true);
@@ -141,36 +146,51 @@ export function webhooks(): Extension {
 
       /** Register if active and due. Runs from the timer only; timers don't overlap. */
       async function sync(attempt: number) {
-        if (!w?.register) return;
+        let retrying = false;
+        try {
+          retrying = await run(attempt);
+        } finally {
+          // Whatever happened, unless a retry is armed: leave nothing that stops after() from re-arming.
+          if (!retrying) await d.store.delete(PENDING);
+        }
+      }
+
+      /** True if it armed a retry. */
+      async function run(attempt: number): Promise<boolean> {
+        if (!w?.register) return false;
         const cur = (await d.store.get(KEY))?.value as unknown as Stored | undefined;
         // Not active: re-auth keeps the hook, revoke removes it.
-        if ((await bound.conn.read())?.state !== "active" || !(await due(cur))) return d.store.delete(PENDING);
+        if ((await bound.conn.read())?.state !== "active" || !(await due(cur))) return false;
         let cred;
         let r;
-        const acct = await account();
+        const acct = (await account()) ?? cur?.account ?? null;
         try {
           cred = await bound.token();
           r = await w.register(bound.ctx, cred, await endpoint(h));
         } catch (e) {
-          if (e instanceof NotActive) return d.store.delete(PENDING);
+          if (e instanceof NotActive) return false;
           console.error("webhook register failed", h.instance, attempt, e);
           // ponytail: gives up after 8 attempts (~1h); the next state change or isolate restart tries again.
-          if (attempt + 1 >= BACKOFF.maxAttempts) return d.store.delete(PENDING);
-          return arm(attempt + 1, d.now() + backoff(attempt, BACKOFF));
+          if (attempt + 1 >= BACKOFF.maxAttempts) return false;
+          await arm(attempt + 1, d.now() + backoff(attempt, BACKOFF));
+          return true;
         }
-        const next: Stored = { hook: r?.hook ?? null, expiresAt: r?.expiresAt ?? null, account: acct };
+        // An hour before expiry; for short-lived ones at half their life, and never within MIN_RENEW_MS (no loop on a lapsed `expiresAt`).
+        const exp = r?.expiresAt;
+        const renewAt = exp === undefined ? null : Math.max(exp - RENEW_MS, d.now() + Math.max(MIN_RENEW_MS, (exp - d.now()) / 2));
+        const next: Stored = { hook: r?.hook ?? null, renewAt, account: acct };
         await d.store.put(KEY, next as unknown as Json);
-        await d.store.delete(PENDING);
         // Renewed, or re-authed to another account: stop the old subscription.
         // ponytail: after an account change this uses the new account's credential, which the provider may refuse (logged); the old one then lapses or gets 403/410.
         if (cur) await unregister(cred, cur.hook);
         // The renewal timer isn't PENDING: after() re-arms by `due` alone if it's lost.
-        if (next.expiresAt !== null) await d.timer.set(TIMER, Math.max(d.now(), next.expiresAt - RENEW_MS), { attempt: 0, data: null });
+        if (renewAt !== null) await d.timer.set(TIMER, renewAt, { attempt: 0, data: null });
         // Revoked while registering: beforeRevoke found nothing to remove, so undo it here.
         if ((await bound.conn.read())?.state === "revoked" && (await d.store.take(KEY))) {
           await d.timer.cancel(TIMER);
           await unregister(cred, next.hook);
         }
+        return false;
       }
 
       return {
