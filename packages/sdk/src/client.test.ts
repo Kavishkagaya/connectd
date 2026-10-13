@@ -134,6 +134,26 @@ test("429: thrown by default; retry waits out Retry-After, within bounds", async
   expect(t.seen.map((r) => new URL(r.url).pathname)).toEqual(["/v1/a", "/v1/b", "/v1/c"]);
 });
 
+test("paths can't climb out of the proxy or the connection: raw, %2e%2e and %2E%2e", async () => {
+  const t = await setup();
+  await t.authorize("u1");
+  await t.authorize("u2");
+  const sent: string[] = [];
+  const oc = openconnect({ url: "https://oc.test", apiKey: "secret", fetch: (i, init) => (sent.push(i), t.rt.fetch(new Request(i, init), t.w.call)) });
+  const c = oc.connection("example", "u1");
+  for (const p of ["../../../connections/example/u2/token", "%2e%2e/%2e%2e/%2e%2e/connections/example/u2/token", "%2E%2e/%2E%2E/u2/x", "a/../../x", "./.."])
+    expect(await rejects(c.fetch(p, { method: "POST" }))).toMatchObject({ code: "bad_request", status: 400 });
+  expect(await rejects(c.call(".."))).toMatchObject({ code: "bad_request" });
+  for (const [d, i] of [["..", "x"], ["example", "."], ["example", ".."], ["", "x"]])
+    expect(() => oc.connection(d!, i!)).toThrow(OpenConnectError);
+  expect(sent).toEqual([]); // nothing left the client
+
+  // Inside the prefix is fine, and an id with dots in it is just an id.
+  t.upstream((req) => new Response(new URL(req.url).pathname));
+  expect(await (await c.fetch("a/../b")).text()).toBe("/v1/b");
+  expect(await rejects(oc.connection("example", "..u1").status())).toMatchObject({ code: "not_found" });
+});
+
 test("the SDK imports no runtime code but signature.ts, which imports nothing", () => {
   const dir = new URL(".", import.meta.url).pathname;
   const imports = readdirSync(dir)

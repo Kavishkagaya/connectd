@@ -54,6 +54,7 @@ export function events(o: EventsOptions, connection: (def: string, id: string) =
       try {
         e = JSON.parse(body) as ConnectionEvent;
       } catch {
+        // Can't come from a genuine runtime (it signed this body). Not a 2xx, so it would park the connection's later events.
         return answer(400, "body is not JSON");
       }
       try {

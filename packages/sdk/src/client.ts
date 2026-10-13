@@ -2,6 +2,9 @@ import type { Credential, Json, State } from "@openconnect/kernel";
 import type { Fault, Page, Query, Row } from "@openconnect/runtime";
 import { events, type EventsOptions } from "./events.ts";
 
+// ponytail: depends on @openconnect/runtime only for types (erased) and signature.ts (no imports);
+// split signature.ts into its own package before publishing, so installing the SDK doesn't pull the runtime.
+
 /**
  * The server SDK: a thin typed client over the runtime's HTTP API (#22, #23, #26). Fetch only, no
  * Node APIs, so it runs on Node 18+, Bun, Workers and Deno.
@@ -93,14 +96,33 @@ export function openconnect(o: Options) {
     return request("GET", `/connections${s ? `?${s}` : ""}`);
   }
 
+  /**
+   * `base + path`, refused unless it still starts with `base + prefix` once resolved. URL parsing
+   * removes `..` and `%2e%2e` segments, so a path like `../../connections/x/y/token` would
+   * otherwise leave the proxy and reach the admin API with our API key.
+   */
+  function inside(prefix: string, path: string): string {
+    const u = new URL(base + prefix + path);
+    if (!u.pathname.startsWith(new URL(base + prefix).pathname)) throw new OpenConnectError({ code: "bad_request", status: 400, message: `path leaves ${prefix}: ${path}` });
+    return u.href;
+  }
+
   function connection(def: string, id: string) {
+    // encodeURIComponent keeps dots, and a `.` or `..` segment would collapse the path.
+    for (const s of [def, id]) if (s === "" || s === "." || s === "..") throw new OpenConnectError({ code: "bad_request", status: 400, message: `bad definition or id: "${s}"` });
     const at = `${encodeURIComponent(def)}/${encodeURIComponent(id)}`;
-    const call = <T = Json>(method: string, args: Json = null) => request<T>("POST", `/connections/${at}/${encodeURIComponent(method)}`, args);
+    const call = async <T = Json>(method: string, args: Json = null) => {
+      inside(`/connections/${at}/`, encodeURIComponent(method));
+      return request<T>("POST", `/connections/${at}/${encodeURIComponent(method)}`, args);
+    };
 
     /**
      * `fetch` through the proxy (#23): `path` (and query) is relative to the definition's base URL,
-     * passed on as written. Answers the provider's response, whatever its status; throws
-     * `OpenConnectError` only for what the runtime refused (not_active, rate_limited, upstream_timeout...).
+     * passed on as written, but it can't climb out of `/proxy/:def/:id/` (`..` throws `bad_request`).
+     * Answers the provider's response, whatever its status; throws `OpenConnectError` only for what
+     * the runtime refused (not_active, rate_limited, upstream_timeout...), which it marks with
+     * `openconnect-error`. A failure in front of the runtime (a gateway's 502) has no marker, so it
+     * comes back as a response, like the provider's.
      */
     async function proxied(path: string, init: ProxyInit = {}): Promise<Response> {
       const { retry, ...rest } = init;
@@ -110,7 +132,7 @@ export function openconnect(o: Options) {
       const stream = rest.body instanceof ReadableStream;
       // duplex: required by Node's fetch to send a stream (not in the DOM RequestInit types yet).
       const req = { ...rest, headers, ...(stream ? ({ duplex: "half" } as {}) : {}) };
-      const url = `${base}/proxy/${at}/${path.replace(/^\/+/, "")}`;
+      const url = inside(`/proxy/${at}/`, path.replace(/^\/+/, ""));
       let waited = 0;
       for (let attempt = 0; ; attempt++) {
         const res = await f(url, req);
