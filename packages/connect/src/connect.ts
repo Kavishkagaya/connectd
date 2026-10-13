@@ -52,6 +52,10 @@ export type ConnectOptions = {
   fallback?: boolean;
   /** Give up on the popup after this long, and close it. Default 10 min (a handshake's life). */
   timeoutMs?: number;
+  /** Abort the attempt (a second click starting over): closes the popup, resolves `{ status: "error", code: "aborted" }`. */
+  signal?: AbortSignal;
+  /** Called once when the popup reads as closed. The result may still come (COOP); a UI can re-enable its button here. */
+  onClosed?(): void;
   /** Tests pass a fake. Default the global `window`. */
   window?: Window;
 };
@@ -95,6 +99,9 @@ const LOOK_MS = 2_000;
 /** What the callback hands back: a completion to confirm, or the end already. */
 type Back = Result | { status: "authorized"; completion: string };
 
+/** Session errors no wait outlives: the token is dead or refused. */
+const TERMINAL = new Set(["session_expired", "unauthorized", "forbidden", "not_found", "not_configured"]);
+
 /** The channel a popup cut off by COOP reports on, from the app's return URL page (same origin, so only the app hears it). */
 const channel = (win: Window, n: string) => {
   const BC = (win as unknown as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
@@ -111,7 +118,10 @@ const channel = (win: Window, n: string) => {
  * connection is active, revoked, or the timeout, then `closed`. Closed later is the user: one look
  * at the state, then `closed`.
  */
-function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: number, state: () => Promise<string | null>): Promise<Back> {
+type Wait = { timeoutMs: number; state: () => Promise<string | null>; signal?: AbortSignal; onClosed?(): void };
+
+function wait(win: Window, popup: Window, origin: string, n: string, w: Wait): Promise<Back> {
+  const { timeoutMs, state } = w;
   return new Promise((resolve) => {
     let ticks = 0;
     let closedAt: number | null = null;
@@ -122,8 +132,14 @@ function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: 
       win.clearInterval(poll);
       win.clearTimeout(timer);
       bc?.close();
+      w.signal?.removeEventListener("abort", onAbort);
       resolve(r);
     };
+    function onAbort() {
+      popup.close();
+      done(err("aborted", "aborted"));
+    }
+    w.signal?.addEventListener("abort", onAbort);
     const result = (d: { status?: unknown; code?: unknown; message?: unknown }): Result =>
       d.status === "connected" ? { status: "connected" } : err(String(d.code ?? "error"), String(d.message ?? ""));
     function onMessage(e: MessageEvent) {
@@ -136,7 +152,10 @@ function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: 
     if (bc)
       bc.onmessage = (e: MessageEvent) => {
         const d = e.data as { type?: unknown; nonce?: unknown; status?: unknown } | null;
-        if (d && d.type === "openconnect" && d.nonce === n && d.status !== "authorized") done(result(d));
+        if (!d || d.type !== "openconnect" || d.nonce !== n || d.status === "authorized") return;
+        // Same origin, so any of the app's pages could say it: check the state before believing a `connected`.
+        if (d.status === "connected") state().then((s) => s === "active" && done({ status: "connected" }), () => {});
+        else done(result(d));
       };
     const look = (last: boolean) => {
       if (looking) return;
@@ -146,14 +165,17 @@ function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: 
           if (s === "active") done({ status: "connected" });
           else if (last || s === "revoked") done({ status: "closed" });
         })
-        .catch(() => last && done({ status: "closed" }))
+        .catch((e: { code?: string }) => (last || TERMINAL.has(e.code ?? "")) && done({ status: "closed" }))
         .finally(() => (looking = false));
     };
     const poll = win.setInterval(() => {
       ticks++;
       if (!popup.closed) return;
       // The page posts, then closes itself: give a message already in flight one more tick to land.
-      if (closedAt === null) return void (closedAt = ticks);
+      if (closedAt === null) {
+        closedAt = ticks;
+        return void w.onClosed?.();
+      }
       if (ticks === closedAt + 1) return look(closedAt * TICK_MS >= COOP_MS);
       if ((ticks - closedAt) % Math.round(LOOK_MS / TICK_MS) === 0) look(false);
     }, TICK_MS);
@@ -181,10 +203,17 @@ export function connect(o: ConnectOptions): Promise<Result> {
   const win = o.window ?? window;
   const n = nonce(win);
   // Open first (blank), navigate after: the gesture only counts until the first await.
+  if (o.signal?.aborted) return Promise.resolve(err("aborted", "aborted"));
   const popup = !o.fields && (o.mode ?? "popup") === "popup" ? win.open("", `openconnect-${n}`, "popup,width=520,height=680") : null;
+  const aborted = () => {
+    if (!o.signal?.aborted) return false;
+    popup?.close();
+    return true;
+  };
 
   return (async (): Promise<Result> => {
     const token = typeof o.token === "string" ? o.token : await o.token();
+    if (aborted()) return err("aborted", "aborted");
     if (o.fields) {
       const r = await call(win, o.url, "/connect", token, { method: "POST", body: JSON.stringify({ fields: o.fields }) });
       if (!r.ok) return err(r.error.code, r.error.message);
@@ -199,6 +228,7 @@ export function connect(o: ConnectOptions): Promise<Result> {
       popup?.close();
       return err(r.error.code, r.error.message);
     }
+    if (aborted()) return err("aborted", "aborted");
     const next = `${base(o.url)}/session/authorize?ticket=${encodeURIComponent((r.body as unknown as { ticket: string }).ticket)}`;
     if (!popup) {
       win.location.assign(next);
@@ -208,7 +238,12 @@ export function connect(o: ConnectOptions): Promise<Result> {
     if (popup.closed) return { status: "closed" };
     popup.location.href = next;
     const state = async () => (await session({ url: o.url, token, window: win })).state;
-    const back = await wait(win, popup, new URL(o.url).origin, n, o.timeoutMs ?? 600_000, state);
+    const back = await wait(win, popup, new URL(o.url).origin, n, {
+      timeoutMs: o.timeoutMs ?? 600_000,
+      state,
+      ...(o.signal ? { signal: o.signal } : {}),
+      ...(o.onClosed ? { onClosed: o.onClosed } : {}),
+    });
     return back.status === "authorized" ? confirm(win, o.url, token, back.completion) : back;
   })().catch((e) => {
     popup?.close();

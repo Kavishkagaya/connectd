@@ -238,3 +238,39 @@ test("claims: readable, null for garbage", async () => {
   expect(claims(await t.token("example", "u1", { returnUrl: `${APP}/x` }))).toMatchObject({ def: "example", id: "u1", origin: APP, returnUrl: `${APP}/x` });
   expect(claims("garbage")).toBeNull();
 });
+
+test("COOP wait: a `connected` broadcast is checked against the state; a dead session token ends the wait", async () => {
+  const t = await setup();
+  const token = await t.token("example", "u1", { returnUrl: `${APP}/back`, ttlMs: 1_000 });
+  const p = connect({ url: OC, token, window: W(t.win) });
+  const s = watch(p);
+  await settle();
+  t.win.opened[0]!.close(); // reads as COOP: keeps waiting
+  t.win.advance(600);
+  await settle();
+  // Another of the app's pages (or a script on the origin) says connected: the state says pending, so not believed.
+  const nonce = (t.requests.find((r) => r.path === "/session/authorize")!.body as { nonce: string }).nonce;
+  const bc = new t.win.BroadcastChannel(`openconnect:${nonce}`);
+  bc.postMessage({ type: "openconnect", nonce, status: "connected" });
+  await settle();
+  expect(s.r).toBeUndefined();
+  bc.close();
+  // The session token expires: the next look gets session_expired, which no wait outlives.
+  await Bun.sleep(1_100);
+  t.win.advance(2_000);
+  await settle();
+  expect(await p).toEqual({ status: "closed" });
+});
+
+test("signal: aborting closes the popup and resolves aborted; an aborted signal never opens one", async () => {
+  const t = await setup();
+  const c = new AbortController();
+  const p = connect({ url: OC, token: await t.token("example", "u1"), window: W(t.win), signal: c.signal });
+  await settle();
+  c.abort();
+  expect(await p).toEqual({ status: "error", code: "aborted", message: "aborted" });
+  expect(t.win.opened[0]!.closed).toBe(true);
+  expect(t.win.timers).toHaveLength(0);
+  expect(await connect({ url: OC, token: "x", window: W(t.win), signal: c.signal })).toMatchObject({ code: "aborted" });
+  expect(t.win.opened).toHaveLength(1);
+});

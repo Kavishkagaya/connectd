@@ -49,10 +49,13 @@ export function mount(el: HTMLElement, o: MountOptions): () => void {
     const button = doc.createElement("button");
     button.className = "oc-button";
     button.textContent = o.label ?? `${info.state === "active" ? "Reconnect" : "Connect"} ${info.definition}`;
-    const run = (p: Promise<Result>) => {
+    // A click while an attempt is still waiting (its popup read as closed: COOP, or the user) starts over.
+    let current: AbortController | null = null;
+    const run = (p: Promise<Result>, c: AbortController) => {
       button.disabled = true;
       p.then((r) => {
-        button.disabled = false;
+        if (r.status === "error" && r.code === "aborted") return;
+        if (current === c) button.disabled = false;
         show(r);
       });
     };
@@ -60,7 +63,12 @@ export function mount(el: HTMLElement, o: MountOptions): () => void {
     if (info.flow === "redirect") {
       button.type = "button";
       // Synchronous in the click: connect() opens the popup before awaiting anything.
-      button.addEventListener("click", () => run(connect(opts)));
+      button.addEventListener("click", () => {
+        current?.abort();
+        const c = (current = new AbortController());
+        // The popup is gone: let the user try again while the wait goes on in the background.
+        run(connect({ ...opts, signal: c.signal, onClosed: () => current === c && (button.disabled = false) }), c);
+      });
       root.replaceChildren(button, status);
       return;
     }
@@ -82,7 +90,7 @@ export function mount(el: HTMLElement, o: MountOptions): () => void {
     form.appendChild(button);
     form.addEventListener("submit", (e) => {
       e.preventDefault();
-      run(connect({ ...opts, fields: Object.fromEntries(inputs.map((i) => [i.name, i.value])) }));
+      run(connect({ ...opts, fields: Object.fromEntries(inputs.map((i) => [i.name, i.value])) }), (current = new AbortController()));
     });
     root.replaceChildren(form, status);
   }

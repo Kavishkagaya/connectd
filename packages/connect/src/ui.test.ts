@@ -81,3 +81,28 @@ test("two mounts on the return page, then a reload: the outcome goes to its own 
   await settle();
   expect(reload).toEqual({ gh: [], keyed: [] });
 });
+
+test("button: re-enabled once the popup reads closed; a second click aborts the first wait and finishes", async () => {
+  const t = await setup();
+  const el = t.win.document.createElement("div");
+  const results: Result[] = [];
+  mount(el as unknown as HTMLElement, { url: OC, token: await t.token("example", "u1"), window: t.win as unknown as Window, onResult: (r) => results.push(r) });
+  await settle();
+  const [button] = el.all("button") as [El];
+  button.dispatch("click");
+  await settle();
+  expect(button.disabled).toBe(true);
+  t.win.opened[0]!.close(); // a quick close: connect() keeps waiting (could be COOP)...
+  t.win.advance(300);
+  expect(button.disabled).toBe(false); // ...but the user can click again at once
+  expect(results).toEqual([]);
+
+  button.dispatch("click");
+  expect(t.win.opened).toHaveLength(2);
+  await settle();
+  await t.finish();
+  await settle();
+  expect(results).toEqual([{ status: "connected" }]); // the first, aborted, attempt reports nothing
+  expect(t.win.timers).toHaveLength(0);
+  expect(button.disabled).toBe(false);
+});
