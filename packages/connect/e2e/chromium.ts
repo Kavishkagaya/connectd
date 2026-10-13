@@ -120,7 +120,7 @@ try {
   const [popup2] = await Promise.all([page.waitForEvent("popup"), page.click("#fresh")]);
   await popup2.waitForSelector("#ok");
   await popup2.close();
-  await page.waitForFunction(() => document.getElementById("out")!.textContent!.includes("closed"), null, { timeout: 5000 });
+  await page.waitForFunction(() => document.getElementById("out")!.textContent!.includes("closed"), null, { timeout: 15000 });
   check("closed detected", (await page.textContent("#out")) === 'fresh:{"status":"closed"}');
   // API-key form
   await page.fill("#ui input[name=apiKey]", "sk-123");
@@ -132,15 +132,14 @@ try {
     await page.textContent("#out"),
   );
   // A provider page with COOP same-origin cuts the opener: Chromium reports the popup closed once it
-  // navigates there, so connect() resolves `closed` after one session() check, or `connected` if the
-  // popup already finished (a fast click here). The popup itself goes on to the return URL, where
-  // resume() confirms and closes it: the connection ends up active either way.
+  // navigates there. The popup goes on to the return URL, where resume() confirms; connect() keeps
+  // looking at session() for ~10 s after `closed`, so it sees the connection active.
   const [cp] = await Promise.all([page.waitForEvent("popup"), page.click("#coop")]);
   await cp.waitForSelector("#ok");
   await cp.click("#ok");
   await page.waitForFunction(() => document.getElementById("out")!.textContent!.startsWith("coop:"), null, { timeout: 10000 });
   const coopOut = await page.textContent("#out");
-  check("coop: opener resolves closed or connected", coopOut === 'coop:{"status":"closed"}' || coopOut === 'coop:{"status":"connected"}', coopOut);
+  check("coop: the opener, still looking after closed, sees it connected", coopOut === 'coop:{"status":"connected"}', coopOut);
   let coopState = "";
   for (let i = 0; i < 50 && coopState !== "active"; i++) {
     coopState = await state("coopy", "c1");
@@ -151,13 +150,17 @@ try {
   await page.click("#redir");
   await page.waitForSelector("#ok");
   await page.click("#ok");
-  await page.waitForURL(/\/back\?def=example&id=r1&openconnect=authorized&completion=/);
+  await page.waitForURL(/\/back\?def=example&id=r1/);
   await page.waitForFunction(() => document.getElementById("out")!.textContent!.startsWith("redirect:"));
   check(
     "redirect",
     (await page.textContent("#out")) === 'redirect:{"status":"connected"}' && (await state("example", "r1")) === "active",
     await page.textContent("#out"),
   );
+  check("redirect: the outcome is gone from the address bar", page.url() === `${APP}/back?def=example&id=r1`, page.url());
+  await page.reload();
+  await page.waitForSelector("#ui button");
+  check("redirect: a reload does nothing", (await page.textContent("#out")) === "", await page.textContent("#out"));
   // Login CSRF: the attacker (user x1) mints a ticket outside a browser, forging Origin, and sends the
   // link to a victim logged in to the app as v1. The victim's browser does the provider login; the
   // completion lands on the victim's app page, whose session is v1's: it never activates x1.
@@ -176,10 +179,11 @@ try {
   await victim.evaluate(() => localStorage.setItem("user", "v1"));
   await victim.goto(`${RT}/session/authorize?ticket=${encodeURIComponent(ticket)}`);
   await victim.click("#ok");
-  await victim.waitForURL(/openconnect=authorized/);
-  await victim.waitForFunction(() => document.getElementById("out")!.textContent!.startsWith("redirect:"));
+  await victim.waitForURL(/#openconnect=authorized&definition=example&id=x1&completion=/);
+  await victim.waitForSelector("#ui button"); // the page script ran (resume() first)
   const vout = await victim.textContent("#out");
-  check("victim's page can't confirm the attacker's flow", vout!.includes("bad_completion") && (await state("example", "x1")) === "pending", vout);
+  // resume() ignores an outcome for another connection than its session's: nothing confirmed, nothing shown.
+  check("victim's page doesn't confirm the attacker's flow", vout === "" && (await state("example", "x1")) === "pending", vout);
 } finally {
   await browser.close();
   rtServer.stop();

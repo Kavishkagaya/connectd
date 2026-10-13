@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { type El, OC, setup } from "./fake.ts";
-import type { Result } from "./connect.ts";
+import { APP, type El, OC, setup } from "./fake.ts";
+import { connect, type Result } from "./connect.ts";
 import { mount } from "./ui.ts";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -57,4 +57,27 @@ test("a refused token shows the error", async () => {
   await settle();
   expect(results).toMatchObject([{ status: "error", code: "unauthorized" }]);
   expect(el.all("p")[0]!.textContent).toBe("Could not connect (unauthorized).");
+});
+
+test("two mounts on the return page, then a reload: the outcome goes to its own mount, once", async () => {
+  const t = await setup();
+  const gh = await t.token("example", "u1", { returnUrl: `${APP}/back` });
+  await connect({ url: OC, token: gh, mode: "redirect", window: t.win as unknown as Window });
+  t.win.location.href = (await t.finish()).location!;
+
+  const page = () => {
+    const seen: Record<string, Result[]> = { gh: [], keyed: [] };
+    const a = t.win.document.createElement("div");
+    const b = t.win.document.createElement("div");
+    mount(a as unknown as HTMLElement, { url: OC, token: gh, window: t.win as unknown as Window, onResult: (r) => seen.gh!.push(r) });
+    mount(b as unknown as HTMLElement, { url: OC, token: () => t.token("keyed", "k1"), window: t.win as unknown as Window, onResult: (r) => seen.keyed!.push(r) });
+    return seen;
+  };
+  const first = page();
+  await settle();
+  expect(first).toEqual({ gh: [{ status: "connected" }], keyed: [] });
+  expect(t.win.location.href).toBe(`${APP}/back`);
+  const reload = page();
+  await settle();
+  expect(reload).toEqual({ gh: [], keyed: [] });
 });

@@ -70,6 +70,8 @@ export class FakeWindow {
   /** Top-level navigations: the popup's (`popup`) or this page's. */
   navigations: { url: string; popup?: Popup }[] = [];
   location = { href: `${APP}/`, assign: (url: string) => void this.navigations.push({ url }) };
+  /** `replaceState` rewrites the address bar in place (no navigation). */
+  history = { state: null, replaced: [] as string[], replaceState: (_s: unknown, _t: string, url: string) => void (this.history.replaced.push(url), (this.location.href = url)) };
   name = "";
   closed = false;
   blockPopups = false;

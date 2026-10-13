@@ -12,7 +12,7 @@
  *
  * The flow: open the popup (blank) → `POST /session/authorize` with fetch → a single-use ticket →
  * navigate the popup (or this page) to `GET /session/authorize?ticket=` → provider → `/callback`,
- * which posts a `completion` back (or puts it on the return URL) → `POST /session/complete`.
+ * which posts a `completion` back (or puts it in the return URL's fragment) → `POST /session/complete`.
  */
 
 /** `GET /session` (the runtime's `SessionInfo`). */
@@ -85,6 +85,9 @@ export async function session(o: { url: string; token: string; window?: Window }
 function nonce(win: Window) {
   return Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
+
+/** After `closed`, how many times (1 s apart) to look whether the connection became active anyway. */
+const CLOSED_POLLS = 10;
 
 /** What the callback hands back: a completion to confirm, or the end already. */
 type Back = Result | { status: "authorized"; completion: string };
@@ -165,9 +168,14 @@ export function connect(o: ConnectOptions): Promise<Result> {
     const back = await wait(win, popup, new URL(o.url).origin, n, o.timeoutMs ?? 600_000);
     if (back.status === "authorized") return confirm(win, o.url, token, back.completion);
     if (back.status === "closed") {
-      // The popup may have finished without reaching us (its opener cut by a provider's COOP, then `resume()` on the return URL).
-      const info = await session({ url: o.url, token, window: win }).catch(() => null);
-      if (info?.state === "active") return { status: "connected" };
+      // The popup may still finish without reaching us: a provider's COOP cuts the opener (and reads
+      // as closed at once), and the popup goes on to the return URL, where `resume()` confirms.
+      for (let i = 0; i < CLOSED_POLLS; i++) {
+        const info = await session({ url: o.url, token, window: win }).catch(() => null);
+        if (info?.state === "active") return { status: "connected" };
+        if (!info || info.state === "revoked") break;
+        await new Promise((r) => win.setTimeout(r, 1000));
+      }
     }
     return back;
   })().catch((e) => {
@@ -176,21 +184,34 @@ export function connect(o: ConnectOptions): Promise<Result> {
   });
 }
 
+/** The outcome keys the runtime puts in the return URL's fragment. */
+const KEYS = ["openconnect", "definition", "id", "completion", "code"];
+
 /**
- * On the return URL's page, after a redirect (or a popup that lost its opener): confirm what the
- * callback handed back and return the result, or null if the URL carries none. A popup closes itself after.
+ * On the return URL's page, after a redirect (or a popup that lost its opener): if the fragment
+ * carries an outcome for this token's connection, remove it from the address bar (and history) and
+ * confirm it. Null if there is none, or it is another connection's (several buttons on one page:
+ * each `resume()` takes only its own). A popup closes itself after.
  */
-export async function resume(o: { url: string; token: Token; href?: string; window?: Window }): Promise<Result | null> {
+export async function resume(o: { url: string; token: Token; window?: Window }): Promise<Result | null> {
   const win = o.window ?? window;
-  const q = new URL(o.href ?? win.location.href).searchParams;
-  const status = q.get("openconnect");
+  const here = new URL(win.location.href);
+  const f = new URLSearchParams(here.hash.slice(1));
+  const status = f.get("openconnect");
+  if (!status) return null;
+  const token = typeof o.token === "string" ? o.token : await o.token();
+  const c = claims(token);
+  if (!c || c.def !== f.get("definition") || c.id !== f.get("id")) return null;
+  const code = f.get("code") ?? "error";
+  const completion = f.get("completion") ?? "";
+  // Read once: gone from the address bar and this history entry, so a reload or a third-party script finds nothing.
+  for (const k of KEYS) f.delete(k);
+  here.hash = f.toString();
+  win.history.replaceState(win.history.state, "", here.href);
   let r: Result | null = null;
-  if (status === "error") r = err(q.get("code") ?? "error", "");
+  if (status === "error") r = err(code, "");
   if (status === "connected") r = { status: "connected" };
-  if (status === "authorized") {
-    const completion = q.get("completion") ?? "";
-    r = await confirm(win, o.url, typeof o.token === "string" ? o.token : await o.token(), completion).catch((e: Error) => err("error", e.message));
-  }
+  if (status === "authorized") r = await confirm(win, o.url, token, completion).catch((e: Error) => err("error", e.message));
   if (r && win.name.startsWith("openconnect-")) win.close();
   return r;
 }

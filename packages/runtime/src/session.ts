@@ -78,6 +78,7 @@ async function issue(h: Hosted, a: Json): Promise<Json> {
     const u = parse(returnUrl);
     // Bound now, checked again on the way back: the callback never redirects anywhere the app didn't name.
     if (!u || (u.protocol !== "https:" && u.protocol !== "http:")) throw bad("returnUrl must be an http(s) URL");
+    if (u.hash) throw bad("returnUrl must not have a fragment: the outcome goes there");
     if (!allowed(h.settings, u.origin)) throw new Fail("forbidden", 403, `returnUrl origin ${u.origin} is not in settings.sessions.origins`);
   }
   const o = origin ?? originOf(returnUrl);
@@ -134,13 +135,18 @@ function cookieHeader(s: Settings, c: Target["cookie"], maxAge: number) {
 const script = (v: Json) => JSON.stringify(v).replace(/[<>&\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 const html = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/** The bound return URL with the outcome on it, if it is still allowed. */
+/**
+ * The bound return URL with the outcome in its fragment, if it is still allowed. A fragment never
+ * reaches a server or a Referer; it names the connection, so a page with several connect buttons
+ * knows whose it is, and `resume()` removes it once read.
+ */
 function returnTo(s: Settings, t: Target, o: Outcome): string | null {
   if (!t.returnUrl || !allowed(s, originOf(t.returnUrl))) return null;
   const u = new URL(t.returnUrl);
-  u.searchParams.set("openconnect", o.status);
-  if (o.status === "authorized") u.searchParams.set("completion", o.completion);
-  if (o.status === "error") u.searchParams.set("code", o.code);
+  const f = new URLSearchParams({ openconnect: o.status, definition: t.definition, id: t.id });
+  if (o.status === "authorized") f.set("completion", o.completion);
+  if (o.status === "error") f.set("code", o.code);
+  u.hash = f.toString();
   return u.href;
 }
 
@@ -302,6 +308,9 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
     "session.complete": async (a) => {
       const sealed = await h.d.store.take(`${DONE}${str(a, "completion")}`);
       if (typeof sealed !== "string") throw new Fail("bad_completion", 400, "unknown, used or expired completion");
+      // Revoked while the user was at the provider: refuse before calling it (metadata) with the new credential.
+      const rec = await h.bound.conn.read();
+      if (rec?.state === "revoked") throw new NotActive("revoked", rec.reason);
       await h.bound.finish(JSON.parse(await decrypt(sealed, h.settings.keys)));
       return null;
     },

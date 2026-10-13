@@ -6,6 +6,13 @@ const W = (w: unknown) => w as Window;
 const settle = async () => {
   for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
 };
+/** Let `connect()` poll after a close: 1 s apart, 10 times. */
+const drain = async (w: { advance(ms: number): void }) => {
+  for (let i = 0; i < 12; i++) {
+    await settle();
+    w.advance(1000);
+  }
+};
 const watch = (p: Promise<Result>) => {
   const s: { r?: Result } = {};
   p.then((r) => (s.r = r));
@@ -89,6 +96,10 @@ test("popup: closed before it reported, and timeout", async () => {
   t.win.opened[0]!.close();
   t.win.advance(300); // seen closed once: a message may still be in flight
   t.win.advance(300);
+  const s = watch(p);
+  await settle();
+  expect(s.r).toBeUndefined(); // still pending: looks again for ~10 s (the popup may finish on its own, COOP)
+  await drain(t.win);
   expect(await p).toEqual({ status: "closed" });
   expect(t.win.timers).toHaveLength(0);
 
@@ -105,13 +116,16 @@ test("popup that lost its opener (COOP): it goes on to the return URL, resume() 
   const p = connect({ url: OC, token, window: W(t.win) });
   await settle();
   const { returnUrl } = await t.finish({ noOpener: true });
-  expect(returnUrl).toStartWith(`${APP}/back?openconnect=authorized&completion=`);
-  // The app's page, loaded in the popup: confirms, then closes the popup.
-  const inPopup = Object.assign(Object.create(t.win), { name: t.win.opened[0]!.name, close: () => t.win.opened[0]!.close() });
-  expect(await resume({ url: OC, token, href: returnUrl!, window: W(inPopup) })).toEqual({ status: "connected" });
-  expect(t.win.opened[0]!.closed).toBe(true);
+  expect(returnUrl).toStartWith(`${APP}/back#openconnect=authorized&definition=example&id=u1&completion=`);
+  // Chromium reports the popup closed as soon as COOP cuts it; the opener keeps looking.
   t.win.advance(600);
   await settle();
+  // The app's page, loaded in the popup: confirms, then closes the popup.
+  const inPopup = Object.assign(Object.create(t.win), { name: t.win.opened[0]!.name, close: () => t.win.opened[0]!.close() });
+  t.win.location.href = returnUrl!;
+  expect(await resume({ url: OC, token, window: W(inPopup) })).toEqual({ status: "connected" });
+  expect(t.win.opened[0]!.closed).toBe(true);
+  await drain(t.win);
   expect(await p).toEqual({ status: "connected" });
 });
 
@@ -122,9 +136,10 @@ test("popup blocked: falls back to a redirect when the session has a returnUrl, 
   expect(await connect({ url: OC, token, window: W(t.win) })).toEqual({ status: "redirecting" });
   expect(t.win.navigations[0]!.popup).toBeUndefined();
   const { location } = await t.finish();
-  expect(location).toStartWith(`${APP}/settings?openconnect=authorized&completion=`);
+  expect(location).toStartWith(`${APP}/settings#openconnect=authorized&definition=example&id=u1&completion=`);
   expect(await t.status("example", "u1")).toBe("pending");
-  expect(await resume({ url: OC, token, href: location!, window: W(t.win) })).toEqual({ status: "connected" });
+  t.win.location.href = location!;
+  expect(await resume({ url: OC, token, window: W(t.win) })).toEqual({ status: "connected" });
   expect(await t.status("example", "u1")).toBe("active");
   expect(t.win.closed).toBe(false); // not a popup: resume() leaves the page alone
 
@@ -132,19 +147,39 @@ test("popup blocked: falls back to a redirect when the session has a returnUrl, 
   expect(await connect({ url: OC, token, window: W(t.win), fallback: false })).toMatchObject({ status: "error", code: "popup_blocked" });
 });
 
-test("redirect mode: navigates this window; resume() reads the result back, a completion once", async () => {
+test("redirect mode: navigates this window; resume() takes the result from the fragment and removes it", async () => {
   const t = await setup();
-  const token = await t.token("example", "u1", { returnUrl: `${APP}/back` });
+  const token = await t.token("example", "u1", { returnUrl: `${APP}/back?tab=2` });
   expect(await connect({ url: OC, token, mode: "redirect", window: W(t.win) })).toEqual({ status: "redirecting" });
   expect(t.win.opened).toHaveLength(0);
   const { location } = await t.finish();
-  expect(await resume({ url: OC, token: async () => token, href: location!, window: W(t.win) })).toEqual({ status: "connected" });
-  expect(await resume({ url: OC, token, href: location!, window: W(t.win) })).toMatchObject({ status: "error", code: "bad_completion" });
+  t.win.location.href = `${location}&mine=1`; // the app's own fragment keys survive
+  expect(await resume({ url: OC, token: async () => token, window: W(t.win) })).toEqual({ status: "connected" });
+  expect(t.win.location.href).toBe(`${APP}/back?tab=2#mine=1`);
+  // A reload: nothing on the URL any more, nothing happens.
+  expect(await resume({ url: OC, token, window: W(t.win) })).toBeNull();
 
   await connect({ url: OC, token, mode: "redirect", window: W(t.win) });
-  const denied = await t.finish({ deny: "access_denied" });
-  expect(await resume({ url: OC, token, href: denied.location!, window: W(t.win) })).toEqual({ status: "error", code: "access_denied", message: "" });
-  expect(await resume({ url: OC, token, href: `${APP}/back`, window: W(t.win) })).toBeNull();
+  t.win.location.href = (await t.finish({ deny: "access_denied" })).location!;
+  expect(await resume({ url: OC, token, window: W(t.win) })).toEqual({ status: "error", code: "access_denied", message: "" });
+  expect(t.win.location.href).toBe(`${APP}/back?tab=2`);
+});
+
+test("two connect buttons on the return page: each resume() takes only its own connection's outcome", async () => {
+  const t = await setup();
+  const gh = await t.token("example", "u1", { returnUrl: `${APP}/back` });
+  const other = await t.token("example", "u2", { returnUrl: `${APP}/back` });
+  const keyed = await t.token("keyed", "u1", { returnUrl: `${APP}/back` });
+  await connect({ url: OC, token: gh, mode: "redirect", window: W(t.win) });
+  t.win.location.href = (await t.finish()).location!;
+  const before = t.win.location.href;
+  // Other mounts (another id, another definition) leave it alone: no bad_completion, nothing removed.
+  expect(await resume({ url: OC, token: other, window: W(t.win) })).toBeNull();
+  expect(await resume({ url: OC, token: keyed, window: W(t.win) })).toBeNull();
+  expect(t.win.location.href).toBe(before);
+  expect(await resume({ url: OC, token: gh, window: W(t.win) })).toEqual({ status: "connected" });
+  expect(t.win.location.href).toBe(`${APP}/back`);
+  expect(t.win.history.replaced).toHaveLength(1);
 });
 
 test("fields: an API key through the session, no window; errors are results", async () => {

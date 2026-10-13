@@ -251,26 +251,40 @@ test("tickets: single use, 60 s, one connection; minted only from the session's 
   expect((await t.send("/session/authorize", { method: "DELETE" })).status).toBe(405);
 });
 
-test("redirect: back to the bound return URL with a completion; provider errors come back as a code", async () => {
+test("redirect: back to the bound return URL, the outcome in its fragment; provider errors come back as a code", async () => {
   const t = await setup();
-  const tk = await t.token("example", "c1", { returnUrl: `${APP}/done?x=1#top` });
+  expect((await t.issue("example", "c1", { returnUrl: `${APP}/done#top` })).status).toBe(400); // the fragment is ours
+  const tk = await t.token("example", "c1", { returnUrl: `${APP}/done?x=1` });
   const res = await t.authorize(tk, { mode: "redirect", nonce: "" });
   const done = await t.back(res.headers.get("location")!, t.cookieOf(res));
   expect(done.status).toBe(303);
   const back = new URL(done.headers.get("location")!);
-  expect(`${back.origin}${back.pathname}${back.hash}`).toBe(`${APP}/done#top`);
-  expect([back.searchParams.get("x"), back.searchParams.get("openconnect")]).toEqual(["1", "authorized"]);
-  expect((await t.confirm(tk, back.searchParams.get("completion")!)).body.state).toBe("active");
+  expect(`${back.origin}${back.pathname}${back.search}`).toBe(`${APP}/done?x=1`); // nothing for servers or Referers
+  const f = new URLSearchParams(back.hash.slice(1));
+  expect([f.get("openconnect"), f.get("definition"), f.get("id")]).toEqual(["authorized", "example", "c1"]);
+  expect((await t.confirm(tk, f.get("completion")!)).body.state).toBe("active");
 
   const again = await t.authorize(tk, { mode: "redirect", nonce: "" });
   const st = new URL(again.headers.get("location")!).searchParams.get("state")!;
   const denied = await t.send(`/callback?error=access_denied&state=${encodeURIComponent(st)}`, { headers: { cookie: t.cookieOf(again) } });
-  expect(denied.headers.get("location")).toBe(`${APP}/done?x=1&openconnect=error&code=access_denied#top`);
+  expect(denied.headers.get("location")).toBe(`${APP}/done?x=1#openconnect=error&definition=example&id=c1&code=access_denied`);
 
   // Errors before the provider (a revoked connection) end the same way.
   await t.send("/connections/example/c1/revoke", { method: "POST", headers: { authorization: "Bearer secret" } });
   const revoked = await t.authorize(tk, { mode: "redirect", nonce: "" });
-  expect(revoked.headers.get("location")).toBe(`${APP}/done?x=1&openconnect=error&code=not_active#top`);
+  expect(revoked.headers.get("location")).toBe(`${APP}/done?x=1#openconnect=error&definition=example&id=c1&code=not_active`);
+});
+
+test("a completion is refused once the connection was revoked meanwhile, before the provider is called", async () => {
+  const t = await setup();
+  const tk = await t.token("example", "c1", { returnUrl: `${APP}/done` });
+  const res = await t.authorize(tk, { mode: "redirect", nonce: "" });
+  const done = await t.back(res.headers.get("location")!, t.cookieOf(res));
+  await t.send("/connections/example/c1/revoke", { method: "POST", headers: { authorization: "Bearer secret" } });
+  const calls = t.p.s.requests.length;
+  const completion = new URLSearchParams(new URL(done.headers.get("location")!).hash.slice(1)).get("completion")!;
+  expect((await t.confirm(tk, completion)).body.error).toMatchObject({ code: "not_active", state: "revoked" });
+  expect(t.p.s.requests.length).toBe(calls);
 });
 
 test("popup without an opener (a provider's COOP cut it) goes on to the return URL", async () => {
@@ -278,7 +292,7 @@ test("popup without an opener (a provider's COOP cut it) goes on to the return U
   const tk = await t.token("example", "c1", { returnUrl: `${APP}/done` });
   const res = await t.authorize(tk);
   const html = await (await t.back(res.headers.get("location")!, t.cookieOf(res))).text();
-  expect(html).toMatch(/else if \("https:\/\/app\.test\/done\?openconnect=authorized\\u0026completion=[\w-]+"\) location\.replace\(/);
+  expect(html).toMatch(/else if \("https:\/\/app\.test\/done#openconnect=authorized\\u0026definition=example\\u0026id=c1\\u0026completion=[\w-]+"\) location\.replace\(/);
 });
 
 test("login CSRF: a ticket minted elsewhere, opened in a victim's browser, never activates", async () => {
@@ -289,7 +303,7 @@ test("login CSRF: a ticket minted elsewhere, opened in a victim's browser, never
   // The victim opens the link: their browser gets the cookie and logs in at the provider...
   const res = await t.go(forged);
   const done = await t.back(res.headers.get("location")!, t.cookieOf(res));
-  const completion = new URL(done.headers.get("location")!).searchParams.get("completion")!;
+  const completion = new URLSearchParams(new URL(done.headers.get("location")!).hash.slice(1)).get("completion")!;
   // ...and the completion lands on the app's page in the victim's browser, whose session is the victim's own (c2).
   const victim = await t.token("example", "c2");
   expect((await t.confirm(victim, completion)).body.error.code).toBe("bad_completion");
@@ -300,14 +314,14 @@ test("login CSRF: a ticket minted elsewhere, opened in a victim's browser, never
   // Sending the victim the provider URL instead: the victim's browser has no cookie.
   const own = await t.authorize(attacker, { mode: "redirect", nonce: "" });
   const loc = own.headers.get("location")!;
-  expect((await t.back(loc, null)).headers.get("location")).toBe(`${APP}/done?openconnect=error&code=session_mismatch`);
+  expect((await t.back(loc, null)).headers.get("location")).toBe(`${APP}/done#openconnect=error&definition=example&id=c1&code=session_mismatch`);
   // Nor can the query smuggle a cookie header in, or a wrong cookie pass.
   const r2 = await t.authorize(attacker, { mode: "redirect", nonce: "" });
   const smuggled = await t.back(r2.headers.get("location")!, null, `&openconnect.cookies=${encodeURIComponent(t.cookieOf(r2))}`);
-  expect(new URL(smuggled.headers.get("location")!).searchParams.get("code")).toBe("session_mismatch");
+  expect(new URLSearchParams(new URL(smuggled.headers.get("location")!).hash.slice(1)).get("code")).toBe("session_mismatch");
   const r3 = await t.authorize(attacker, { mode: "redirect", nonce: "" });
   const wrong = await t.back(r3.headers.get("location")!, `${t.cookieOf(r3).split("=")[0]}=guess`);
-  expect(new URL(wrong.headers.get("location")!).searchParams.get("code")).toBe("session_mismatch");
+  expect(new URLSearchParams(new URL(wrong.headers.get("location")!).hash.slice(1)).get("code")).toBe("session_mismatch");
   expect((await t.status("example", "c1")).state).toBe("pending");
 });
 
