@@ -24,6 +24,7 @@ openconnect deploy
   --name <name>    Worker name (default: deploy.name in the config, else the directory's name)
   --url <url>      public https origin on a custom domain (default: the workers.dev URL)
   --rotate <list>  comma-separated: key (adds OPENCONNECT_KEY_V<n+1>), api-key, state, sessions
+  --new-keys       generate fresh runtime keys although the index database exists without its Worker
   --dry-run        write .openconnect/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
   --config <file>  config file (default ${CONFIG_FILES[0]})
   Needs wrangler (bun add -d wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN).
@@ -41,6 +42,7 @@ const SPEC = {
   name: "string",
   rotate: "string",
   "dry-run": "boolean",
+  "new-keys": "boolean",
   managed: "boolean",
 } as const;
 
@@ -93,6 +95,7 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           ...(envFile ? { envFile } : {}),
           rotate: (str("rotate") ?? "").split(",").map((r) => r.trim()),
           dryRun: !!a.flags["dry-run"],
+          newKeys: !!a.flags["new-keys"],
           log,
         });
         return 0;

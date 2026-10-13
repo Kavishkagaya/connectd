@@ -1,4 +1,4 @@
-# Copy to .prod.vars (gitignored) for `bun run deploy`: pushed as Worker secrets over wrangler's stdin.
+# Copy to .prod.vars (gitignored) for `bun run deploy`: pushed as Worker secrets with the deployed version.
 # Production values only: deploy refuses the dev ones and generates its own runtime keys.
 GITHUB_CLIENT_ID=
 GITHUB_CLIENT_SECRET=

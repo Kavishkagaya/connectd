@@ -13,7 +13,20 @@ const DO_CLASS = "Connection";
 const PLACEHOLDER_DB = "00000000-0000-0000-0000-000000000000";
 
 const here = (f: string) => fileURLToPath(new URL(f, import.meta.url));
-const require = createRequire(import.meta.url);
+const cli = createRequire(import.meta.url);
+
+/**
+ * The runtime the user's project resolves (the copy its config's definitions are bundled with), else
+ * this CLI's. The CLI takes the runtime, kernel and connections as peer dependencies, so they're one
+ * copy in an installed project and `instanceof` holds across the bundle.
+ */
+function fromProject(dir: string, id: string) {
+  try {
+    return createRequire(join(dir, "package.json")).resolve(id);
+  } catch {
+    return cli.resolve(id);
+  }
+}
 
 /** Worker names: lowercase letters, digits and dashes. */
 export const workerName = (s: string) =>
@@ -50,12 +63,11 @@ export function generate(o: { dir: string; config: string; name: string; url?: s
     return JSON.stringify(r.startsWith(".") ? r : `./${r}`);
   };
 
-  // The template's imports, pointed at this CLI's own copies (the user's project may not depend on
-  // the runtime directly) and at the user's config.
+  // The template's imports, pointed at the user's config, the runtime the project resolves, and this CLI's project.ts.
   const entry = join(out, "worker.ts");
-  const runtimeIndex = require.resolve("@openconnect/runtime");
+  const runtimeIndex = fromProject(o.dir, "@openconnect/runtime");
   const src = readFileSync(here("./worker.ts"), "utf8")
-    .replace('"@openconnect/runtime/cloudflare"', rel(require.resolve("@openconnect/runtime/cloudflare")))
+    .replace('"@openconnect/runtime/cloudflare"', rel(fromProject(o.dir, "@openconnect/runtime/cloudflare")))
     .replace('"@openconnect/runtime"', rel(runtimeIndex))
     .replace('"openconnect:config"', rel(o.config))
     .replace('"./project.ts"', rel(here("./project.ts")));

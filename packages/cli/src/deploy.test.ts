@@ -11,34 +11,36 @@ mkdirSync(TMP, { recursive: true });
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 
 /**
- * A fake wrangler: records argv and stdin of every call, and keeps a fake account (D1 databases,
+ * A fake wrangler: records argv of every call (and a --secrets-file's content and mode), and keeps a fake account (D1 databases,
  * secrets by Worker) in a JSON file, enough to answer the commands deploy runs.
  */
 const FAKE = `#!/usr/bin/env bun
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 const [log, path] = [process.env.FAKE_LOG, process.env.FAKE_ACCOUNT];
 const argv = process.argv.slice(2);
-const stdin = argv[1] === "bulk" ? await Bun.stdin.text() : null;
-appendFileSync(log, JSON.stringify({ argv, stdin }) + "\\n");
+const sf = argv.includes("--secrets-file") ? argv[argv.indexOf("--secrets-file") + 1] : null;
+const secrets = sf ? { body: readFileSync(sf, "utf8"), mode: statSync(sf).mode & 0o777 } : null;
+appendFileSync(log, JSON.stringify({ argv, secrets }) + "\\n");
 const a = existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : { dbs: [], workers: {} };
 const save = () => writeFileSync(path, JSON.stringify(a));
 const opt = (n) => argv[argv.indexOf(n) + 1];
 console.error("▲ [WARNING] Proxy environment variables detected.");
-if (process.env.FAKE_FAIL === argv.slice(0, 2).join(" ")) { console.error("boom"); process.exit(1); }
+if (process.env.FAKE_FAIL === argv.slice(0, 2).join(" ")) { console.error(process.env.FAKE_ERROR ?? "boom"); process.exit(1); }
 const [c1, c2] = argv;
 if (c1 === "secret" && c2 === "list") {
   const w = a.workers[opt("--name")];
   if (!w) { console.error("This Worker does not exist on your account. [code: 10007]"); process.exit(1); }
   console.log(JSON.stringify(Object.keys(w.secrets).map((name) => ({ name, type: "secret_text" }))));
-} else if (c1 === "secret" && c2 === "bulk") {
-  Object.assign(a.workers[opt("--name")].secrets, JSON.parse(stdin)); save();
-  console.log("Finished processing secrets file");
 } else if (c1 === "d1" && c2 === "list") console.log(JSON.stringify(a.dbs));
 else if (c1 === "d1" && c2 === "create") { a.dbs.push({ uuid: "db-" + a.dbs.length, name: argv[2] }); save(); console.log("Created"); }
 else if (c1 === "d1" && c2 === "migrations") console.log("Migrations applied");
 else if (c1 === "deploy") {
   const cfg = JSON.parse(readFileSync(opt("--config"), "utf8"));
-  a.workers[cfg.name] ??= { secrets: {} }; a.workers[cfg.name].vars = cfg.vars; save();
+  // Like wrangler without keep_vars: the config's vars replace the deployed ones; secrets are additive.
+  a.workers[cfg.name] ??= { secrets: {} }; a.workers[cfg.name].vars = cfg.vars;
+  a.workers[cfg.name].history = [...(a.workers[cfg.name].history ?? []), cfg.vars];
+  if (secrets) Object.assign(a.workers[cfg.name].secrets, JSON.parse(secrets.body));
+  save();
   console.log("Uploaded " + cfg.name + "\\n  https://" + cfg.name + ".acct.workers.dev\\nCurrent Version ID: 1");
 } else { console.error("fake wrangler: unknown command"); process.exit(1); }
 `;
@@ -80,15 +82,15 @@ function setup(o: { events?: boolean; vars?: string } = {}) {
       ? readFileSync(env.FAKE_LOG!, "utf8")
           .trim()
           .split("\n")
-          .map((l) => JSON.parse(l) as { argv: string[]; stdin: string | null })
+          .map((l) => JSON.parse(l) as { argv: string[]; secrets: { body: string; mode: number } | null })
       : [];
-  const account = () => JSON.parse(readFileSync(env.FAKE_ACCOUNT!, "utf8")) as { dbs: { name: string }[]; workers: Record<string, { secrets: Record<string, string>; vars: Record<string, string> }> };
+  const account = () => JSON.parse(readFileSync(env.FAKE_ACCOUNT!, "utf8")) as { dbs: { name: string }[]; workers: Record<string, { secrets: Record<string, string>; vars: Record<string, string>; history: Record<string, string>[] }> };
   return { dir, run, calls, account, lines, env, reset: () => rmSync(env.FAKE_LOG!, { force: true }) };
 }
 
 const cmd = (c: { argv: string[] }) => c.argv.filter((a) => !a.includes("/")).join(" ");
 
-test("first deploy: D1 created, migrations, deploy twice for the workers.dev URL, every key generated over stdin", async () => {
+test("first deploy: D1 created, migrations, deploy with the secrets, again for the workers.dev URL", async () => {
   const s = setup();
   const r = await s.run();
   const name = r.name;
@@ -99,10 +101,13 @@ test("first deploy: D1 created, migrations, deploy twice for the workers.dev URL
     `d1 create ${name}-index`,
     "d1 list --json",
     `d1 migrations apply ${name}-index --remote --config`,
+    "deploy --config --secrets-file",
     "deploy --config",
-    "deploy --config",
-    `secret bulk --name ${name}`,
   ]);
+  // The secrets file: 0600, gone once wrangler returned.
+  const sent = s.calls().find((c) => c.secrets)!;
+  expect(sent.secrets!.mode).toBe(0o600);
+  expect(existsSync(sent.argv[sent.argv.indexOf("--secrets-file") + 1]!)).toBe(false);
   expect(r.url).toBe(`https://${name}.acct.workers.dev`);
   const w = s.account().workers[name]!;
   expect(w.vars).toEqual({ OPENCONNECT_PUBLIC_URL: r.url as string });
@@ -110,7 +115,7 @@ test("first deploy: D1 created, migrations, deploy twice for the workers.dev URL
     ["GH_ID", "GH_SECRET", "OPENCONNECT_API_KEY", "OPENCONNECT_KEY_V1", "OPENCONNECT_SESSIONS_KEY", "OPENCONNECT_STATE_KEY", "OPENCONNECT_WEBHOOKS_KEY"].sort(),
   );
   expect(w.secrets.GH_SECRET).toBe("prod-secret");
-  // Secrets only ever on stdin; generated files and output hold none of them, except the API key printed once.
+  // Secrets never in argv; generated files and output hold none of them, except the API key printed once.
   const values = Object.values(w.secrets);
   for (const c of s.calls()) for (const v of values) expect(c.argv.join(" ")).not.toContain(v);
   const files = [r.generated.entry, r.generated.wrangler, join(s.dir, ".openconnect", "deploy", "state.json")].map((f) => readFileSync(f, "utf8")).join("\n");
@@ -144,18 +149,17 @@ test("re-deploy: no new keys, one deploy, same database; --rotate key adds V2; -
     `secret list --name ${first.name} --format json`,
     "d1 list --json",
     `d1 migrations apply ${first.name}-index --remote --config`,
-    "deploy --config",
-    `secret bulk --name ${first.name}`,
+    "deploy --config --secrets-file",
   ]);
   expect(again.pushed).toEqual(["GH_ID", "GH_SECRET"]);
   expect(again.apiKey).toBeUndefined();
   expect(s.account().workers[first.name]!.secrets).toEqual(before);
   expect(s.account().dbs.length).toBe(1);
 
-  // No env file and nothing missing: no secret bulk at all.
+  // No env file and nothing missing: no secrets sent at all.
   s.reset();
   await s.run({ envFile: undefined });
-  expect(s.calls().some((c) => c.argv[1] === "bulk")).toBe(false);
+  expect(s.calls().some((c) => c.secrets)).toBe(false);
 
   const rot = await s.run({ rotate: ["key"] });
   expect(rot.pushed).toEqual(["GH_ID", "GH_SECRET", "OPENCONNECT_KEY_V2"]);
@@ -218,7 +222,12 @@ test("wrangler failures: missing binary explained, a failing step stops the depl
   await expect(s.run({ wrangler: join(TMP, "no-such-wrangler") })).rejects.toThrow(NO_WRANGLER);
   s.env.FAKE_FAIL = "d1 migrations";
   await expect(s.run()).rejects.toThrow(/wrangler d1 migrations apply failed \(1\):[\s\S]*boom/);
-  expect(s.calls().some((c) => c.argv[0] === "deploy" || c.argv[1] === "bulk")).toBe(false);
+  expect(s.calls().some((c) => c.argv[0] === "deploy")).toBe(false);
+  delete s.env.FAKE_FAIL;
+
+  // A failing deploy that generated an API key says how to get a visible one.
+  s.env.FAKE_FAIL = "deploy --config";
+  await expect(s.run({ newKeys: true })).rejects.toThrow(/--rotate api-key/);
 });
 
 test("--dry-run: writes the entry, wrangler config and migrations, prints the plan, calls nothing", async () => {
@@ -248,4 +257,44 @@ test("cli: deploy flags, --managed deferred", async () => {
   expect(await main(["deploy", "--dry-run", "--url", "nope"], { log, dir: s.dir })).toBe(1);
   // generate() alone, as the workerd test uses it.
   expect(generate({ dir: s.dir, config: join(s.dir, "openconnect.config.ts"), name: "x" }).wrangler).toEndWith("wrangler.json");
+});
+
+test("existing Worker without state.json (CI): refused until --url, its vars never dropped", async () => {
+  const s = setup();
+  const first = await s.run();
+  rmSync(join(s.dir, ".openconnect", "deploy", "state.json"));
+  s.reset();
+  await expect(s.run()).rejects.toThrow(/exists, but its public URL isn't known here/);
+  expect(s.calls().map(cmd)).toEqual([`secret list --name ${first.name} --format json`]);
+  const again = await s.run({ url: first.url! });
+  expect(again.pushed).toEqual(["GH_ID", "GH_SECRET"]);
+  // Every version after the new Worker's first pass carried the public URL.
+  expect(s.account().workers[first.name]!.history).toEqual([{}, { OPENCONNECT_PUBLIC_URL: first.url! }, { OPENCONNECT_PUBLIC_URL: first.url! }]);
+});
+
+test("new-Worker detection: only Cloudflare's 10007; an index without its Worker needs --new-keys", async () => {
+  const s = setup();
+  s.env.FAKE_FAIL = "secret list";
+  s.env.FAKE_ERROR = "✘ [ERROR] A request to the Cloudflare API failed: route not found";
+  await expect(s.run()).rejects.toThrow(/route not found/);
+  expect(s.calls().length).toBe(1);
+  delete s.env.FAKE_FAIL;
+
+  // The database is there, the Worker isn't: fresh keys would orphan whatever was sealed before.
+  const first = await s.run();
+  const account = s.account();
+  delete account.workers[first.name];
+  writeFileSync(s.env.FAKE_ACCOUNT!, JSON.stringify(account));
+  s.reset();
+  await expect(s.run()).rejects.toThrow(/exists but Worker .* doesn't[\s\S]*--new-keys/);
+  expect(s.calls().some((c) => c.argv[0] === "deploy")).toBe(false);
+  const again = await s.run({ newKeys: true });
+  expect(again.pushed).toContain("OPENCONNECT_KEY_V1");
+});
+
+test("generated entry: the runtime the project resolves", async () => {
+  const s = setup();
+  const r = await s.run({ dryRun: true });
+  // In this repo the project and the CLI resolve the same packages/runtime; the project's is asked first.
+  expect(readFileSync(r.generated.entry, "utf8")).toMatch(/runtime\/src\/index\.ts"/);
 });

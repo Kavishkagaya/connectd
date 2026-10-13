@@ -12,15 +12,18 @@
   "scripts": {
     "test": "bun test src && vitest run"
   },
-  "dependencies": {
+  "devDependencies": {
     "@openconnect/connections": "workspace:*",
     "@openconnect/kernel": "workspace:*",
-    "@openconnect/runtime": "workspace:*"
-  },
-  "devDependencies": {
+    "@openconnect/runtime": "workspace:*",
     "@openconnect/sdk": "workspace:*",
     "@cloudflare/vitest-plugin": "1.4.0",
     "@cloudflare/workers-types": "^5.20261011.1",
     "vitest": "5.0.3"
+  },
+  "peerDependencies": {
+    "@openconnect/connections": "workspace:*",
+    "@openconnect/kernel": "workspace:*",
+    "@openconnect/runtime": "workspace:*"
   }
 }

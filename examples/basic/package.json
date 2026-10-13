@@ -9,6 +9,8 @@
   "dependencies": {
     "@openconnect/cli": "workspace:*",
     "@openconnect/connections": "workspace:*",
-    "@openconnect/providers": "workspace:*"
+    "@openconnect/kernel": "workspace:*",
+    "@openconnect/providers": "workspace:*",
+    "@openconnect/runtime": "workspace:*"
   }
 }
