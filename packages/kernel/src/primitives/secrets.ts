@@ -58,12 +58,17 @@ export async function sign(payload: string, key: CryptoKey): Promise<string> {
   return `${encoded}.${base64url(new Uint8Array(await crypto.subtle.sign("HMAC", key, text.encode(encoded))))}`;
 }
 
+/** The payload, or null if forged or malformed (bad base64 included: input from the outside never throws). */
 export async function verify(signed: string, key: CryptoKey): Promise<string | null> {
   const [encoded, sig, extra] = signed.split(".");
   if (!encoded || !sig || extra !== undefined) return null;
-  // subtle.verify compares in constant time.
-  const ok = await crypto.subtle.verify("HMAC", key, fromBase64url(sig), text.encode(encoded));
-  return ok ? new TextDecoder().decode(fromBase64url(encoded)) : null;
+  try {
+    // subtle.verify compares in constant time.
+    const ok = await crypto.subtle.verify("HMAC", key, fromBase64url(sig), text.encode(encoded));
+    return ok ? new TextDecoder().decode(fromBase64url(encoded)) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**

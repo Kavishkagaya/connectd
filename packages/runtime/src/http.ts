@@ -1,6 +1,7 @@
 import { base64url, type Json, routeState } from "@openconnect/kernel";
 import { type Index, listing } from "./directory.ts";
-import { type AnyDefinition, Fail, fault, instanceOf, type Reply, type Settings } from "./host.ts";
+import { type AnyDefinition, COOKIES, Fail, type Fault, fault, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
+import { complete } from "./session.ts";
 
 /** How the Worker reaches an instance: a DO stub's `onCall` on Cloudflare, `memory().call` in tests. */
 export type Call = (instance: string, method: string, args: Json) => Promise<Json>;
@@ -62,15 +63,24 @@ export const routes: Record<string, Route> = {
     },
   },
 
-  /** The provider redirects the user here. `state` names the instance (signed), so no lookup. */
+  /**
+   * The provider redirects the user here. `state` names the instance (signed), so no lookup.
+   * Answers JSON, unless a frontend session started it (#29): then a redirect to its return URL or
+   * a page that posts the result to the opener.
+   */
   callback: {
     public: true,
     async fetch(req, api) {
       const q = Object.fromEntries(new URL(req.url).searchParams);
       const r = await routeState(q.state ?? "", api.settings.stateKey);
       if (!r) throw new Fail("bad_request", 400, "unknown or forged state");
-      // ponytail: answers JSON; a redirect back to the app (return URL per connect) comes with the SDK (L4).
-      return reply(await api.call(r.instance, "callback", q));
+      // The Cookie header overwrites any query parameter of that name: the binding comes from the browser only.
+      const res = await api.call(r.instance, "callback", { ...q, [COOKIES]: req.headers.get("cookie") ?? "" });
+      if ("ok" in res && res.ok && typeof res.ok === "object" && "target" in res.ok) {
+        const s = res.ok as { target: Target; completion?: string; error?: Fault };
+        return complete(api.settings, s.target, s.error ? { status: "error", code: s.error.code, message: s.error.message } : { status: "authorized", completion: s.completion ?? "" });
+      }
+      return reply(res);
     },
   },
 };

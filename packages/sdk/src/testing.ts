@@ -2,7 +2,7 @@ import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
 import { fakeOAuth } from "@openconnect/connections/testing";
 import { importHmacKey, importKeys, type OAuth2 } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
-import { directory, emit, events, type Extension, memoryIndex, proxy, runtime } from "@openconnect/runtime";
+import { directory, emit, events, type Extension, memoryIndex, proxy, runtime, sessions } from "@openconnect/runtime";
 import { openconnect } from "./client.ts";
 
 /** The real runtime on the memory driver, fake providers, and an SDK client pointed at its fetch. Tests only. */
@@ -57,9 +57,17 @@ export async function setup() {
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null },
     fetch: p.fetch,
     events: { url: EVENTS, secret: SECRET },
+    sessions: { key: await importHmacKey(key(5)), origins: ["https://app.test"] },
   };
-  const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [proxy(), events(), directory(memoryIndex()), hook] });
+  let clock = () => T0;
+  const rt = runtime({
+    definitions: { example, keyed },
+    settings: async () => settings,
+    extensions: [proxy(), events(), directory(memoryIndex()), sessions(), hook],
+    now: () => clock(),
+  });
   const w = memory(rt.program, { now: T0 });
+  clock = w.now;
   const sleeps: number[] = [];
   const oc = openconnect({
     url: "https://oc.test/",

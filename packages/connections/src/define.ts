@@ -30,6 +30,8 @@ export type Auth<C> = {
   refresh?(ctx: Ctx<C>, cred: OAuth2): Promise<TokenResponse>;
   /** Revoke at the provider. Best effort: the connection is revoked locally either way. */
   revoke?(ctx: Ctx<C>, cred: Credential): Promise<void>;
+  /** The input fields `start` asks the user for (`apiKey`); a frontend renders them as a form (#29). */
+  fields?: string[];
 };
 
 export type Definition<C, M extends Json> = {
@@ -121,6 +123,8 @@ export class InputError extends Error {}
 
 export const defineConnection = <C, M extends Json = null>(def: Definition<C, M>) => def;
 
+export type Handshake = { data: Json; extra?: Json };
+
 export type BindOptions<C> = Omit<Ctx<C>, "now"> & { keys: Keys; stateKey: CryptoKey };
 
 /** Run a definition on one connection instance. Create once per Program instance, like `connection()`. */
@@ -132,6 +136,19 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
     stateKey: opts.stateKey,
     ...(refresh ? { refresh: (c: OAuth2) => refresh(ctx, c) } : {}),
   });
+
+  /** Take the handshake a callback's `state` names, at most once: the start step's data and `connect`'s `extra`. */
+  async function handshake(params: Record<string, string>): Promise<Handshake> {
+    const hs = (await conn.handshake.take(params.state ?? "")) as Handshake | null;
+    if (!hs) throw new InputError("unknown or expired state");
+    return hs;
+  }
+
+  /** Run the definition's callback step: the credential, not stored yet (a frontend session holds it until the app's page confirms, #29). */
+  async function exchange(params: Record<string, string>, hs: Handshake): Promise<Credential> {
+    if (!def.auth.callback) throw new Error(`${def.id}: no callback step`);
+    return def.auth.callback(ctx, params, hs.data);
+  }
 
   async function finish(cred: Credential) {
     const meta = def.metadata ? await def.metadata(ctx, cred) : null;
@@ -145,8 +162,12 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
     /** What definition hooks see; extensions call webhook hooks with it. */
     ctx,
 
-    /** Begin an authorization (first connect or re-auth). The URL to send the user to, or null if it finished inline. */
-    async connect(input: Record<string, string> = {}): Promise<string | null> {
+    /**
+     * Begin an authorization (first connect or re-auth). The URL to send the user to, or null if it
+     * finished inline. `extra` rides in the handshake and comes back from `handshake()` (where a
+     * frontend session returns to, #29).
+     */
+    async connect(input: Record<string, string> = {}, extra?: Json): Promise<string | null> {
       const s = await conn.read();
       if (s?.state === "revoked") throw new NotActive("revoked", s.reason);
       const step = await def.auth.start(ctx, input);
@@ -156,16 +177,19 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
       }
       // Lost cas = someone else created the record meanwhile; fine.
       if (!s) await conn.write(null, "pending", null);
-      return step.redirect(await conn.handshake.open({ data: step.data }));
+      return step.redirect(await conn.handshake.open({ data: step.data, ...(extra === undefined ? {} : { extra }) }));
     },
 
-    /** The provider redirected back. `params` is the callback query, `state` included. */
-    async callback(params: Record<string, string>) {
-      const hs = (await conn.handshake.take(params.state ?? "")) as { data: Json } | null;
-      if (!hs) throw new InputError("unknown or expired state");
-      if (!def.auth.callback) throw new Error(`${def.id}: no callback step`);
-      await finish(await def.auth.callback(ctx, params, hs.data));
+    handshake,
+
+    /** The provider redirected back. `params` is the callback query, `state` included; `hs` if already taken. */
+    async callback(params: Record<string, string>, hs?: Handshake) {
+      await finish(await exchange(params, hs ?? (await handshake(params))));
     },
+
+    exchange,
+    /** Check a credential (`metadata`) and activate with it. */
+    finish,
 
     token: conn.token,
 

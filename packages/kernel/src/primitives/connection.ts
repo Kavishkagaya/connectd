@@ -244,7 +244,8 @@ export function connection(d: Driver, instance: string, opts: Options) {
 export async function routeState(state: string, key: CryptoKey): Promise<{ instance: string; id: string } | null> {
   const p = await verify(state, key);
   if (!p) return null;
-  const [instance, id] = JSON.parse(p) as unknown[];
+  const v = JSON.parse(p) as unknown;
+  const [instance, id] = Array.isArray(v) ? v : [];
   return typeof instance === "string" && typeof id === "string" ? { instance, id } : null;
 }
 

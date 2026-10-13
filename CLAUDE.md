@@ -5,7 +5,7 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
 ## Layers
 
 ```
- L4  DevX        SDK · CLI · dashboard                         (in progress)
+ L4  DevX        SDK · connect UI · CLI · dashboard            (in progress)
  L3  Runtime     ConnectionDO · proxy · webhooks · events      (done)
  L2  Connections defineConnection(), providers                 (in progress)
  L1  Kernel      connection · tokens · rate · secrets · schedule · oauth   (done)
@@ -41,20 +41,27 @@ packages/runtime/
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
   src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection
+  src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
-  src/client.ts       openconnect({ url, apiKey }): connection(def, id) status/connect/token/revoke/call/fetch, connections.page/list, OpenConnectError
+  src/client.ts       openconnect({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/call/fetch, connections.page/list, OpenConnectError
   src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
   src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
+
+packages/connect/     browser package (#29), zero dependencies, DOM only (tsconfig.web.json; the root tsc skips it)
+  src/connect.ts      headless: connect({ url, token, mode: popup | redirect, fields? }) → Result, resume() on the return URL, session(), claims()
+  src/ui.ts           mount(el, opts): prebuilt button, or a form for API-key definitions; returns unmount
+  src/fake.ts         fake window/DOM in front of the real runtime, for the tests
+  e2e/chromium.ts     one real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 ```
 
-Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. SDK: `@openconnect/sdk`, `/node`.
+Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`.
 
 ## Commands
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
-- `bun run typecheck`: root tsc, plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`, and a web-only pass for the SDK
+- `bun run typecheck`: root tsc, plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect`
 - One kernel file: `cd packages/kernel && bun test src/primitives/rate.test.ts`
 
 ## Patterns
