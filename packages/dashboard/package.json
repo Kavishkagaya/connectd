@@ -1,0 +1,24 @@
+{
+  "name": "@openconnect/dashboard",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "files": [
+    "src"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "bun build.ts",
+    "test": "bun test src"
+  },
+  "devDependencies": {
+    "@openconnect/connections": "workspace:*",
+    "@openconnect/kernel": "workspace:*",
+    "@openconnect/runtime": "workspace:*"
+  },
+  "peerDependencies": {
+    "@openconnect/runtime": "workspace:*"
+  }
+}

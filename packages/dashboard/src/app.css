@@ -1,0 +1,23 @@
+:root { --fg: #1b1f24; --muted: #59636e; --bg: #fff; --line: #d1d9e0; --soft: #f6f8fa; --accent: #0969da; --bad: #cf222e; --warn: #9a6700; --good: #1a7f37; color-scheme: light dark; }
+@media (prefers-color-scheme: dark) { :root { --fg: #e6edf3; --muted: #9198a1; --bg: #0d1117; --line: #3d444d; --soft: #151b23; --accent: #4493f8; --bad: #f85149; --warn: #d29922; --good: #3fb950; } }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+main { max-width: 1100px; margin: 0 auto; padding: 0 16px 48px; }
+header { display: flex; gap: 16px; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+header nav { display: flex; gap: 12px; flex: 1; }
+a { color: var(--accent); }
+h2 { margin: 20px 0 8px; font-size: 18px; } h3 { margin: 20px 0 6px; font-size: 15px; } h4 { margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; white-space: nowrap; }
+th { font-weight: 600; color: var(--muted); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 8px 0; } dt { color: var(--muted); } dd { margin: 0; overflow-wrap: anywhere; }
+pre { background: var(--soft); border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-x: auto; margin: 4px 0; }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+form, .oc-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+input, select, button { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+button { cursor: pointer; background: var(--soft); } button.oc-danger { color: var(--bad); }
+.oc-login { flex-direction: column; align-items: stretch; max-width: 360px; margin: 80px auto; }
+.oc-connect label, .oc-login label { display: flex; flex-direction: column; gap: 4px; }
+.oc-state { padding: 0 6px; border-radius: 10px; border: 1px solid currentColor; font-size: 12px; }
+.oc-active { color: var(--good); } .oc-reauth_required, .oc-pending { color: var(--warn); } .oc-revoked { color: var(--muted); }
+.oc-error { color: var(--bad); } .oc-warn { color: var(--warn); } .oc-hint { color: var(--muted); } .oc-note { color: var(--good); }

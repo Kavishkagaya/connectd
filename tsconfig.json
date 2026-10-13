@@ -24,6 +24,7 @@
     "packages/kernel/src/drivers/do.ts",
     "packages/runtime/src/cloudflare.ts",
     "packages/cli/src/worker.ts",
-    "packages/connect"
+    "packages/connect",
+    "packages/dashboard"
   ]
 }

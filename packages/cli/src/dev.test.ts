@@ -1,6 +1,7 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { Overview } from "@openconnect/dashboard";
 import { type ConnectionEvent, openconnect } from "@openconnect/sdk";
 import { main } from "./cli.ts";
 import { type Dev, dev, swappable } from "./dev.ts";
@@ -132,6 +133,15 @@ test("config: function of the env (.dev.vars < process env), banner, unconfigure
   expect(out).toContain(`${d.url}/callback`);
   expect(out).toContain("example, keyed");
   expect(out).toContain(`${w.env.EVENTS}`);
+  expect(out).toContain(`${d.url}/dashboard`);
+  // The dashboard is on by default: the page is public, its API needs the key.
+  expect((await fetch(`${d.url}/dashboard`)).headers.get("content-security-policy")).toContain("script-src 'self'");
+  expect((await fetch(`${d.url}/dashboard/api/overview`)).status).toBe(401);
+  const ov = (await (await fetch(`${d.url}/dashboard/api/overview`, { headers: { authorization: `Bearer ${d.apiKey}` } })).json()) as Overview;
+  expect(ov.definitions.map((x) => [x.id, x.configured])).toEqual([
+    ["example", false],
+    ["keyed", true],
+  ]);
   const oc = openconnect({ url: d.url, apiKey: d.apiKey });
   await expect(oc.connection("example", "u1").connect()).rejects.toMatchObject({ code: "not_configured" });
   await d.stop();

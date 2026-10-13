@@ -21,6 +21,16 @@ import type { Extension } from "./runtime.ts";
 
 /** `data` of a `webhook` event. `payload` is null past MAX_PAYLOAD, with `truncated` = its size in bytes. */
 export type WebhookData = { topic: string; delivery: string | null; payload: Json | null; truncated?: number };
+/** `webhooks.status`. `registers`: the definition registers per connection and `settings.webhooks` is set. `account`: the external ids (JSON) it was registered for. */
+export type WebhooksStatus = {
+  supported: boolean;
+  registers: boolean;
+  /** This connection's ingress URL (`/webhooks/:def/:id`); null without `settings.webhooks` or `webhooks` in the definition. */
+  url: string | null;
+  registration: { hook: Json; renewAt: number | null; account: string | null } | null;
+  /** A registration is armed or backing off. */
+  pending: boolean;
+};
 type Receive = { data: WebhookData; external?: { key: string; value: string } };
 /**
  * What `register` returned, kept until revoke. `hook` null = the definition registered nothing.
@@ -210,6 +220,20 @@ export function webhooks(): Extension {
             }
             await emit(h, m.data as unknown as Json);
             return null;
+          },
+          /**
+           * For the dashboard (#32): the provider-side registration, never the secret. `hook` is what the
+           * definition's `register` returned (stored unsealed, so it holds ids, not secrets).
+           */
+          "webhooks.status": async () => {
+            const cur = (await d.store.get(KEY))?.value as unknown as Stored | undefined;
+            return {
+              supported: !!w,
+              registers,
+              url: h.settings.webhooks && w ? (await endpoint(h)).url : null,
+              registration: cur ? { hook: cur.hook, renewAt: cur.renewAt, account: cur.account } : null,
+              pending: !!(await d.store.get(PENDING)),
+            } satisfies WebhooksStatus as unknown as Json;
           },
           /** URL + secret for registering this connection's webhook yourself (GitHub repo hooks through the proxy). API key only. */
           "webhooks.endpoint": async () => (await endpoint(h)) as unknown as Json,

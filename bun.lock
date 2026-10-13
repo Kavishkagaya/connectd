@@ -25,6 +25,9 @@
       "bin": {
         "openconnect": "./src/bin.ts",
       },
+      "dependencies": {
+        "@openconnect/dashboard": "workspace:*",
+      },
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.0",
         "@cloudflare/workers-types": "^5.20261011.1",
@@ -54,6 +57,18 @@
       "version": "0.0.0",
       "dependencies": {
         "@openconnect/kernel": "workspace:*",
+      },
+    },
+    "packages/dashboard": {
+      "name": "@openconnect/dashboard",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@openconnect/connections": "workspace:*",
+        "@openconnect/kernel": "workspace:*",
+        "@openconnect/runtime": "workspace:*",
+      },
+      "peerDependencies": {
+        "@openconnect/runtime": "workspace:*",
       },
     },
     "packages/kernel": {
@@ -238,6 +253,8 @@
     "@openconnect/connect": ["@openconnect/connect@workspace:packages/connect"],
 
     "@openconnect/connections": ["@openconnect/connections@workspace:packages/connections"],
+
+    "@openconnect/dashboard": ["@openconnect/dashboard@workspace:packages/dashboard"],
 
     "@openconnect/kernel": ["@openconnect/kernel@workspace:packages/kernel"],
 

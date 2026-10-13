@@ -87,8 +87,11 @@ export const routes: Record<string, Route> = {
 
 const digest = async (s: string) => base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))));
 
-// Compare digests, not the strings, so the comparison leaks nothing about the key.
-async function authorized(req: Request, key: string) {
+/**
+ * The request carries `Authorization: Bearer <key>`. Compares digests, not the strings, so the
+ * comparison leaks nothing about the key. For public routes with an API-key part (the dashboard's `/api`).
+ */
+export async function authorized(req: Request, key: string) {
   return key !== "" && (await digest(req.headers.get("authorization") ?? "")) === (await digest(`Bearer ${key}`));
 }
 

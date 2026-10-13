@@ -72,6 +72,7 @@ export type Webhooks<C> = {
   /**
    * Create the provider-side subscription for an active connection, pointed at `endpoint`.
    * Returns what `unregister` needs, and when it lapses (Google channels) so it gets renewed. Null: nothing to register.
+   * `hook` is stored unsealed and shown in the dashboard: ids only, no secrets.
    */
   register?(ctx: Ctx<C>, cred: Credential, endpoint: { url: string; secret: string }): Promise<{ hook: Json; expiresAt?: number } | null>;
   /** Remove what `register` created. Best effort: runs before revoke, and after a renewal for the old one. */
