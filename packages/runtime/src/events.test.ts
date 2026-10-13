@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { apiKey, defineConnection } from "@openconnect/connections";
-import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
+import { type Driver, importHmacKey, importKeys, type Json, type Program } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { type ConnectionEvent, emit, events, type Extension, runtime } from "./index.ts";
 import { sign, verify } from "./signature.ts";
@@ -13,6 +13,28 @@ const keyed = defineConnection({ id: "keyed", auth: apiKey(["key"]) });
 // A webhook extension stand-in (#25): a method that emits a non-lifecycle event.
 const hook: Extension = { connection: (h) => ({ methods: { hook: async (a) => (await emit(h, a), null) } }) };
 
+/** The DO limit on one stored value, plus a count of live event keys and of credential-record reads. */
+const LIMIT = 2 * 1024 * 1024;
+function checked(program: Program) {
+  const live = new Set<string>();
+  const reads = { record: 0 };
+  const wrapped: Program = (d, instance) => {
+    const fit = (k: string, v: Json) => {
+      if (JSON.stringify(v).length > LIMIT) throw new Error(`value too large: ${k}`);
+      if (k.startsWith("events.e:")) live.add(k);
+    };
+    const store: Driver["store"] = {
+      ...d.store,
+      get: (k) => (k === "record" && reads.record++, d.store.get(k)),
+      put: (k, v, o) => (fit(k, v), d.store.put(k, v, o)),
+      cas: (k, e, v, o) => (fit(k, v), d.store.cas(k, e, v, o)),
+      delete: (k) => (live.delete(k), d.store.delete(k)),
+    };
+    return program({ ...d, store }, instance);
+  };
+  return { wrapped, live, reads };
+}
+
 async function setup(opts: { configured?: boolean } = {}) {
   // Every attempt, failed ones too; `delivered` is the 2xx ones.
   const got: { headers: Headers; body: string; status: number }[] = [];
@@ -20,6 +42,7 @@ async function setup(opts: { configured?: boolean } = {}) {
   let hang = false;
   const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
     expect(String(url)).toBe(URL_);
+    expect(init?.redirect).toBe("manual");
     if (hang) throw new DOMException("timed out", "TimeoutError");
     got.push({ headers: new Headers(init?.headers), body: init?.body as string, status });
     return new Response(null, { status });
@@ -33,8 +56,9 @@ async function setup(opts: { configured?: boolean } = {}) {
     fetch,
     ...(opts.configured === false ? {} : { events: { url: URL_, secret: SECRET } }),
   };
-  const rt = runtime({ definitions: { keyed }, settings: async () => settings, extensions: [events, hook] });
-  const w = memory(rt.program, { now: 1_700_000_000_000 });
+  const rt = runtime({ definitions: { keyed }, settings: async () => settings, extensions: [events(), hook] });
+  const c = checked(rt.program);
+  const w = memory(c.wrapped, { now: 1_700_000_000_000 });
   const call = (m: string, a: Json = null) => w.call("conn:keyed:k1", m, a);
   const delivered = () => got.filter((g) => g.status < 300);
   const bodies = () => delivered().map((g) => JSON.parse(g.body) as ConnectionEvent);
@@ -42,6 +66,8 @@ async function setup(opts: { configured?: boolean } = {}) {
     w,
     call,
     got,
+    live: c.live,
+    reads: c.reads,
     delivered,
     bodies,
     types: () => bodies().map((e) => e.type),
@@ -148,4 +174,57 @@ test("sign and verify agree on the Standard Webhooks test vector", async () => {
   expect(sig).toBe("v1,g0hM9SsE+OTPJTGt/tmIKtSyZlE3uFJELVlNIOLJ1OE=");
   const headers = new Headers({ "webhook-id": id, "webhook-timestamp": "1614265330", "webhook-signature": sig });
   expect(await verify(secret, headers, body, { now: 1614265330_000 })).toBe(true);
+});
+
+test("a 3xx is a failed delivery: retried, never followed", async () => {
+  const t = await setup();
+  t.set(302);
+  await t.call("connect", { key: "sk" });
+  await t.w.advance(0);
+  expect(t.got.map((g) => g.status)).toEqual([302]);
+  t.set(200);
+  await t.w.advance(10_000);
+  expect(t.types()).toEqual(["connection.active"]);
+});
+
+test("a large backlog: oldest dropped past 1000, the rest delivered in order, keys freed", async () => {
+  const t = await setup();
+  t.set(503);
+  await t.call("connect", { key: "sk" }); // seq 1
+  await t.w.advance(0);
+  for (let n = 0; n < 1200; n++) await t.call("hook", { n }); // seq 2..1201
+  expect(t.live.size).toBe(1000);
+  t.set(200);
+  await t.w.advance(3_600_000);
+  const seqs = t.bodies().map((e) => e.seq);
+  expect(seqs.length).toBe(1000);
+  expect(seqs).toEqual(Array.from({ length: 1000 }, (_, i) => 202 + i));
+  expect(t.bodies()[0]!.data).toEqual({ n: 200 });
+  expect(t.live.size).toBe(0);
+});
+
+test("large payloads: each event is its own stored value, so a backlog past 2 MB still drains", async () => {
+  const t = await setup();
+  t.set(503);
+  await t.call("connect", { key: "sk" });
+  await t.w.advance(0);
+  const big = "x".repeat(500_000);
+  for (let n = 0; n < 20; n++) expect(await t.call("hook", { n, big })).toEqual({ ok: null }); // ~10 MB in total
+  t.set(200);
+  await t.w.advance(3_600_000);
+  expect(t.bodies().map((e) => (e.type === "webhook" ? (e.data as { n: number }).n : e.type))).toEqual([
+    "connection.active",
+    ...Array.from({ length: 20 }, (_, i) => i),
+  ]);
+  expect(t.live.size).toBe(0);
+});
+
+test("after() skips the outbox when no state changed: one record read, no decrypt", async () => {
+  const t = await setup();
+  await t.call("connect", { key: "sk" });
+  await t.w.advance(0);
+  t.reads.record = 0;
+  await t.call("status");
+  // status reads the record itself (decrypting); events only reads it once more for the seq.
+  expect(t.reads.record).toBe(2);
 });

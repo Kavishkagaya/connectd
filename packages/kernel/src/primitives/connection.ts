@@ -209,6 +209,8 @@ export function connection(d: Driver, instance: string, opts: Options) {
 
     events: {
       pending: async () => (await read())?.events ?? [],
+      /** Seq of the latest event ever emitted (0 if none). Cheap: no decrypt, so callers can poll it to skip `pending()`. */
+      seq: async () => ((await d.store.get("record"))?.value as unknown as Stored | undefined)?.seq ?? 0,
       /** Drop delivered events up to and including `seq`. */
       async ack(seq: number) {
         for (;;) {
