@@ -1,6 +1,7 @@
 import { apiKey, defineConnection } from "@openconnect/connections";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
-import { cloudflare } from "../src/cloudflare.ts";
+import { cloudflare, d1Index } from "../src/cloudflare.ts";
+import { directory } from "../src/directory.ts";
 import { runtime } from "../src/runtime.ts";
 
 // Fake clock, far in the future so real alarms never fire on their own during tests.
@@ -18,7 +19,10 @@ const keyed = defineConnection({
     if (!res.ok) throw new Error(`/me ${res.status}`);
     return { account };
   },
+  external: (m) => ({ account: m.account }),
 });
+
+export const index = d1Index("INDEX");
 
 const rt = runtime({
   definitions: { keyed },
@@ -31,6 +35,7 @@ const rt = runtime({
     // The provider rejects key "bad", so a throwing hook can be tested across the DO boundary.
     fetch: (async (url: RequestInfo | URL) => new Response(null, { status: String(url).endsWith("=bad") ? 401 : 200 })) as typeof fetch,
   }),
+  extensions: [directory(index)],
 });
 
 const cf = cloudflare(rt, { binding: "CONNECTION", now: () => g.ocNow! });

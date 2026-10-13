@@ -12,7 +12,7 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
  L0  Drivers     Durable Objects · in-memory · server (deferred)           (done)
 ```
 
-A layer only uses the one below it. The kernel never imports Cloudflare; the DO driver is the only place `cloudflare:workers` appears.
+A layer only uses the one below it. The kernel never imports Cloudflare; the DO driver and `runtime/src/cloudflare.ts` are the only places `cloudflare:workers` appears.
 
 ## Layout
 
@@ -36,6 +36,7 @@ packages/runtime/
   src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
+  src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
 ```
 
 Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`.

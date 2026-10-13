@@ -35,6 +35,7 @@ export const github = defineConnection({
     const u = (await res.json()) as { id: number; login: string };
     return { id: String(u.id), login: u.login };
   },
+  external: (m) => ({ id: m.id }),
   rate: {
     connection: { count: 5000, periodMs: 3_600_000 },
     observe: (res, now) => rateHeaders(res, now, { remaining: "x-ratelimit-remaining", reset: "x-ratelimit-reset" }),

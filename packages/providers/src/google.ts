@@ -21,6 +21,7 @@ export const google = defineConnection({
     const claims = JSON.parse(new TextDecoder().decode(fromBase64url(idToken.split(".")[1] ?? ""))) as { sub: string; email?: string };
     return { sub: claims.sub, email: claims.email ?? null };
   },
+  external: (m) => ({ sub: m.sub }),
   // Quotas are per API and per project; only follow what Google says.
   rate: { observe: (res, now) => rateHeaders(res, now) },
 });

@@ -153,3 +153,22 @@ Per provider:
 Extension points for #23–#26: each feature is one file in `packages/runtime/src/` exporting an `Extension` (`{ routes?, connection? }` in `runtime.ts`), passed in `extensions: [...]`. Built-in routes and methods win on a name clash.
 - `routes: { <segment>: { public?, fetch(req, api, path) } }` for Worker-level endpoints (proxy `/proxy/...`, webhooks `/webhooks/...`). `api.call(instance, method, args)` reaches a connection and returns a `Reply`; `reply(r)` turns it into a Response. Throw `Fail` for an HTTP error.
 - `connection(hosted) => { methods?, onTimer?, after? }` per connection instance. `hosted` = `{ d, instance, def, id, bound, settings }`; `bound.conn` is the kernel connection (`events.pending()` / `ack(seq)` for #24). `methods` are reachable by RPC and over HTTP; `onTimer` claims timers named `<extension>.<name>`; `after(cause)` runs after every method and timer, failed ones too, so events delivery (#24) and the index (#26) can follow state changes.
+
+## #26 Connection index & querying — decided
+
+`packages/runtime/src/directory.ts`: an `Index` (`upsert`, `list`), `memoryIndex()` for tests and dev, and `directory(index)`, the extension that keeps it current. `d1Index(binding)` in `/cloudflare` is the D1 one; schema in `packages/runtime/migrations/0001_index.sql`.
+
+**D1 schema.** `connections (def, id, state, reason, external JSON, created_at, updated_at, version)`, primary key `(def, id)`, plus `connection_external (def, key, value, id)`, one row per external id. Nothing secret is copied: the credential stays sealed in the DO.
+- **External ids:** a definition declares `external(metadata) => Record<string, string>` (new optional field in `defineConnection`): Slack `{ teamId }`, GitHub `{ id }`, Google `{ sub }`. They're indexed `(def, key, value)`, not unique: one Slack team can have several connections (one per app user). Webhooks (#25) route with `findByExternal(index, def, key, value)` (or `api.index` from a route).
+- **List:** `GET /connections?def=&state=&q=&external=key:value&cursor=&limit=` (API key), `{ connections: Row[], cursor }`. Ordered by `(def, id)`; keyset cursor (opaque, base64url of the last key), `limit` 1–200, default 50. `q` is a case-insensitive substring of the id or any external value; it scans (FTS5 when lists get big). `/connections` with no segment lists; `/connections/:def/:id` is unchanged. The built-in route handles both, and lists only if an extension provided an index (`Extension.index`, handed to routes as `api.index`); without one it's a 404 as before.
+- One deployment = one app (#22), so there is no app/tenant column yet; managed adds one with multi-app (#34).
+
+**Consistency.** The ConnectionDO is the source of truth; the index is a copy, eventually consistent.
+- **Write path:** the extension's `after()` reads the record and the metadata, and upserts the row after every method and timer, failed ones too. `version` = the DO's store version (record or metadata, whichever is newer; the driver's per-instance counter orders both), and the upsert only replaces a row with `version <= excluded.version` (in D1: `ON CONFLICT ... WHERE`, external ids moved in the same batch). So writes that arrive out of order (interleaved `after`s, retries) never roll a row back. Calls that changed nothing (`token`, `status`) skip the write.
+- **Failures:** an upsert that throws is logged by the host and doesn't fail the call. The row catches up on the next call or timer on that connection (the skip only remembers successful writes). `POST /connections/:def/:id/index.sync` forces a re-copy of one connection: the repair path for a lost or restored database.
+- ponytail: no full rebuild. A DO namespace can't be enumerated, so rebuilding from nothing needs a list of instances; that's the index itself, or a log of creations (#24's events). Add a bulk `sync` over a list of ids if a restore ever needs it.
+- ponytail: the upsert is awaited inside the call, so D1 latency lands on the caller; move it to `waitUntil` if it shows.
+- Doesn't read or ack the event outbox; that's #24's.
+- No delete: connections are never deleted (revoked is terminal).
+
+**Deploy (#31):** a D1 database bound as the name passed to `d1Index` (`INDEX` in the tests), with `migrations/0001_index.sql` applied (`wrangler d1 migrations apply`, `migrations_dir = "packages/runtime/migrations"`).

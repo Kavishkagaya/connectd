@@ -1,4 +1,5 @@
 import { base64url, type Json, routeState } from "@openconnect/kernel";
+import { type Index, listing } from "./directory.ts";
 import { type AnyDefinition, Fail, fault, instanceOf, type Reply, type Settings } from "./host.ts";
 
 /** How the Worker reaches an instance: a DO stub's `onCall` on Cloudflare, `memory().call` in tests. */
@@ -9,6 +10,8 @@ export type Api = {
   call(instance: string, method: string, args: Json): Promise<Reply>;
   settings: Settings;
   definitions: Record<string, AnyDefinition>;
+  /** The connection index, if an extension provides one (`directory`). */
+  index?: Index;
 };
 
 /** Handles `/<name>/...` (the routes table is keyed by first path segment). `path` is what follows it, decoded. */
@@ -27,11 +30,13 @@ async function args(req: Request): Promise<Json> {
 
 export const routes: Record<string, Route> = {
   /**
+   * GET  /connections?def=&state=&q=&external=key:value&cursor=&limit=   list from the index
    * GET  /connections/:def/:id          status + metadata
    * POST /connections/:def/:id/:method  connect | token | revoke | any extension method; JSON body = args
    */
   connections: {
     async fetch(req, api, [def, id, method, ...rest]) {
+      if (!def && api.index) return listing(req, api.index);
       if (!def || !id || rest.length) throw new Fail("not_found", 404, "no such route");
       if (!Object.hasOwn(api.definitions, def)) throw new Fail("not_found", 404, `unknown definition ${def}`);
       const instance = instanceOf(def, id);
@@ -67,7 +72,7 @@ async function authorized(req: Request, key: string) {
 }
 
 /** The Worker's fetch: route by first path segment, check the API key unless the route is public. */
-export function http(o: { routes: Record<string, Route>; definitions: Record<string, AnyDefinition>; settings: () => Promise<Settings> }) {
+export function http(o: { routes: Record<string, Route>; definitions: Record<string, AnyDefinition>; settings: () => Promise<Settings>; index?: Index }) {
   return async (req: Request, call: Call): Promise<Response> => {
     try {
       const settings = await o.settings();
@@ -75,7 +80,7 @@ export function http(o: { routes: Record<string, Route>; definitions: Record<str
       const route = Object.hasOwn(o.routes, name) ? o.routes[name] : undefined;
       if (!route) throw new Fail("not_found", 404, "no such route");
       if (!route.public && !(await authorized(req, settings.apiKey))) throw new Fail("unauthorized", 401, "missing or wrong API key");
-      const api: Api = { settings, definitions: o.definitions, call: async (i, m, a) => (await call(i, m, a)) as Reply };
+      const api: Api = { settings, definitions: o.definitions, call: async (i, m, a) => (await call(i, m, a)) as Reply, ...(o.index ? { index: o.index } : {}) };
       return await route.fetch(req, api, path);
     } catch (e) {
       return reply({ error: fault(e, "worker") });

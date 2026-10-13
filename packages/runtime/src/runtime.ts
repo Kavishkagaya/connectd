@@ -1,8 +1,14 @@
+import type { Index } from "./directory.ts";
 import { type AnyDefinition, type Hooks, type Hosted, host, type Settings } from "./host.ts";
 import { http, type Route, routes } from "./http.ts";
 
 /** A runtime feature (proxy, events, webhooks, index): HTTP routes, per-connection hooks, or both. */
-export type Extension = { routes?: Record<string, Route>; connection?(h: Hosted): Hooks };
+export type Extension = {
+  routes?: Record<string, Route>;
+  connection?(h: Hosted): Hooks;
+  /** The connection index (`directory`); routes get it as `api.index`. The first one provided wins. */
+  index?: Index;
+};
 
 export type RuntimeOptions = {
   /** Bundled definitions by id (self-host). Managed loads user code differently (#34). */
@@ -19,10 +25,16 @@ export function runtime(o: RuntimeOptions) {
   let loaded: Promise<Settings> | undefined;
   const settings = () => (loaded ??= o.settings());
   const exts = o.extensions ?? [];
+  const index = exts.find((e) => e.index)?.index;
   return {
     program: host({ definitions: o.definitions, settings, connection: exts.flatMap((e) => (e.connection ? [e.connection] : [])) }),
     // Built-in routes win on a name clash, like built-in methods.
-    fetch: http({ routes: Object.assign({}, ...exts.map((e) => e.routes), routes), definitions: o.definitions, settings }),
+    fetch: http({
+      routes: Object.assign({}, ...exts.map((e) => e.routes), routes),
+      definitions: o.definitions,
+      settings,
+      ...(index ? { index } : {}),
+    }),
   };
 }
 
