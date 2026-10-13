@@ -1,9 +1,11 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type ConnectionEvent, openconnect } from "@openconnect/sdk";
 import { main } from "./cli.ts";
-import { type Dev, dev } from "./dev.ts";
+import { type Dev, dev, swappable } from "./dev.ts";
+import type { Program } from "@openconnect/kernel";
+import { memory } from "@openconnect/kernel/memory";
 import { parseEnv } from "./env.ts";
 import { NO_CLOUDFLARED, tunnel, tunnelUrl } from "./tunnel.ts";
 
@@ -275,4 +277,43 @@ test("examples/basic loads", async () => {
   running.push(d);
   expect(d.loaded()!.project.definitions.map((x) => x.id)).toEqual(["github", "slack", "google", "notes"]);
   expect(d.loaded()!.unconfigured).toEqual(["slack", "google"]);
+});
+
+test("swap: an instance moves to the new program only when idle, never two live handlers", async () => {
+  const made: string[] = [];
+  let release = () => {};
+  const gate = new Promise<void>((r) => (release = r));
+  const prog =
+    (v: string): Program =>
+    (_d, id) => {
+      made.push(`${v}:${id}`);
+      return { onCall: async (m) => (m === "slow" ? (await gate, v) : v), onTimer: async () => {} };
+    };
+  const hot = swappable();
+  hot.swap(prog("v1"));
+  const w = memory(hot.program);
+  expect(await w.call("a", "fast", null)).toBe("v1");
+  const slow = w.call("a", "slow", null);
+  hot.swap(prog("v2"));
+  // Busy: the new call joins the old handler; an idle instance moves at once.
+  expect(await w.call("a", "fast", null)).toBe("v1");
+  expect(await w.call("b", "fast", null)).toBe("v2");
+  release();
+  expect(await slow).toBe("v1");
+  expect(await w.call("a", "fast", null)).toBe("v2");
+  expect(made).toEqual(["v1:a", "v2:b", "v2:a"]);
+});
+
+test("state.json: owner-only, its writes don't trigger reloads, stop is idempotent", async () => {
+  const w = world();
+  const dir = project();
+  const { d, oc, lines } = await start(dir, w.env, { watch: true });
+  await oc.connection("keyed", "k1").connect({ key: "sekret" });
+  const state = join(dir, ".openconnect", "state.json");
+  await until(() => existsSync(state));
+  await Bun.sleep(700); // past another save tick and the watcher's debounce
+  expect(statSync(state).mode & 0o777).toBe(0o600);
+  expect(lines.some((l) => l.startsWith("reload"))).toBe(false);
+  await Promise.all([d.stop(), d.stop()]);
+  await d.stop();
 });

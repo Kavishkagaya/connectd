@@ -106,7 +106,11 @@ export function memory(program: Program, opts: MemoryOptions = {}) {
           for (const [name, t] of inst.timers) if (t.at <= now() && (!next || t.at < next.t.at)) next = { inst, name, t };
         if (!next) break;
         next.inst.timers.delete(next.name);
-        await next.inst.handler.onTimer(next.name, next.t.payload).catch((e) => console.error("timer", next.name, e));
+        const { inst, name, t } = next;
+        // Through a promise, so a handler that throws synchronously is logged like a rejection and the chain goes on.
+        await Promise.resolve()
+          .then(() => inst.handler.onTimer(name, t.payload))
+          .catch((e) => console.error("timer", name, e));
       }
       schedule();
     }));

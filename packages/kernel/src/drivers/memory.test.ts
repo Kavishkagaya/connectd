@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Json } from "../driver.ts";
+import type { Handler, Json, Program } from "../driver.ts";
 import { memory, type MemoryOptions } from "./memory.ts";
 import { parity, probe } from "./parity.ts";
 
@@ -28,4 +28,38 @@ test("memory (clock): timers fire on their own, also after a restart", async () 
   await Bun.sleep(30);
   expect(((await w.call("a", "fired", [])) as Json[]).length).toBe(2);
   expect(Object.keys(w.dump().a?.timers ?? {})).toEqual(["stopped"]);
+});
+
+let fired: string[] = [];
+// A handler that throws synchronously (not a rejected promise) must not stop later timers, in either mode.
+const sync: Program = (d) => ({
+  onCall: async (_m, a) => {
+    for (const [name, ms] of a as [string, number][]) await d.timer.set(name, d.now() + ms);
+    return null;
+  },
+  onTimer: ((name: string) => {
+    if (name === "throws") throw new Error("sync throw");
+    fired.push(name);
+  }) as unknown as Handler["onTimer"], // deliberately not async
+});
+
+test("memory: a synchronously throwing timer doesn't stop later ones (fake clock and clock mode)", async () => {
+  fired = [];
+  const w = memory(sync);
+  await w.call("a", "set", [["throws", 10], ["after", 20]]);
+  await w.advance(20);
+  expect(fired).toEqual(["after"]);
+  await w.call("a", "set", [["throws", 10], ["again", 20]]);
+  await w.advance(20);
+  expect(fired).toEqual(["after", "again"]);
+
+  fired = [];
+  const r = memory(sync, { clock: Date.now });
+  await r.call("a", "set", [["throws", 5], ["after", 15]]);
+  await Bun.sleep(40);
+  expect(fired).toEqual(["after"]);
+  await r.call("a", "set", [["throws", 5], ["again", 15]]);
+  await Bun.sleep(40);
+  expect(fired).toEqual(["after", "again"]);
+  await r.stop();
 });

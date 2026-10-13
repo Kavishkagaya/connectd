@@ -1,7 +1,7 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Handler, Program } from "@openconnect/kernel";
+import type { Handler, Json, Program } from "@openconnect/kernel";
 import { memory, type Snapshot } from "@openconnect/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@openconnect/runtime";
 import { devKeys, loadEnv, workdir } from "./env.ts";
@@ -49,6 +49,34 @@ async function importConfig(entry: string, out: string, n: number): Promise<Conf
 }
 
 /**
+ * A Program whose instances follow `swap(next)`, the way a deploy restarts isolates: per-isolate
+ * memory (single-flight, sync marks) goes, the store stays. An instance moves to the new program only
+ * when idle (no call or timer running on it): until then new calls join the old handler, so one
+ * instance never has two live handlers (a DO never does, and the events outbox relies on it).
+ * ponytail: an instance that's never idle keeps the old code; fine for dev traffic.
+ */
+export function swappable() {
+  let current: Program | undefined;
+  let gen = 0;
+  const program: Program = (d, id) => {
+    let h: Handler | undefined;
+    let mine = -1;
+    let busy = 0;
+    const run = async (f: (h: Handler) => Promise<Json | void>) => {
+      if (!h || (mine !== gen && busy === 0)) [h, mine] = [(current as Program)(d, id), gen];
+      busy++;
+      try {
+        return await f(h);
+      } finally {
+        busy--;
+      }
+    };
+    return { onCall: (m, a) => run((x) => x.onCall(m, a)) as Promise<Json>, onTimer: (n, p) => run((x) => x.onTimer(n, p)) as Promise<void> };
+  };
+  return { program, swap: (p: Program) => void ((current = p), gen++) };
+}
+
+/**
  * `openconnect dev`: the runtime on the memory driver with a real clock, served by Bun. State
  * (connections, handshakes, outboxes, timers) is snapshotted to `.openconnect/state.json`, so it
  * survives restarts; a change to the config or anything it imports reloads the definitions in
@@ -73,19 +101,8 @@ export async function dev(o: DevOptions) {
     throw new Error(`${statePath} is unreadable; --reset starts empty`);
   }
 
-  // Every instance's handler delegates to the current runtime; a reload makes new ones, the way a
-  // deploy restarts isolates: per-isolate memory (single-flight, sync marks) goes, the store stays.
+  const hot = swappable();
   let rt: Runtime | undefined;
-  let gen = 0;
-  const program: Program = (d, id) => {
-    let mine = -1;
-    let h: Handler | undefined;
-    const get = () => {
-      if (mine !== gen || !h) [h, mine] = [(rt as Runtime).program(d, id), gen];
-      return h;
-    };
-    return { onCall: (m, a) => get().onCall(m, a), onTimer: (n, p) => get().onTimer(n, p) };
-  };
   const index = memoryIndex();
   let w: ReturnType<typeof memory> | undefined;
 
@@ -124,9 +141,10 @@ export async function dev(o: DevOptions) {
     const opts = options(config, { ...env, [ENV.url]: publicUrl }, index);
     await opts.settings(); // missing keys or a bad one fail here, not on the first request
     const next = runtime({ ...opts, now: () => (w as ReturnType<typeof memory>).now() });
-    [rt, gen] = [next, gen + 1];
+    rt = next;
+    hot.swap(next.program);
     if (!w) {
-      w = memory(program, { clock: Date.now, ...(snapshot ? { snapshot } : {}) });
+      w = memory(hot.program, { clock: Date.now, ...(snapshot ? { snapshot } : {}) });
       // The index isn't in the snapshot: rebuild it from each connection (the #26 repair path).
       for (const id of Object.keys(snapshot ?? {})) if (id.startsWith("conn:")) await w.call(id, "index.sync", null);
     }
@@ -150,7 +168,9 @@ export async function dev(o: DevOptions) {
     if (!w) return;
     const s = JSON.stringify(w.dump());
     if (s === saved) return;
-    writeFileSync(`${statePath}.tmp`, s);
+    // Credentials in it are sealed, but handshakes and outboxes aren't: owner only, like dev.vars.
+    rmSync(`${statePath}.tmp`, { force: true }); // mode applies only to a new file
+    writeFileSync(`${statePath}.tmp`, s, { mode: 0o600 });
     renameSync(`${statePath}.tmp`, statePath);
     saved = s;
   }
@@ -175,6 +195,7 @@ export async function dev(o: DevOptions) {
     });
   }
 
+  let stopping: Promise<void> | undefined;
   const info = {
     url: local,
     port: server.port as number,
@@ -186,14 +207,16 @@ export async function dev(o: DevOptions) {
     save,
     /** The memory driver (tests advance its clock to drive retries). */
     driver: () => w,
-    async stop() {
-      watcher?.close();
-      clearInterval(saver);
-      await server.stop(true);
-      await w?.stop();
-      save();
-      tun?.stop();
-    },
+    /** Idempotent (SIGINT twice, a test's cleanup after its own stop). */
+    stop: () =>
+      (stopping ??= (async () => {
+        watcher?.close();
+        clearInterval(saver);
+        await server.stop(true);
+        await w?.stop();
+        save();
+        tun?.stop();
+      })()),
   };
   log(banner(info));
   return info;
