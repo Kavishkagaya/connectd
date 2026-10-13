@@ -29,7 +29,10 @@
         "@openconnect/runtime": "workspace:*",
       },
       "devDependencies": {
+        "@cloudflare/vitest-plugin": "1.4.0",
+        "@cloudflare/workers-types": "^5.20261011.1",
         "@openconnect/sdk": "workspace:*",
+        "vitest": "5.0.3",
       },
     },
     "packages/connect": {

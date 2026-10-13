@@ -1,11 +1,15 @@
 import { parse } from "./args.ts";
-import { CONFIG_FILES, dev, PORT } from "./dev.ts";
+import { dev, PORT } from "./dev.ts";
+import { join } from "node:path";
+import { deploy } from "./deploy.ts";
+import { workdir } from "./env.ts";
+import { CONFIG_FILES, findConfig, importConfig } from "./load.ts";
 
 export const HELP = `openconnect <command> [flags]
 
 Commands
   dev       run the runtime locally: in memory, real clock, state kept in .openconnect/, reloads on save
-  deploy    deploy to Cloudflare (coming in #31)
+  deploy    deploy to your Cloudflare account (through wrangler)
   help      this text
 
 openconnect dev
@@ -14,9 +18,31 @@ openconnect dev
   --tunnel         expose it on a public https URL with a cloudflared quick tunnel (Slack needs https)
   --url <url>      public URL of a tunnel you run yourself (callback and webhook URLs use it)
   --reset          start from empty state
+
+openconnect deploy
+  --env-file <f>   provider secrets to push as Worker secrets (e.g. .prod.vars; never .openconnect/dev.vars)
+  --name <name>    Worker name (default: deploy.name in the config, else the directory's name)
+  --url <url>      public https origin on a custom domain (default: the workers.dev URL)
+  --rotate <list>  comma-separated: key (adds OPENCONNECT_KEY_V<n+1>), api-key, state, sessions
+  --dry-run        write .openconnect/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
+  --config <file>  config file (default ${CONFIG_FILES[0]})
+  Needs wrangler (bun add -d wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN).
+  Managed deploys (--managed) wait for the managed service (#34).
 `;
 
-const SPEC = { help: "boolean", port: "string", config: "string", tunnel: "boolean", url: "string", reset: "boolean" } as const;
+const SPEC = {
+  help: "boolean",
+  port: "string",
+  config: "string",
+  tunnel: "boolean",
+  url: "string",
+  reset: "boolean",
+  "env-file": "string",
+  name: "string",
+  rotate: "string",
+  "dry-run": "boolean",
+  managed: "boolean",
+} as const;
 
 /** Runs a command; resolves to an exit code, or to a running dev server's stop function. */
 export async function main(argv: string[], o: { dir?: string; log?: (s: string) => void } = {}): Promise<number | (() => Promise<void>)> {
@@ -49,8 +75,32 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
         return 1;
       }
     }
-    case "deploy":
-      return log("openconnect deploy isn't here yet (#31)."), 1;
+    case "deploy": {
+      if (a.flags.managed) return log("managed deploys wait for the managed service (#34); deploy to your own account without --managed"), 1;
+      const dir = o.dir ?? process.cwd();
+      const str = (k: string) => (typeof a.flags[k] === "string" ? (a.flags[k] as string) : undefined);
+      try {
+        const config = findConfig(dir, str("config"));
+        const name = str("name");
+        const url = str("url");
+        const envFile = str("env-file");
+        await deploy({
+          dir,
+          config,
+          load: () => importConfig(config, join(workdir(dir), "build"), Date.now()),
+          ...(name ? { name } : {}),
+          ...(url ? { url } : {}),
+          ...(envFile ? { envFile } : {}),
+          rotate: (str("rotate") ?? "").split(",").map((r) => r.trim()),
+          dryRun: !!a.flags["dry-run"],
+          log,
+        });
+        return 0;
+      } catch (e) {
+        log((e as Error).message);
+        return 1;
+      }
+    }
     default:
       return log(`unknown command ${a.command}\n\n${HELP}`), 2;
   }

@@ -1,0 +1,6 @@
+# Copy to .prod.vars (gitignored) for `bun run deploy`: pushed as Worker secrets over wrangler's stdin.
+# Production values only: deploy refuses the dev ones and generates its own runtime keys.
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+# Needed when EVENTS_URL is set: whsec_ + base64 of 32 random bytes (openssl rand -base64 32); give your app the same value.
+# OPENCONNECT_EVENTS_SECRET=whsec_...

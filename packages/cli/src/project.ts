@@ -1,4 +1,5 @@
 import { importHmacKey, importKeys } from "@openconnect/kernel";
+import { ENV } from "./keys.ts";
 import {
   type AnyDefinition,
   directory,
@@ -33,6 +34,11 @@ export type Project = {
   sessions?: { origins: string[] };
   /** Extra extensions, after the built-in ones (proxy, events, webhooks, sessions, index). */
   extensions?: Extension[];
+  /**
+   * `openconnect deploy` (#31): the Worker's name (default: the project directory's), and its public
+   * URL when it isn't the workers.dev one (a custom domain, served at its root). Flags override both.
+   */
+  deploy?: { name?: string; url?: string };
 };
 
 export type Env = Record<string, string | undefined>;
@@ -41,28 +47,7 @@ export type Config = Project | ((env: Env) => Project);
 
 export const defineConfig = <T extends Config>(c: T) => c;
 
-/** The environment the runtime reads. `OPENCONNECT_KEY_V<n>`: encryption keys by version, the highest is current (#10). */
-export const ENV = {
-  url: "OPENCONNECT_PUBLIC_URL",
-  apiKey: "OPENCONNECT_API_KEY",
-  key: "OPENCONNECT_KEY_V",
-  state: "OPENCONNECT_STATE_KEY",
-  sessions: "OPENCONNECT_SESSIONS_KEY",
-  webhooks: "OPENCONNECT_WEBHOOKS_KEY",
-  events: "OPENCONNECT_EVENTS_SECRET",
-} as const;
-
-const random = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
-
-/** Fresh values for every generated secret: dev keeps them in `.openconnect/dev.vars`, deploy sets them as Worker secrets. */
-export const generateKeys = (): Record<string, string> => ({
-  [ENV.apiKey]: `oc_${random().replace(/[+/=]/g, "").slice(0, 32)}`,
-  [`${ENV.key}1`]: random(),
-  [ENV.state]: random(),
-  [ENV.sessions]: random(),
-  [ENV.webhooks]: random(),
-  [ENV.events]: `whsec_${random()}`,
-});
+export { ENV, generateKeys } from "./keys.ts";
 
 /** The project with definitions checked: unique, non-empty ids. */
 export function resolve(config: Config, env: Env): Project & { registry: Record<string, AnyDefinition> } {
