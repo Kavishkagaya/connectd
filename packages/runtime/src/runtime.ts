@@ -6,6 +6,8 @@ import { http, type Route, routes } from "./http.ts";
 export type Extension = {
   routes?: Record<string, Route>;
   connection?(h: Hosted): Hooks;
+  /** Methods for the extension's own routes only (RPC): `POST /connections/.../:method` refuses them, like `kernel.*`. */
+  internal?: string[];
   /** The connection index (`directory`); routes get it as `api.index`. The first one provided wins. */
   index?: Index;
 };
@@ -33,6 +35,7 @@ export function runtime(o: RuntimeOptions) {
       routes: Object.assign({}, ...exts.map((e) => e.routes), routes),
       definitions: o.definitions,
       settings,
+      internal: new Set(exts.flatMap((e) => e.internal ?? [])),
       ...(index ? { index } : {}),
     }),
   };

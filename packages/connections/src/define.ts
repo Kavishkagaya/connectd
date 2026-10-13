@@ -41,7 +41,20 @@ export type Definition<C, M extends Json> = {
   external?(metadata: M): Record<string, string>;
   /** Limits per connection and per app; the proxy (#23) acquires them and feeds `observe` back. */
   rate?: { connection?: Limit; app?: Limit; observe?(res: Response, now: number): Observed };
+  /** Where the proxy (#23) sends `/proxy/:def/:id/<path>`, and how the credential goes on the request. */
+  // ponytail: one fixed base URL; make it a function of the credential when a provider needs a per-connection host (Salesforce instance_url).
+  proxy?: { baseUrl: string; inject?: Inject };
 };
+
+/**
+ * How a proxied request carries the credential: a header (default `Authorization: Bearer <token>`),
+ * a query parameter, or a hook for anything else. The value is the access token, or a static
+ * credential's `field` (default: its first field).
+ */
+export type Inject =
+  | { header: string; prefix?: string; field?: string }
+  | { query: string; field?: string }
+  | ((url: URL, headers: Headers, cred: Credential) => void);
 
 /** `Retry-After` (seconds or HTTP date), plus remaining/reset headers when named (reset in epoch seconds). */
 export function rateHeaders(res: Response, now: number, names?: { remaining: string; reset: string }): Observed {

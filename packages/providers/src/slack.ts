@@ -35,6 +35,7 @@ export const slack = defineConnection({
     return { teamId: raw.team.id, teamName: raw.team.name, userId: raw.authed_user?.id ?? null, botUserId: raw.bot_user_id ?? null };
   },
   external: (m) => ({ teamId: m.teamId }),
+  proxy: { baseUrl: "https://slack.com/api" },
   rate: {
     // ponytail: Slack limits per method per workspace (tiers 1-4); one Tier 3 budget for all methods until the proxy knows methods.
     connection: { count: 50, periodMs: 60_000 },
