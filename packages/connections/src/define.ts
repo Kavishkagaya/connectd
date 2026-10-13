@@ -37,6 +37,8 @@ export type Definition<C, M extends Json> = {
   auth: Auth<C>;
   /** Who the credential belongs to (account id, team, instance URL). Runs before activation, so a throw rejects the credential. */
   metadata?(ctx: Ctx<C>, cred: Credential): Promise<M>;
+  /** External ids in the metadata (Slack `teamId`), indexed for lookup (#26) and webhook routing (#25). */
+  external?(metadata: M): Record<string, string>;
   /** Limits per connection and per app; the proxy (#23) acquires them and feeds `observe` back. */
   rate?: { connection?: Limit; app?: Limit; observe?(res: Response, now: number): Observed };
 };
