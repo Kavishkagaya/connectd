@@ -7,6 +7,11 @@ import type { Json, Program } from "../driver.ts";
 export type World = {
   call(instance: string, method: string, args: Json): Promise<Json>;
   advance(ms: number): Promise<void>;
+  /**
+   * Stop and start again from what was stored, clock where it was. Only drivers whose state can be
+   * lost in process (memory with a snapshot); a DO's storage is durable by construction.
+   */
+  restart?(): Promise<World> | World;
 };
 
 /** A Program that exposes the raw driver over onCall, and logs fired timers to its store. */
@@ -134,5 +139,26 @@ export function parity(name: string, world: () => Promise<World> | World, t: { t
     await w.call("a", "call", ["b", "timer.set", ["t", 10, "via-a"]]);
     await w.advance(10);
     expect(await w.call("b", "fired", [])).toEqual([["t", "via-a"]]);
+  });
+
+  test(`${name}: a restart keeps state, versions, ttl and timers`, async () => {
+    const first = await world();
+    if (!first.restart) return;
+    await first.call("a", "put", ["k", 1]);
+    await first.call("a", "put", ["gone", 1]);
+    await first.call("a", "delete", ["gone"]);
+    await first.call("a", "put", ["ttl", 1, 50]);
+    await first.call("a", "timer.set", ["t", 100, "p"]);
+    const { v } = (await first.call("a", "get", ["k"])) as { v: number };
+    const w = await first.restart();
+    expect(((await w.call("a", "get", ["k"])) as { v: number }).v).toBe(v);
+    expect(await w.call("a", "get", ["gone"])).toBe(null);
+    await w.call("a", "put", ["j", 2]);
+    expect(((await w.call("a", "get", ["j"])) as { v: number }).v > v).toBe(true);
+    await w.advance(50);
+    expect(await w.call("a", "get", ["ttl"])).toBe(null);
+    expect(await w.call("a", "fired", [])).toEqual([]);
+    await w.advance(50);
+    expect(await w.call("a", "fired", [])).toEqual([["t", "p"]]);
   });
 }

@@ -1,0 +1,13 @@
+{
+  "name": "openconnect-example-basic",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "openconnect dev"
+  },
+  "dependencies": {
+    "@openconnect/cli": "workspace:*",
+    "@openconnect/connections": "workspace:*",
+    "@openconnect/providers": "workspace:*"
+  }
+}
