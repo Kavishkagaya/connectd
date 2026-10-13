@@ -5,8 +5,8 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
 ## Layers
 
 ```
- L4  DevX        SDK · CLI · dashboard                         (not started)
- L3  Runtime     ConnectionDO · proxy · webhooks · events      (in progress)
+ L4  DevX        SDK · CLI · dashboard                         (in progress)
+ L3  Runtime     ConnectionDO · proxy · webhooks · events      (done)
  L2  Connections defineConnection(), providers                 (in progress)
  L1  Kernel      connection · tokens · rate · secrets · schedule · oauth   (done)
  L0  Drivers     Durable Objects · in-memory · server (deferred)           (done)
@@ -41,14 +41,20 @@ packages/runtime/
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
   src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection
+
+packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
+  src/client.ts       openconnect({ url, apiKey }): connection(def, id) status/connect/token/revoke/call/fetch, connections.page/list, OpenConnectError
+  src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
+  src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
+  src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
 ```
 
-Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`.
+Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. SDK: `@openconnect/sdk`, `/node`.
 
 ## Commands
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
-- `bun run typecheck`: root tsc, plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`
+- `bun run typecheck`: root tsc, plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`, and a web-only pass for the SDK
 - One kernel file: `cd packages/kernel && bun test src/primitives/rate.test.ts`
 
 ## Patterns

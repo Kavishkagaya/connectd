@@ -1,7 +1,7 @@
 import type { Inject } from "@openconnect/connections";
 import { acquire, type Credential, type Json, type Limit, observe, refund, type Scope } from "@openconnect/kernel";
 import { type AnyDefinition, Fail, type Hosted, instanceOf } from "./host.ts";
-import { reply } from "./http.ts";
+import { ERROR_HEADER, reply } from "./http.ts";
 import type { Extension } from "./runtime.ts";
 
 /**
@@ -81,7 +81,7 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
           if ("retryAfterMs" in ready) {
             return Response.json(
               { error: { code: "rate_limited", status: 429, message: "rate limited", retryAfterMs: ready.retryAfterMs } },
-              { status: 429, headers: { "retry-after": String(Math.ceil(ready.retryAfterMs / 1000)) } },
+              { status: 429, headers: { "retry-after": String(Math.ceil(ready.retryAfterMs / 1000)), [ERROR_HEADER]: "rate_limited" } },
             );
           }
 
@@ -112,6 +112,8 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
           const out = new Headers(res.headers);
           out.delete("content-encoding");
           out.delete("content-length");
+          // Only the runtime's own errors carry it; a provider's response never does.
+          out.delete(ERROR_HEADER);
           return new Response(res.body, { status: res.status, statusText: res.statusText, headers: out });
         },
       },

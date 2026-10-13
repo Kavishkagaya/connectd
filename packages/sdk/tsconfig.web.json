@@ -1,0 +1,7 @@
+{
+  // The SDK proper with no Bun or Node types, only the web platform: proves it needs nothing else.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": [], "lib": ["ES2022", "DOM", "DOM.Iterable", "DOM.AsyncIterable"] },
+  "include": ["src/index.ts", "src/node.ts"],
+  "exclude": []
+}

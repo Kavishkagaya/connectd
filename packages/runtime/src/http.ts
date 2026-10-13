@@ -21,7 +21,14 @@ export type Api = {
 /** Handles `/<name>/...` (the routes table is keyed by first path segment). `path` is what follows it, decoded. */
 export type Route = { public?: boolean; fetch(req: Request, api: Api, path: string[]): Promise<Response> };
 
-export const reply = (r: Reply) => ("ok" in r ? Response.json(r.ok) : Response.json({ error: r.error }, { status: r.error.status }));
+/**
+ * Errors the runtime itself answers carry `openconnect-error: <code>`, so a client can tell them from
+ * a provider's response on the proxy (the proxy strips the header from upstream responses).
+ */
+export const ERROR_HEADER = "openconnect-error";
+
+export const reply = (r: Reply) =>
+  "ok" in r ? Response.json(r.ok) : Response.json({ error: r.error }, { status: r.error.status, headers: { [ERROR_HEADER]: r.error.code } });
 
 async function args(req: Request): Promise<Json> {
   const text = await req.text();
