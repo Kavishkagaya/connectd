@@ -12,6 +12,8 @@ export type Api = {
   definitions: Record<string, AnyDefinition>;
   /** The connection index, if an extension provides one (`directory`). */
   index?: Index;
+  /** Method names refused over HTTP (`Extension.internal`). */
+  internal: Set<string>;
 };
 
 /** Handles `/<name>/...` (the routes table is keyed by first path segment). `path` is what follows it, decoded. */
@@ -45,8 +47,8 @@ export const routes: Record<string, Route> = {
         return reply(await api.call(instance, "status", null));
       }
       if (req.method !== "POST") throw new Fail("method_not_allowed", 405, "POST only");
-      // Kernel methods (RATE) are instance-to-instance only.
-      if (method.startsWith("kernel.")) throw new Fail("not_found", 404, "no such route");
+      // Kernel methods (RATE) are instance-to-instance only; internal extension methods are for their own routes.
+      if (method.startsWith("kernel.") || api.internal.has(method)) throw new Fail("not_found", 404, "no such route");
       return reply(await api.call(instance, method, await args(req)));
     },
   },
@@ -72,7 +74,7 @@ async function authorized(req: Request, key: string) {
 }
 
 /** The Worker's fetch: route by first path segment, check the API key unless the route is public. */
-export function http(o: { routes: Record<string, Route>; definitions: Record<string, AnyDefinition>; settings: () => Promise<Settings>; index?: Index }) {
+export function http(o: { routes: Record<string, Route>; definitions: Record<string, AnyDefinition>; settings: () => Promise<Settings>; index?: Index; internal?: Set<string> }) {
   return async (req: Request, call: Call): Promise<Response> => {
     try {
       const settings = await o.settings();
@@ -80,7 +82,7 @@ export function http(o: { routes: Record<string, Route>; definitions: Record<str
       const route = Object.hasOwn(o.routes, name) ? o.routes[name] : undefined;
       if (!route) throw new Fail("not_found", 404, "no such route");
       if (!route.public && !(await authorized(req, settings.apiKey))) throw new Fail("unauthorized", 401, "missing or wrong API key");
-      const api: Api = { settings, definitions: o.definitions, call: async (i, m, a) => (await call(i, m, a)) as Reply, ...(o.index ? { index: o.index } : {}) };
+      const api: Api = { settings, definitions: o.definitions, call: async (i, m, a) => (await call(i, m, a)) as Reply, internal: o.internal ?? new Set(), ...(o.index ? { index: o.index } : {}) };
       return await route.fetch(req, api, path);
     } catch (e) {
       return reply({ error: fault(e, "worker") });

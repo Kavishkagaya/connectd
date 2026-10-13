@@ -58,6 +58,7 @@ const STRIP = ["authorization", "host", "content-length"];
 export function proxy(o: { timeoutMs?: number } = {}): Extension {
   const timeoutMs = o.timeoutMs ?? 30_000;
   return {
+    internal: ["proxy.prepare", "proxy.settle"],
     routes: {
       proxy: {
         async fetch(req, api, [def, id]) {
@@ -66,6 +67,13 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
           if (!d?.proxy) throw new Fail("not_found", 404, `no proxy for ${def}`);
           const url = target(d, req);
           const instance = instanceOf(def, id);
+
+          // Bookkeeping only: a failed settle must never cost the caller a response (the POST may have gone through).
+          const settle = (a: Settle) =>
+            api.call(instance, "proxy.settle", a as unknown as Json).then(
+              (r) => "error" in r && console.error("proxy settle", instance, r.error),
+              (e) => console.error("proxy settle", instance, e),
+            );
 
           const p = await api.call(instance, "proxy.prepare", null);
           if ("error" in p) return reply(p);
@@ -92,14 +100,14 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
           } catch (e) {
             if (ac.signal.aborted) throw new Fail("upstream_timeout", 504, `no response from ${url.origin} in ${timeoutMs}ms`);
             // ponytail: a network error may still have reached the provider; we refund anyway (it rarely did).
-            if (d.rate) await api.call(instance, "proxy.settle", { refund: true });
+            if (d.rate) await settle({ refund: true });
             throw new Fail("upstream_error", 502, e instanceof Error ? e.message : String(e));
           } finally {
             clearTimeout(timer);
           }
 
           // ponytail: awaits one more DO call before answering; move to ctx.waitUntil once routes get the execution context.
-          if (d.rate?.observe) await api.call(instance, "proxy.settle", { status: res.status, headers: Object.fromEntries(res.headers) });
+          if (d.rate?.observe) await settle({ status: res.status, headers: Object.fromEntries(res.headers) });
           // fetch already decoded the body, so its encoding and length no longer describe what we send.
           const out = new Headers(res.headers);
           out.delete("content-encoding");

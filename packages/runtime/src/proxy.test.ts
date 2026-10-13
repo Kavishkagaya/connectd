@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { apiKey, defineConnection, oauth2, rateHeaders } from "@openconnect/connections";
 import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys } from "@openconnect/kernel";
+import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { proxy, runtime } from "./index.ts";
 
@@ -48,14 +48,16 @@ async function setup(o: { expiresIn?: number; timeoutMs?: number } = {}) {
   };
   const rt = runtime({ definitions: { example, keyed, hooked }, settings: async () => settings, extensions: [proxy({ timeoutMs: o.timeoutMs ?? 1000 })] });
   const w = memory(rt.program);
+  let settleThrows = false;
+  const call = (i: string, m: string, a: Json) => (settleThrows && m === "proxy.settle" ? Promise.reject(new Error("DO gone")) : w.call(i, m, a));
   const send = (method: string, path: string, init: RequestInit = {}) =>
-    rt.fetch(new Request(`https://oc.test${path}`, { method, ...init, headers: { authorization: "Bearer secret", ...init.headers } }), w.call);
+    rt.fetch(new Request(`https://oc.test${path}`, { method, ...init, headers: { authorization: "Bearer secret", ...init.headers } }), call);
   const connect = async (id: string) => {
     const url = ((await (await send("POST", `/connections/example/${id}/connect`)).json()) as { url: string }).url;
     const back = p.approve(url);
     await send("GET", `/callback?code=${back.code}&state=${encodeURIComponent(back.state)}`);
   };
-  return { w, send, connect, seen, upstream: (f: Upstream) => void (upstream = f) };
+  return { w, send, connect, seen, upstream: (f: Upstream) => void (upstream = f), breakSettle: () => void (settleThrows = true) };
 }
 
 test("injects the token, forwards method, path, query and body, strips our API key", async () => {
@@ -184,4 +186,24 @@ test("upstream timeout → 504, network error → 502 and the permit is refunded
   upstream(() => new Response("ok"));
   expect((await send("GET", "/proxy/example/c1/x")).status).toBe(200);
   expect((await send("GET", "/proxy/example/c1/x")).status).toBe(429);
+});
+
+test("a failing settle never costs the caller the upstream response", async () => {
+  const { send, connect, upstream, breakSettle } = await setup();
+  await connect("c1");
+  breakSettle();
+  upstream(() => Response.json({ created: true }, { status: 201 }));
+  const res = await send("POST", "/proxy/example/c1/things", { body: "{}" });
+  expect(res.status).toBe(201);
+  expect(await res.json()).toEqual({ created: true });
+  upstream(() => Promise.reject(new Error("connection refused")));
+  expect((await send("POST", "/proxy/example/c1/things")).status).toBe(502);
+});
+
+test("proxy.prepare and proxy.settle are RPC-only: refused over /connections, fine from the proxy route", async () => {
+  const { w, send, connect } = await setup();
+  await connect("c1");
+  for (const m of ["proxy.prepare", "proxy.settle"]) expect((await send("POST", `/connections/example/c1/${m}`, { body: "{}" })).status).toBe(404);
+  expect(await w.call("conn:example:c1", "proxy.prepare", null)).toMatchObject({ ok: { credential: { accessToken: "a1" } } });
+  expect(await w.call("conn:example:c1", "proxy.settle", { refund: true })).toEqual({ ok: null });
 });
