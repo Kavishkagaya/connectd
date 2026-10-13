@@ -89,19 +89,17 @@ test("popup: messages from another origin, window or attempt are ignored; provid
   expect(await t.status("example", "u1")).toBe("pending");
 });
 
-test("popup: closed before it reported, and timeout", async () => {
+test("popup closed by the user (a while after it left): one look at the state, then closed; and timeout", async () => {
   const t = await setup();
   const p = connect({ url: OC, token: await t.token("example", "u1"), window: W(t.win) });
   await settle();
+  t.win.advance(6_000); // the user was at the provider for a while
   t.win.opened[0]!.close();
   t.win.advance(300); // seen closed once: a message may still be in flight
   t.win.advance(300);
-  const s = watch(p);
-  await settle();
-  expect(s.r).toBeUndefined(); // still pending: looks again for ~10 s (the popup may finish on its own, COOP)
-  await drain(t.win);
   expect(await p).toEqual({ status: "closed" });
   expect(t.win.timers).toHaveLength(0);
+  expect(t.win.channels.size).toBe(0);
 
   const q = connect({ url: OC, token: await t.token("example", "u1"), window: W(t.win), timeoutMs: 5_000 });
   await settle();
@@ -110,23 +108,64 @@ test("popup: closed before it reported, and timeout", async () => {
   expect(t.win.opened[1]!.closed).toBe(true);
 });
 
-test("popup that lost its opener (COOP): it goes on to the return URL, resume() confirms there, the opener sees it active", async () => {
+/** Closed right after it left: what Chromium shows when a provider page with COOP cuts the opener. */
+async function coop(t: Awaited<ReturnType<typeof setup>>, token: string) {
+  const p = connect({ url: OC, token, window: W(t.win), timeoutMs: 600_000 });
+  const s = watch(p);
+  await settle();
+  t.win.advance(600);
+  t.win.opened[0]!.close();
+  // A slow login: a minute at the provider, and connect() is still waiting.
+  for (let i = 0; i < 30; i++) {
+    t.win.advance(2_000);
+    await settle();
+  }
+  expect(s.r).toBeUndefined();
+  const { returnUrl } = await t.finish({ noOpener: true });
+  expect(returnUrl).toMatch(/^https:\/\/app\.test\/back#openconnect=authorized&definition=example&id=u1&completion=[\w-]+&nonce=[0-9a-f]{24}$/);
+  // The app's page, loaded in the popup (same origin as the opener).
+  const inPopup = Object.assign(Object.create(t.win), { name: "", close: () => {} }); // COOP cleared window.name
+  t.win.location.href = returnUrl!;
+  return { p, s, inPopup };
+}
+
+test("COOP: a slow login after the popup read as closed; resume() in the popup tells the opener on a BroadcastChannel", async () => {
   const t = await setup();
   const token = await t.token("example", "u1", { returnUrl: `${APP}/back` });
-  const p = connect({ url: OC, token, window: W(t.win) });
-  await settle();
-  const { returnUrl } = await t.finish({ noOpener: true });
-  expect(returnUrl).toStartWith(`${APP}/back#openconnect=authorized&definition=example&id=u1&completion=`);
-  // Chromium reports the popup closed as soon as COOP cuts it; the opener keeps looking.
-  t.win.advance(600);
-  await settle();
-  // The app's page, loaded in the popup: confirms, then closes the popup.
-  const inPopup = Object.assign(Object.create(t.win), { name: t.win.opened[0]!.name, close: () => t.win.opened[0]!.close() });
-  t.win.location.href = returnUrl!;
+  const { p, inPopup } = await coop(t, token);
   expect(await resume({ url: OC, token, window: W(inPopup) })).toEqual({ status: "connected" });
-  expect(t.win.opened[0]!.closed).toBe(true);
-  await drain(t.win);
+  await settle();
   expect(await p).toEqual({ status: "connected" });
+  expect(t.win.channels.size).toBe(0);
+});
+
+test("COOP without BroadcastChannel: the opener still sees it through the state", async () => {
+  const t = await setup();
+  const token = await t.token("example", "u1", { returnUrl: `${APP}/back` });
+  const { p, s, inPopup } = await coop(t, token);
+  inPopup.BroadcastChannel = undefined;
+  expect(await resume({ url: OC, token, window: W(inPopup) })).toEqual({ status: "connected" });
+  await settle();
+  expect(s.r).toBeUndefined();
+  t.win.advance(2_000);
+  await settle();
+  expect(await p).toEqual({ status: "connected" });
+});
+
+test("COOP-looking close that never finishes: closed at the timeout, not before", async () => {
+  const t = await setup();
+  const p = connect({ url: OC, token: await t.token("example", "u1"), window: W(t.win), timeoutMs: 120_000 });
+  const s = watch(p);
+  await settle();
+  t.win.opened[0]!.close();
+  for (let i = 0; i < 50; i++) {
+    t.win.advance(2_000);
+    await settle();
+  }
+  expect(s.r).toBeUndefined();
+  t.win.advance(20_000);
+  await settle();
+  expect(await p).toEqual({ status: "closed" });
 });
 
 test("popup blocked: falls back to a redirect when the session has a returnUrl, else says so", async () => {

@@ -119,6 +119,7 @@ try {
   // closed by the user
   const [popup2] = await Promise.all([page.waitForEvent("popup"), page.click("#fresh")]);
   await popup2.waitForSelector("#ok");
+  await Bun.sleep(6_000); // a user who looked at the provider page, then cancelled (a close in the first 5 s reads as COOP)
   await popup2.close();
   await page.waitForFunction(() => document.getElementById("out")!.textContent!.includes("closed"), null, { timeout: 15000 });
   check("closed detected", (await page.textContent("#out")) === 'fresh:{"status":"closed"}');
@@ -132,14 +133,15 @@ try {
     await page.textContent("#out"),
   );
   // A provider page with COOP same-origin cuts the opener: Chromium reports the popup closed once it
-  // navigates there. The popup goes on to the return URL, where resume() confirms; connect() keeps
-  // looking at session() for ~10 s after `closed`, so it sees the connection active.
+  // navigates there. connect() takes an early close for that and keeps waiting; the popup goes on to
+  // the return URL, where resume() confirms and tells the opener on a BroadcastChannel.
   const [cp] = await Promise.all([page.waitForEvent("popup"), page.click("#coop")]);
   await cp.waitForSelector("#ok");
+  await Bun.sleep(12_000); // a slow login: longer than any fixed poll after `closed`
   await cp.click("#ok");
   await page.waitForFunction(() => document.getElementById("out")!.textContent!.startsWith("coop:"), null, { timeout: 10000 });
   const coopOut = await page.textContent("#out");
-  check("coop: the opener, still looking after closed, sees it connected", coopOut === 'coop:{"status":"connected"}', coopOut);
+  check("coop: a 12 s login after the popup read as closed, the opener still gets connected", coopOut === 'coop:{"status":"connected"}', coopOut);
   let coopState = "";
   for (let i = 0; i < 50 && coopState !== "active"; i++) {
     coopState = await state("coopy", "c1");

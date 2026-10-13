@@ -74,6 +74,21 @@ export class FakeWindow {
   history = { state: null, replaced: [] as string[], replaceState: (_s: unknown, _t: string, url: string) => void (this.history.replaced.push(url), (this.location.href = url)) };
   name = "";
   closed = false;
+  /** Same-origin channels: every window made from this one (the popup's page in the COOP test) shares them. */
+  channels = new Set<{ name: string; onmessage: Listener | null }>();
+  BroadcastChannel = ((all) =>
+    class {
+      onmessage: Listener | null = null;
+      constructor(readonly name: string) {
+        all.add(this);
+      }
+      postMessage(data: unknown) {
+        for (const c of all) if (c !== this && c.name === this.name) queueMicrotask(() => c.onmessage?.({ data }));
+      }
+      close() {
+        all.delete(this);
+      }
+    })(this.channels);
   blockPopups = false;
   crypto = globalThis.crypto;
   document = { createElement: (t: string) => new El(t, this), body: new El("body", this) };

@@ -86,38 +86,80 @@ function nonce(win: Window) {
   return Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** After `closed`, how many times (1 s apart) to look whether the connection became active anyway. */
-const CLOSED_POLLS = 10;
+const TICK_MS = 300;
+/** A popup that reads as closed this soon after it went to the provider was most likely cut by the provider's COOP, not closed by the user. */
+const COOP_MS = 5_000;
+/** While waiting out a COOP popup, how often to look at the connection's state. */
+const LOOK_MS = 2_000;
 
 /** What the callback hands back: a completion to confirm, or the end already. */
 type Back = Result | { status: "authorized"; completion: string };
 
-/** Wait for the popup's message (from the runtime's origin, from that window, with our nonce), its closing, or the timeout. */
-function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: number): Promise<Back> {
+/** The channel a popup cut off by COOP reports on, from the app's return URL page (same origin, so only the app hears it). */
+const channel = (win: Window, n: string) => {
+  const BC = (win as unknown as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
+  return BC ? new BC(`openconnect:${n}`) : null;
+};
+
+/**
+ * Wait for the popup's result: its message (from the runtime's origin, from that window, with our
+ * nonce), a broadcast from `resume()` on the return URL (COOP), or its closing, or the timeout.
+ *
+ * Closed is ambiguous: a provider page with COOP `same-origin` makes the popup read as closed the
+ * moment it gets there, while the user is still logging in. Closed soon after the popup left
+ * (`COOP_MS`) is taken as that: keep waiting (broadcast, and the state every `LOOK_MS`) until the
+ * connection is active, revoked, or the timeout, then `closed`. Closed later is the user: one look
+ * at the state, then `closed`.
+ */
+function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: number, state: () => Promise<string | null>): Promise<Back> {
   return new Promise((resolve) => {
-    let closedOnce = false;
+    let ticks = 0;
+    let closedAt: number | null = null;
+    let looking = false;
+    const bc = channel(win, n);
     const done = (r: Back) => {
       win.removeEventListener("message", onMessage);
       win.clearInterval(poll);
       win.clearTimeout(timer);
+      bc?.close();
       resolve(r);
     };
+    const result = (d: { status?: unknown; code?: unknown; message?: unknown }): Result =>
+      d.status === "connected" ? { status: "connected" } : err(String(d.code ?? "error"), String(d.message ?? ""));
     function onMessage(e: MessageEvent) {
       const d = e.data as { type?: unknown; nonce?: unknown; status?: unknown; completion?: unknown; code?: unknown; message?: unknown } | null;
       if (e.origin !== origin || e.source !== popup || !d || d.type !== "openconnect" || d.nonce !== n) return;
       if (d.status === "authorized" && typeof d.completion === "string") done({ status: "authorized", completion: d.completion });
-      else done(d.status === "connected" ? { status: "connected" } : err(String(d.code ?? "error"), String(d.message ?? "")));
+      else done(result(d));
     }
     win.addEventListener("message", onMessage);
-    // The page posts, then closes itself: give a message already in flight one more tick to land.
+    if (bc)
+      bc.onmessage = (e: MessageEvent) => {
+        const d = e.data as { type?: unknown; nonce?: unknown; status?: unknown } | null;
+        if (d && d.type === "openconnect" && d.nonce === n && d.status !== "authorized") done(result(d));
+      };
+    const look = (last: boolean) => {
+      if (looking) return;
+      looking = true;
+      state()
+        .then((s) => {
+          if (s === "active") done({ status: "connected" });
+          else if (last || s === "revoked") done({ status: "closed" });
+        })
+        .catch(() => last && done({ status: "closed" }))
+        .finally(() => (looking = false));
+    };
     const poll = win.setInterval(() => {
+      ticks++;
       if (!popup.closed) return;
-      if (closedOnce) done({ status: "closed" });
-      closedOnce = true;
-    }, 300);
+      // The page posts, then closes itself: give a message already in flight one more tick to land.
+      if (closedAt === null) return void (closedAt = ticks);
+      if (ticks === closedAt + 1) return look(closedAt * TICK_MS >= COOP_MS);
+      if ((ticks - closedAt) % Math.round(LOOK_MS / TICK_MS) === 0) look(false);
+    }, TICK_MS);
     const timer = win.setTimeout(() => {
       popup.close();
-      done(err("timeout", "the popup did not finish in time"));
+      done(closedAt === null ? err("timeout", "the popup did not finish in time") : { status: "closed" });
     }, timeoutMs);
   });
 }
@@ -165,19 +207,9 @@ export function connect(o: ConnectOptions): Promise<Result> {
     // Closed while we waited for the token or the ticket: navigating it now would open a new tab.
     if (popup.closed) return { status: "closed" };
     popup.location.href = next;
-    const back = await wait(win, popup, new URL(o.url).origin, n, o.timeoutMs ?? 600_000);
-    if (back.status === "authorized") return confirm(win, o.url, token, back.completion);
-    if (back.status === "closed") {
-      // The popup may still finish without reaching us: a provider's COOP cuts the opener (and reads
-      // as closed at once), and the popup goes on to the return URL, where `resume()` confirms.
-      for (let i = 0; i < CLOSED_POLLS; i++) {
-        const info = await session({ url: o.url, token, window: win }).catch(() => null);
-        if (info?.state === "active") return { status: "connected" };
-        if (!info || info.state === "revoked") break;
-        await new Promise((r) => win.setTimeout(r, 1000));
-      }
-    }
-    return back;
+    const state = async () => (await session({ url: o.url, token, window: win })).state;
+    const back = await wait(win, popup, new URL(o.url).origin, n, o.timeoutMs ?? 600_000, state);
+    return back.status === "authorized" ? confirm(win, o.url, token, back.completion) : back;
   })().catch((e) => {
     popup?.close();
     return err("error", e instanceof Error ? e.message : String(e));
@@ -185,7 +217,7 @@ export function connect(o: ConnectOptions): Promise<Result> {
 }
 
 /** The outcome keys the runtime puts in the return URL's fragment. */
-const KEYS = ["openconnect", "definition", "id", "completion", "code"];
+const KEYS = ["openconnect", "definition", "id", "completion", "code", "nonce"];
 
 /**
  * On the return URL's page, after a redirect (or a popup that lost its opener): if the fragment
@@ -204,6 +236,7 @@ export async function resume(o: { url: string; token: Token; window?: Window }):
   if (!c || c.def !== f.get("definition") || c.id !== f.get("id")) return null;
   const code = f.get("code") ?? "error";
   const completion = f.get("completion") ?? "";
+  const nonceOf = f.get("nonce");
   // Read once: gone from the address bar and this history entry, so a reload or a third-party script finds nothing.
   for (const k of KEYS) f.delete(k);
   here.hash = f.toString();
@@ -212,6 +245,13 @@ export async function resume(o: { url: string; token: Token; window?: Window }):
   if (status === "error") r = err(code, "");
   if (status === "connected") r = { status: "connected" };
   if (status === "authorized") r = await confirm(win, o.url, token, completion).catch((e: Error) => err("error", e.message));
+  // A popup cut off by COOP lands here with no opener: tell the waiting connect() on the app's own channel.
+  const n = nonceOf;
+  if (r && n) {
+    const bc = channel(win, n);
+    bc?.postMessage({ type: "openconnect", nonce: n, ...r });
+    bc?.close();
+  }
   if (r && win.name.startsWith("openconnect-")) win.close();
   return r;
 }

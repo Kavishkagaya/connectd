@@ -146,6 +146,8 @@ function returnTo(s: Settings, t: Target, o: Outcome): string | null {
   const f = new URLSearchParams({ openconnect: o.status, definition: t.definition, id: t.id });
   if (o.status === "authorized") f.set("completion", o.completion);
   if (o.status === "error") f.set("code", o.code);
+  // Not secret: names the BroadcastChannel a popup cut off by COOP reports on (`resume()`).
+  if (t.nonce) f.set("nonce", t.nonce);
   u.hash = f.toString();
   return u.href;
 }
