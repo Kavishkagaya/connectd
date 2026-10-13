@@ -55,12 +55,18 @@ packages/connect/     browser package (#29), zero dependencies, DOM only (tsconf
   src/fake.ts         fake window/DOM in front of the real runtime, for the tests
   e2e/chromium.ts     one real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 
-packages/cli/         `openconnect` bin (#30, Bun only); `@openconnect/cli` exports project.ts
-  src/project.ts      the project shape: defineConfig, Project, ENV names, generateKeys, settings(), options() = runtime() input from config + env + index. Workers-safe: deploy (#31) reuses it
-  src/env.ts          .env / .dev.vars parsing; dev keys generated once into .openconnect/dev.vars (dir gitignores itself)
+packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli` exports project.ts; runtime/kernel/connections are peer deps
+  src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
+  src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .openconnect/ dir
+  src/env.ts          .env / .dev.vars parsing; dev keys generated once into .openconnect/dev.vars
+  src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan)
+  src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
+  src/generate.ts     deploy's files in .openconnect/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
+  src/deploy.ts       `openconnect deploy`: wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
+  test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
   src/dev.ts          `openconnect dev`: memory driver on a real clock behind Bun.serve, snapshot in .openconnect/state.json, config bundled with Bun.build and swapped in place on save
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
-  src/cli.ts, args.ts commands (dev, help, deploy slot) and a declared-flags parser; src/bin.ts the entry
+  src/cli.ts, args.ts commands (dev, deploy, help) and a declared-flags parser; src/bin.ts the entry
 
 examples/basic/       a user project (workspace): openconnect.config.ts with the providers and one local definition
 ```
@@ -70,9 +76,10 @@ Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runt
 ## Commands
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
-- `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect`
+- `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts`, the CLI's Worker template + `project.ts`, and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect`
 - One kernel file: `cd packages/kernel && bun test src/primitives/rate.test.ts`
 - Dev server on the example: `cd examples/basic && bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `openconnect --help`)
+- Deploy plan without Cloudflare: `cd examples/basic && bunx openconnect deploy --dry-run` (then `wrangler deploy --dry-run -c .openconnect/deploy/wrangler.json` bundles it offline)
 
 ## Patterns
 

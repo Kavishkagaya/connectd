@@ -3,6 +3,10 @@
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
+  "files": [
+    "src",
+    "migrations"
+  ],
   "exports": {
     ".": "./src/index.ts",
     "./cloudflare": "./src/cloudflare.ts",

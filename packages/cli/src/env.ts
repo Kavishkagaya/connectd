@@ -1,6 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type Env, generateKeys } from "./project.ts";
+import { generateKeys } from "./keys.ts";
+import type { Env } from "./project.ts";
+import { workdir } from "./workdir.ts";
+
+export { workdir };
 
 /** `KEY=value` lines (dotenv / `.dev.vars` syntax): `#` comments, optional `export`, single or double quotes. */
 export function parseEnv(text: string): Record<string, string> {
@@ -20,14 +24,6 @@ export function parseEnv(text: string): Record<string, string> {
 }
 
 const read = (path: string) => (existsSync(path) ? parseEnv(readFileSync(path, "utf8")) : {});
-
-/** The project's local directory: generated keys, the state snapshot, builds. Ignored by git on its own. */
-export function workdir(dir: string) {
-  const w = join(dir, ".openconnect");
-  mkdirSync(w, { recursive: true });
-  if (!existsSync(join(w, ".gitignore"))) writeFileSync(join(w, ".gitignore"), "*\n");
-  return w;
-}
 
 /**
  * Dev keys: generated once into `.openconnect/dev.vars`, kept across runs so sealed credentials,

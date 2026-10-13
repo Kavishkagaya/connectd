@@ -1,14 +1,13 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { Handler, Json, Program } from "@openconnect/kernel";
 import { memory, type Snapshot } from "@openconnect/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@openconnect/runtime";
 import { devKeys, loadEnv, workdir } from "./env.ts";
-import { type Config, ENV, type Env, options, type Project, unconfigured } from "./project.ts";
+import { ENV, type Env, options, type Project, unconfigured } from "./project.ts";
+import { findConfig, importConfig } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 
-export const CONFIG_FILES = ["openconnect.config.ts", "openconnect.config.js", "openconnect.config.mjs"];
 export const PORT = 8787;
 
 export type DevOptions = {
@@ -33,20 +32,6 @@ export type DevOptions = {
 
 /** What a load produced, for the banner and tests. */
 export type Loaded = { project: Project; unconfigured: string[]; publicUrl: string };
-
-/** Bundle the config with its local imports into one file and import that, so every load sees fresh code. Packages stay external (one copy, so `instanceof` holds). */
-async function importConfig(entry: string, out: string, n: number): Promise<Config> {
-  const r = await Bun.build({ entrypoints: [entry], target: "bun", packages: "external", outdir: out, naming: `config-${n}.js`, throw: false });
-  if (!r.success) throw new Error(r.logs.map(String).join("\n") || "build failed");
-  const file = r.outputs[0]?.path as string;
-  try {
-    const m = (await import(pathToFileURL(file).href)) as { default?: Config };
-    if (!m.default) throw new Error(`${entry} has no default export (export default defineConfig({ definitions: [...] }))`);
-    return m.default;
-  } finally {
-    rmSync(file, { force: true });
-  }
-}
 
 /**
  * A Program whose instances follow `swap(next)`, the way a deploy restarts isolates: per-isolate
@@ -85,9 +70,7 @@ export function swappable() {
 export async function dev(o: DevOptions) {
   const log = o.log ?? console.log;
   const dir = resolvePath(o.dir);
-  const file = o.config ?? CONFIG_FILES.find((f) => existsSync(join(dir, f)));
-  if (!file || !existsSync(join(dir, file))) throw new Error(`no ${o.config ?? CONFIG_FILES[0]} in ${dir}`);
-  const entry = join(dir, file);
+  const entry = findConfig(dir, o.config);
   const work = workdir(dir);
   const statePath = join(work, "state.json");
   const build = join(work, "build");

@@ -3,11 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "openconnect dev"
+    "dev": "openconnect dev",
+    "deploy": "openconnect deploy --env-file .prod.vars"
   },
   "dependencies": {
     "@openconnect/cli": "workspace:*",
     "@openconnect/connections": "workspace:*",
-    "@openconnect/providers": "workspace:*"
+    "@openconnect/kernel": "workspace:*",
+    "@openconnect/providers": "workspace:*",
+    "@openconnect/runtime": "workspace:*"
   }
 }
