@@ -25,6 +25,8 @@ export type Settings = {
   config: Record<string, unknown>;
   /** Outbound fetch for definitions; tests pass a fake. */
   fetch?: typeof fetch;
+  /** Where the events extension delivers, and the `whsec_...` secret it signs with (#24). */
+  events?: { url: string; secret: string };
 };
 
 export type Fault = { code: string; status: number; message: string; state?: string; reason?: string };
