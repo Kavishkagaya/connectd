@@ -32,6 +32,7 @@ test("lifecycle: legal transitions, events, revoked is terminal", async () => {
   const { get } = await setup();
   const c = await get();
   expect(await c.read()).toBe(null);
+  expect(await c.events.seq()).toBe(0);
   await expect(c.write(null, "reauth_required", null)).rejects.toBeInstanceOf(IllegalTransition);
   await expect(c.write(null, "active", null)).rejects.toBeInstanceOf(IllegalTransition);
   expect(await c.write(null, "pending", null)).toBe(true);
@@ -49,6 +50,7 @@ test("lifecycle: legal transitions, events, revoked is terminal", async () => {
   ]);
   await c.events.ack(2);
   expect((await c.events.pending()).map((e) => e.seq)).toEqual([3]);
+  expect(await c.events.seq()).toBe(3); // acks don't move it
 });
 
 test("handshake: signed state routes, take is once, other instance and forgery rejected", async () => {
