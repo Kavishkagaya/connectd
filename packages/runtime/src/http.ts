@@ -9,6 +9,8 @@ export type Api = {
   /** Call a connection method; always a Reply (connection methods never throw across the boundary). */
   call(instance: string, method: string, args: Json): Promise<Reply>;
   settings: Settings;
+  /** The Worker's clock (webhook timestamp checks); a fake in tests. */
+  now(): number;
   definitions: Record<string, AnyDefinition>;
   /** The connection index, if an extension provides one (`directory`). */
   index?: Index;
@@ -74,7 +76,14 @@ async function authorized(req: Request, key: string) {
 }
 
 /** The Worker's fetch: route by first path segment, check the API key unless the route is public. */
-export function http(o: { routes: Record<string, Route>; definitions: Record<string, AnyDefinition>; settings: () => Promise<Settings>; index?: Index; internal?: Set<string> }) {
+export function http(o: {
+  routes: Record<string, Route>;
+  definitions: Record<string, AnyDefinition>;
+  settings: () => Promise<Settings>;
+  index?: Index;
+  internal?: Set<string>;
+  now?: () => number;
+}) {
   return async (req: Request, call: Call): Promise<Response> => {
     try {
       const settings = await o.settings();
@@ -82,7 +91,7 @@ export function http(o: { routes: Record<string, Route>; definitions: Record<str
       const route = Object.hasOwn(o.routes, name) ? o.routes[name] : undefined;
       if (!route) throw new Fail("not_found", 404, "no such route");
       if (!route.public && !(await authorized(req, settings.apiKey))) throw new Fail("unauthorized", 401, "missing or wrong API key");
-      const api: Api = { settings, definitions: o.definitions, call: async (i, m, a) => (await call(i, m, a)) as Reply, internal: o.internal ?? new Set(), ...(o.index ? { index: o.index } : {}) };
+      const api: Api = { settings, now: o.now ?? Date.now, definitions: o.definitions, call: async (i, m, a) => (await call(i, m, a)) as Reply, internal: o.internal ?? new Set(), ...(o.index ? { index: o.index } : {}) };
       return await route.fetch(req, api, path);
     } catch (e) {
       return reply({ error: fault(e, "worker") });

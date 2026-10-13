@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { hmacHex } from "@openconnect/connections";
 import { fakeOAuth, harness } from "@openconnect/connections/testing";
 import { base64url, type Json, type OAuth2 } from "@openconnect/kernel";
 import { github } from "./github.ts";
@@ -139,4 +140,73 @@ test("google: offline + consent, PKCE, refresh keeps the unrotated refresh token
   await c.revoke();
   const rv = p.s.requests.find((r) => r.url === "https://oauth2.googleapis.com/revoke")!;
   expect(new URLSearchParams(await rv.text()).get("token")).toBe("r1");
+});
+
+// Webhooks (#25): verify + parse are pure; register/unregister run against the fake provider.
+const hook = (headers: Record<string, string>, body = "") => ({ headers: new Headers(headers), body });
+const NOW = 1_700_000_000_000;
+const at = { now: () => NOW };
+
+test("github webhooks: X-Hub-Signature-256 with the connection's secret, ping is a handshake", async () => {
+  const w = github.webhooks!;
+  const body = JSON.stringify({ action: "opened", number: 1 });
+  const sig = `sha256=${await hmacHex("s3cret", body)}`;
+  const ok = hook({ "x-hub-signature-256": sig, "x-github-event": "pull_request", "x-github-delivery": "d-1" }, body);
+  const ctx = { config: { clientId: "c" }, ...at };
+  expect(await w.verify(ctx, ok, "s3cret")).toBe(true);
+  expect(await w.verify(ctx, ok, "other")).toBe(false);
+  expect(await w.verify(ctx, ok, null)).toBe(false); // app-level route: no secret, never valid
+  expect(await w.verify(ctx, { ...ok, body: `${body} ` }, "s3cret")).toBe(false);
+  expect(w.parse(ok)).toEqual({ topic: "pull_request", delivery: "d-1", payload: { action: "opened", number: 1 } });
+  expect(w.parse(hook({ "x-github-event": "ping" }, "{}"))).toEqual({ reply: null });
+  expect(github.webhooks!.register).toBeUndefined();
+});
+
+test("slack webhooks: v0 signing secret with a 5 min window, url_verification, routed by team", async () => {
+  const w = slack.webhooks!;
+  const config = { clientId: "1.2", signingSecret: "ss" };
+  const body = JSON.stringify({ type: "event_callback", team_id: "T9", event_id: "Ev1", event: { type: "message", text: "hi" } });
+  const signed = async (ts: number, b = body) => hook({ "x-slack-request-timestamp": String(ts), "x-slack-signature": `v0=${await hmacHex("ss", `v0:${ts}:${b}`)}` }, b);
+  const ts = NOW / 1000;
+  expect(await w.verify({ config, ...at }, await signed(ts), null)).toBe(true);
+  expect(await w.verify({ config, ...at }, await signed(ts - 299), null)).toBe(true);
+  expect(await w.verify({ config, ...at }, await signed(ts - 301), null)).toBe(false); // replay window
+  expect(await w.verify({ config: { ...config, signingSecret: "other" }, ...at }, await signed(ts), null)).toBe(false);
+  expect(await w.verify({ config: { clientId: "1.2" }, ...at }, await signed(ts), null)).toBe(false);
+  expect(w.parse(await signed(ts))).toEqual({ topic: "message", delivery: "Ev1", external: { key: "teamId", value: "T9" }, payload: JSON.parse(body) });
+  expect(w.parse(hook({}, JSON.stringify({ type: "url_verification", challenge: "abc" })))).toEqual({ reply: { challenge: "abc" } });
+  // Routes by what `external` indexes.
+  expect(slack.external!({ teamId: "T9", teamName: "", userId: null, botUserId: null })).toEqual({ teamId: "T9" });
+});
+
+test("google webhooks: calendar channel registered with the secret as token, stopped on unregister", async () => {
+  const calls: { url: string; body: any; auth: string | null }[] = [];
+  const p = fakeOAuth({
+    tokenUrl: "https://oauth2.googleapis.com/token",
+    rotate: false,
+    issue: (n) => ({ access_token: `ya29.${n}`, expires_in: 3599, refresh_token: `r${n}`, id_token: idToken({ sub: "1089" }) }),
+    error: () => ({ status: 400, body: { error: "invalid_grant" } }),
+    route: async (url, req) => {
+      calls.push({ url, body: await req.json().catch(() => null), auth: req.headers.get("authorization") });
+      return url.endsWith("/events/watch") ? Response.json({ kind: "api#channel", id: "ch1", resourceId: "res1", expiration: String(NOW + 7 * 86_400_000) }) : new Response(null, { status: 204 });
+    },
+  });
+  const { get, callback } = await harness(google, { clientId: "x", watchCalendar: true }, p.fetch);
+  const c = await get("conn:g");
+  await callback(p.approve((await c.connect())!));
+  const w = google.webhooks!;
+  const cred = await c.token();
+  const r = await w.register!(c.ctx, cred, { url: "https://oc.test/webhooks/google/g1", secret: "tok" });
+  expect(r).toEqual({ hook: { id: "ch1", resourceId: "res1" }, expiresAt: NOW + 7 * 86_400_000 });
+  expect(calls[0]).toMatchObject({ url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/watch", auth: "Bearer ya29.1" });
+  expect(calls[0]!.body).toMatchObject({ type: "web_hook", address: "https://oc.test/webhooks/google/g1", token: "tok" });
+  await w.unregister!(c.ctx, cred, r!.hook);
+  expect(calls[1]).toEqual({ url: "https://www.googleapis.com/calendar/v3/channels/stop", body: { id: "ch1", resourceId: "res1" }, auth: "Bearer ya29.1" });
+  expect(await w.register!({ ...c.ctx, config: { clientId: "x" } }, cred, { url: "u", secret: "s" })).toBeNull(); // not opted in
+
+  const n = hook({ "x-goog-channel-token": "tok", "x-goog-channel-id": "ch1", "x-goog-resource-state": "exists", "x-goog-resource-id": "res1", "x-goog-message-number": "2" });
+  expect(await w.verify({ config: { clientId: "x" }, ...at }, n, "tok")).toBe(true);
+  expect(await w.verify({ config: { clientId: "x" }, ...at }, n, "nope")).toBe(false);
+  expect(w.parse(n)).toMatchObject({ topic: "calendar.exists", delivery: "ch1:2", payload: { channelId: "ch1", resourceId: "res1" } });
+  expect(w.parse(hook({ "x-goog-resource-state": "sync" }))).toEqual({ reply: null });
 });

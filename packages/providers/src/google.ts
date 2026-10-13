@@ -1,5 +1,14 @@
-import { defineConnection, type OAuth2Config, oauth2, rateHeaders } from "@openconnect/connections";
-import { fromBase64url, type OAuth2 } from "@openconnect/kernel";
+import { defineConnection, type OAuth2Config, oauth2, rateHeaders, safeEqual } from "@openconnect/connections";
+import { type Credential, fromBase64url, type OAuth2 } from "@openconnect/kernel";
+
+/**
+ * `watchCalendar` registers a push channel on each connection's primary calendar (#25); the app
+ * adds a calendar scope (`.../auth/calendar.readonly`) to `scopes` with it.
+ */
+export type GoogleConfig = OAuth2Config & { watchCalendar?: boolean };
+
+const CALENDAR = "https://www.googleapis.com/calendar/v3";
+const bearer = (cred: Credential) => ({ authorization: `Bearer ${(cred as OAuth2).accessToken}`, "content-type": "application/json" });
 
 /**
  * Google. `access_type=offline` + `prompt=consent` so every authorization (re-auth included) returns
@@ -8,7 +17,7 @@ import { fromBase64url, type OAuth2 } from "@openconnect/kernel";
  */
 export const google = defineConnection({
   id: "google",
-  auth: oauth2<OAuth2Config>({
+  auth: oauth2<GoogleConfig>({
     authorizeUrl: "https://accounts.google.com/o/oauth2/v2/auth",
     tokenUrl: "https://oauth2.googleapis.com/token",
     revokeUrl: "https://oauth2.googleapis.com/revoke",
@@ -24,6 +33,42 @@ export const google = defineConnection({
   external: (m) => ({ sub: m.sub }),
   // ponytail: one host; APIs only on their own host (gmail.googleapis.com, sheets.googleapis.com) need a host-per-request proxy.
   proxy: { baseUrl: "https://www.googleapis.com" },
+  /**
+   * Push notifications (Calendar `events.watch`): a channel per connection, created when it goes
+   * active, renewed before it lapses (Google caps channel lifetime), stopped before revoke. Google
+   * signs nothing; the channel token is the connection's webhook secret, echoed in a header. The
+   * body is empty: the event says what changed, the app re-reads it (sync token) through the proxy.
+   */
+  // ponytail: Calendar only; Drive `changes.watch` has the same shape, Gmail needs Pub/Sub (app-level, OIDC-signed).
+  webhooks: {
+    verify: async (_ctx, req, secret) => secret !== null && safeEqual(req.headers.get("x-goog-channel-token") ?? "", secret),
+    parse(req) {
+      const h = (n: string) => req.headers.get(`x-goog-${n}`);
+      // `sync` is the channel's hello, sent once at creation.
+      if (h("resource-state") === "sync") return { reply: null };
+      return {
+        topic: `calendar.${h("resource-state") ?? "unknown"}`,
+        delivery: `${h("channel-id")}:${h("message-number")}`,
+        payload: { channelId: h("channel-id"), resourceId: h("resource-id"), resourceUri: h("resource-uri"), messageNumber: h("message-number") },
+      };
+    },
+    async register(ctx, cred, { url, secret }) {
+      if (!ctx.config.watchCalendar) return null;
+      const res = await ctx.fetch(`${CALENDAR}/calendars/primary/events/watch`, {
+        method: "POST",
+        headers: bearer(cred),
+        body: JSON.stringify({ id: crypto.randomUUID(), type: "web_hook", address: url, token: secret }),
+      });
+      if (!res.ok) throw new Error(`google events.watch ${res.status}`);
+      const ch = (await res.json()) as { id: string; resourceId: string; expiration?: string };
+      return { hook: { id: ch.id, resourceId: ch.resourceId }, ...(ch.expiration ? { expiresAt: Number(ch.expiration) } : {}) };
+    },
+    async unregister(ctx, cred, hook) {
+      const res = await ctx.fetch(`${CALENDAR}/channels/stop`, { method: "POST", headers: bearer(cred), body: JSON.stringify(hook) });
+      // 404: already gone (lapsed).
+      if (!res.ok && res.status !== 404) throw new Error(`google channels.stop ${res.status}`);
+    },
+  },
   // Quotas are per API and per project; only follow what Google says.
   rate: { observe: (res, now) => rateHeaders(res, now) },
 });

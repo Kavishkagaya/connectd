@@ -1,7 +1,11 @@
-import { defineConnection, type OAuth2Config, oauth2, rateHeaders } from "@openconnect/connections";
-import type { OAuth2, TokenResponse } from "@openconnect/kernel";
+import { defineConnection, hmacHex, type OAuth2Config, oauth2, rateHeaders, safeEqual } from "@openconnect/connections";
+import type { Json, OAuth2, TokenResponse } from "@openconnect/kernel";
 
-export type SlackConfig = OAuth2Config & { userScopes?: string[] };
+/** `signingSecret` (app settings, Basic Information) verifies Events API requests (#25). */
+export type SlackConfig = OAuth2Config & { userScopes?: string[]; signingSecret?: string };
+
+/** Slack refuses requests older than this, against replays. */
+const TOLERANCE_SEC = 300;
 
 /**
  * Slack OAuth v2. Bot scopes go in `scope`, user scopes in `user_scope`, both comma-separated.
@@ -36,6 +40,30 @@ export const slack = defineConnection({
   },
   external: (m) => ({ teamId: m.teamId }),
   proxy: { baseUrl: "https://slack.com/api" },
+  /**
+   * Events API: one Request URL per app (`/webhooks/slack`), set in the app's settings, so nothing
+   * to register per connection. Signed v0 with the app's signing secret; routed by `team_id` to
+   * every connection of that workspace.
+   */
+  // ponytail: Events API JSON only; interactivity and slash commands (form bodies) and Enterprise Grid org-wide installs (`authorizations[]`) come later.
+  webhooks: {
+    async verify(ctx, req) {
+      if (!ctx.config.signingSecret) return false;
+      const ts = req.headers.get("x-slack-request-timestamp") ?? "";
+      if (!/^\d+$/.test(ts) || Math.abs(ctx.now() / 1000 - Number(ts)) > TOLERANCE_SEC) return false;
+      return safeEqual(req.headers.get("x-slack-signature") ?? "", `v0=${await hmacHex(ctx.config.signingSecret, `v0:${ts}:${req.body}`)}`);
+    },
+    parse(req) {
+      const b = JSON.parse(req.body) as { type?: string; challenge?: string; team_id?: string; event_id?: string; event?: { type?: string } };
+      if (b.type === "url_verification") return { reply: { challenge: b.challenge ?? "" } };
+      return {
+        topic: b.event?.type ?? b.type ?? "unknown",
+        payload: b as Json,
+        ...(b.event_id ? { delivery: b.event_id } : {}),
+        ...(b.team_id ? { external: { key: "teamId", value: b.team_id } } : {}),
+      };
+    },
+  },
   rate: {
     // ponytail: Slack limits per method per workspace (tiers 1-4); one Tier 3 budget for all methods until the proxy knows methods.
     connection: { count: 50, periodMs: 60_000 },
