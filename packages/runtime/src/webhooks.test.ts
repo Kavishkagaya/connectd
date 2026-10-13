@@ -8,7 +8,15 @@ const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n
 const T0 = 1_700_000_000_000;
 
 // The provider fake: what register/unregister were asked, and knobs for failures and channel lifetime.
-const fake = { fail: 0, ttl: null as number | null, n: 0, registered: [] as { url: string; secret: string; key: string }[], unregistered: [] as Json[] };
+const fake = {
+  fail: 0,
+  ttl: null as number | null,
+  n: 0,
+  registered: [] as { url: string; secret: string; key: string }[],
+  unregistered: [] as Json[],
+  /** Runs inside register, before it returns (to race it). */
+  during: null as (() => Promise<unknown>) | null,
+};
 
 /**
  * A test provider: `x-sig` = hex HMAC of the body under the connection's secret (per-connection
@@ -31,6 +39,7 @@ const hooked = defineConnection({
         fake.fail--;
         throw new Error("provider down");
       }
+      await fake.during?.();
       fake.registered.push({ ...endpoint, key: cred.kind === "static" ? (cred.fields.key ?? "") : "" });
       const id = `h${++fake.n}`;
       return { hook: id, ...(fake.ttl ? { expiresAt: ctx.now() + fake.ttl } : {}) };
@@ -42,8 +51,8 @@ const hooked = defineConnection({
 });
 const plain = defineConnection({ id: "plain", auth: apiKey(["key"]) });
 
-async function setup(o: { events?: boolean } = {}) {
-  Object.assign(fake, { fail: 0, ttl: null, n: 0, registered: [], unregistered: [] });
+async function setup(o: { events?: boolean; down?: string } = {}) {
+  Object.assign(fake, { fail: 0, ttl: null, n: 0, registered: [], unregistered: [], during: null });
   const got: ConnectionEvent[] = [];
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
@@ -64,7 +73,9 @@ async function setup(o: { events?: boolean } = {}) {
   });
   w = memory(rt.program, { now: T0 });
   const send = async (method: string, path: string, body: string, headers: Record<string, string> = {}) => {
-    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method, headers, body }), w!.call);
+    // `down`: that instance's DO throws on receive (a fan-out failure).
+    const call = (i: string, m: string, a: Json) => (i === o.down && m === "webhooks.receive" ? Promise.reject(new Error("DO down")) : w!.call(i, m, a));
+    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method, headers, body }), call);
     return { status: res.status, body: (await res.json()) as any };
   };
   const api = (path: string, body: Json = null) => send("POST", path, JSON.stringify(body), { authorization: "Bearer secret" });
@@ -210,4 +221,68 @@ test("auto-registration: after giving up, the next change to the connection trie
   await t.api("/connections/hooked/c1/connect", { key: "k2", team: "T1" }); // re-auth
   await t.w.advance(0);
   expect(fake.registered.map((r) => r.key)).toEqual(["k2"]);
+});
+
+test("auto-registration: a renewal that gave up is retried on the next change to the connection", async () => {
+  const t = await setup();
+  fake.ttl = 7 * 86_400_000;
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  await t.w.advance(0);
+  expect(fake.n).toBe(1);
+  fake.fail = 100;
+  await t.w.advance(fake.ttl - 3_600_000); // renewal is due
+  for (let i = 0; i < 10; i++) await t.w.advance(3_600_000); // fails 8 times, gives up; the hook lapses
+  expect(100 - fake.fail).toBe(8);
+  fake.fail = 0;
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" }); // re-auth
+  await t.w.advance(0);
+  expect(fake.n).toBe(2);
+  expect(fake.unregistered).toEqual(["h1"]);
+});
+
+test("auto-registration: state changes don't reset a registration that's backing off", async () => {
+  const t = await setup();
+  fake.fail = 1;
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  await t.w.advance(0); // attempt 1 fails; retry in [15s, 30s]
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" }); // version moves
+  await t.w.advance(0);
+  expect(fake.registered).toEqual([]); // the backoff held
+  await t.w.advance(30_000);
+  expect(fake.registered.length).toBe(1);
+});
+
+test("auto-registration: a re-auth to another account re-registers and stops the old hook", async () => {
+  const t = await setup();
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  await t.w.advance(0);
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" }); // same account: nothing
+  await t.w.advance(0);
+  expect(fake.n).toBe(1);
+  await t.api("/connections/hooked/c1/connect", { key: "k2", team: "T2" });
+  await t.w.advance(0);
+  expect(fake.registered.map((r) => r.key)).toEqual(["k", "k2"]);
+  expect(fake.unregistered).toEqual(["h1"]);
+});
+
+test("auto-registration: a revoke landing mid-registration undoes it", async () => {
+  const t = await setup();
+  fake.during = () => t.api("/connections/hooked/c1/revoke");
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  await t.w.advance(0);
+  expect(fake.registered.length).toBe(1);
+  expect(fake.unregistered).toEqual(["h1"]); // beforeRevoke found nothing; sync removed it
+  fake.during = null;
+  await t.w.advance(86_400_000);
+  expect(fake.registered.length).toBe(1);
+});
+
+test("app-level: a connection that fails to take it makes the route 503, so the provider retries", async () => {
+  const t = await setup({ down: "conn:hooked:a2" });
+  for (const id of ["a1", "a2"]) await t.api(`/connections/hooked/${id}/connect`, { key: "k", team: "T1" });
+  const r = await t.hook("/webhooks/hooked", { type: "msg", team: "T1", id: "Ev1" }, "app");
+  expect(r.status).toBe(503);
+  expect(r.body.error).toMatchObject({ code: "delivery_failed", message: "1 of 2 connections did not take the webhook" });
+  // a1 took it; the provider's retry delivers it again with the same `delivery`.
+  expect((await t.webhooksOf()).map((e) => [e.connection.id, e.data.delivery])).toEqual([["a1", "Ev1"]]);
 });

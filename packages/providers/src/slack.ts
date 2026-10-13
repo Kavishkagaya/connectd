@@ -56,11 +56,14 @@ export const slack = defineConnection({
     parse(req) {
       const b = JSON.parse(req.body) as { type?: string; challenge?: string; team_id?: string; event_id?: string; event?: { type?: string } };
       if (b.type === "url_verification") return { reply: { challenge: b.challenge ?? "" } };
+      // The signing secret is app-wide, so the team is the only thing tying a delivery to a
+      // connection (checked against it on /webhooks/slack/:id too): refuse one without it.
+      if (!b.team_id) throw new Error("no team_id");
       return {
         topic: b.event?.type ?? b.type ?? "unknown",
         payload: b as Json,
+        external: { key: "teamId", value: b.team_id },
         ...(b.event_id ? { delivery: b.event_id } : {}),
-        ...(b.team_id ? { external: { key: "teamId", value: b.team_id } } : {}),
       };
     },
   },

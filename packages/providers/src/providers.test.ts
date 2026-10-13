@@ -175,6 +175,8 @@ test("slack webhooks: v0 signing secret with a 5 min window, url_verification, r
   expect(await w.verify({ config: { clientId: "1.2" }, ...at }, await signed(ts), null)).toBe(false);
   expect(w.parse(await signed(ts))).toEqual({ topic: "message", delivery: "Ev1", external: { key: "teamId", value: "T9" }, payload: JSON.parse(body) });
   expect(w.parse(hook({}, JSON.stringify({ type: "url_verification", challenge: "abc" })))).toEqual({ reply: { challenge: "abc" } });
+  // No team: nothing ties it to a connection, so it's refused (a 400 at the route) on either route.
+  expect(() => w.parse(hook({}, JSON.stringify({ type: "event_callback", event: { type: "message" } })))).toThrow("no team_id");
   // Routes by what `external` indexes.
   expect(slack.external!({ teamId: "T9", teamName: "", userId: null, botUserId: null })).toEqual({ teamId: "T9" });
 });
