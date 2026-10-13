@@ -1,4 +1,5 @@
-import { applyD1Migrations, type D1Migration, reset } from "cloudflare:test";
+import { applyD1Migrations, type D1Migration, reset, runInDurableObject } from "cloudflare:test";
+import { hmacHex } from "@openconnect/connections";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { findByExternal } from "../src/directory.ts";
@@ -69,4 +70,36 @@ test("cloudflare: D1 upserts are monotonic and move the external ids with the ro
   await index.upsert({ ...row, state: "active", external: { team: "T3" }, version: 7, updatedAt: 2 });
   expect(await findByExternal(index, "d", "team", "T2")).toEqual([]);
   expect(await findByExternal(index, "d", "team", "T3")).toMatchObject([{ id: "i", createdAt: 1, updatedAt: 2 }]);
+});
+
+const signed = async (path: string, payload: unknown, secret: string) => {
+  const body = JSON.stringify(payload);
+  const res = await worker.fetch(new Request(`https://oc.test${path}`, { method: "POST", headers: { "x-sig": await hmacHex(secret, body) }, body }), env as unknown as Record<string, unknown>);
+  return { status: res.status, body: (await res.json()) as any };
+};
+
+test("cloudflare: webhooks per connection and app-level (D1 lookup, fan-out to each ConnectionDO)", async () => {
+  for (const [id, key] of [
+    ["k1", "acct_a"],
+    ["k2", "acct_a"],
+    ["k3", "acct_b"],
+  ])
+    await req("POST", `/connections/keyed/${id}/connect`, { key });
+  const ep = (await req("POST", "/connections/keyed/k1/webhooks.endpoint")).body;
+  expect(ep.url).toBe("https://oc.test/webhooks/keyed/k1");
+
+  expect(await signed("/webhooks/keyed/k1", { type: "push", account: "acct_a" }, ep.secret)).toEqual({ status: 200, body: { delivered: 1 } });
+  expect((await signed("/webhooks/keyed/k1", { type: "push", account: "acct_b" }, ep.secret)).status).toBe(403);
+  expect((await signed("/webhooks/keyed/k2", { type: "push" }, ep.secret)).status).toBe(401);
+  expect(await signed("/webhooks/keyed", { type: "msg", account: "acct_a" }, "app")).toEqual({ status: 200, body: { delivered: 2 } });
+  expect((await req("POST", "/connections/keyed/k1/webhooks.receive", { data: {} })).status).toBe(404);
+
+  // Queued in each DO's outbox behind its lifecycle event: k1 got two webhooks, k2 one, k3 none.
+  const outbox = async (id: string) => {
+    const ns = (env as unknown as { CONNECTION: DurableObjectNamespace }).CONNECTION;
+    return runInDurableObject(ns.get(ns.idFromName(`conn:keyed:${id}`)), async (_o, state) =>
+      state.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM kv WHERE key LIKE 'events.e:%'").one().n,
+    );
+  };
+  expect([await outbox("k1"), await outbox("k2"), await outbox("k3")]).toEqual([3, 2, 1]);
 });

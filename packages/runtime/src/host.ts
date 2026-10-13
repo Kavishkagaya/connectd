@@ -27,6 +27,8 @@ export type Settings = {
   fetch?: typeof fetch;
   /** Where the events extension delivers, and the `whsec_...` secret it signs with (#24). */
   events?: { url: string; secret: string };
+  /** Public base URL of the `/webhooks` route, and the HMAC key each connection's webhook secret derives from (#25). */
+  webhooks?: { url: string; key: CryptoKey };
 };
 
 export type Fault = { code: string; status: number; message: string; state?: string; reason?: string };
@@ -45,6 +47,8 @@ export type Hooks = {
   onTimer?(name: string, payload: Json): Promise<boolean>;
   /** After every method or timer on this connection, failed ones too (state may have moved anyway). Errors are logged. */
   after?(cause: string): Promise<void>;
+  /** Before `revoke`, while the credential is still there (webhooks unregister). Errors are logged; the revoke goes on. */
+  beforeRevoke?(): Promise<void>;
 };
 
 /** Thrown by runtime and extension code for a failure with its own HTTP status. */
@@ -86,7 +90,7 @@ async function status(b: Bound): Promise<Json> {
   return { state: s.state, ...(s.reason ? { reason: s.reason } : {}), metadata: await b.metadata() };
 }
 
-const builtins = (b: Bound): Record<string, Method> => ({
+const builtins = (b: Bound, hooks: Hooks[], instance: string): Record<string, Method> => ({
   connect: async (a) => ({ url: await b.connect(input(a)) }),
   callback: async (a) => {
     await b.callback(input(a));
@@ -96,6 +100,7 @@ const builtins = (b: Bound): Record<string, Method> => ({
   status: () => status(b),
   revoke: async (a) => {
     const reason = (a as { reason?: Json } | null)?.reason;
+    for (const h of hooks) await h.beforeRevoke?.().catch((e) => console.error("before revoke", instance, e));
     await b.revoke(typeof reason === "string" ? reason : undefined);
     return status(b);
   },
@@ -121,7 +126,7 @@ export function host(o: { definitions: Record<string, AnyDefinition>; settings: 
       stateKey: s.stateKey,
     }) as Bound;
     const hooks = o.connection.map((f) => f({ d, instance, def, id, bound, settings: s }));
-    const methods: Record<string, Method> = Object.assign({}, ...hooks.map((h) => h.methods), builtins(bound));
+    const methods: Record<string, Method> = Object.assign({}, ...hooks.map((h) => h.methods), builtins(bound, hooks, instance));
     return { bound, hooks, methods };
   }
 

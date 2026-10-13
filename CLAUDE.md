@@ -25,7 +25,7 @@ packages/kernel/
   test/               DO driver tests in workerd (vitest)
 
 packages/connections/
-  src/define.ts       defineConnection, Definition, bind (runs a definition on one instance)
+  src/define.ts       defineConnection, Definition (incl. webhooks: verify/parse/register), hmacHex/safeEqual, bind (runs a definition on one instance)
   src/auth.ts         auth step builders: oauth2, apiKey
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
@@ -40,6 +40,7 @@ packages/runtime/
   src/signature.ts    Standard Webhooks sign/verify, no imports (`/signature` export, for the SDK)
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
+  src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection
 ```
 
 Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`.

@@ -44,7 +44,52 @@ export type Definition<C, M extends Json> = {
   /** Where the proxy (#23) sends `/proxy/:def/:id/<path>`, and how the credential goes on the request. */
   // ponytail: one fixed base URL; make it a function of the credential when a provider needs a per-connection host (Salesforce instance_url).
   proxy?: { baseUrl: string; inject?: Inject };
+  /** Incoming provider webhooks (#25): how to check and read them, and optionally how to register one per connection. */
+  webhooks?: Webhooks<C>;
 };
+
+/** A webhook as the provider sent it. `body` is raw: verify before parsing. */
+export type Webhook = { headers: Headers; body: string };
+
+/**
+ * A verified webhook: a handshake answered as is (Slack `url_verification`, GitHub `ping`), or an
+ * event to deliver. `delivery` is the provider's id for it (receivers dedupe on it); `external`
+ * names the account it's for, which routes app-level webhooks through the index (#26).
+ */
+export type Incoming = { reply: Json } | { topic: string; delivery?: string; payload: Json; external?: { key: string; value: string } };
+
+export type Webhooks<C> = {
+  /**
+   * True if the provider sent it. `secret` is this connection's own webhook secret on
+   * `/webhooks/:def/:id` (the one `register` handed the provider), null on the app-level route;
+   * app-wide secrets (Slack's signing secret) come from config.
+   */
+  verify(ctx: Pick<Ctx<C>, "config" | "now">, req: Webhook, secret: string | null): Promise<boolean>;
+  /** Read a verified webhook. A throw is a 400. */
+  parse(req: Webhook): Incoming;
+  /**
+   * Create the provider-side subscription for an active connection, pointed at `endpoint`.
+   * Returns what `unregister` needs, and when it lapses (Google channels) so it gets renewed. Null: nothing to register.
+   */
+  register?(ctx: Ctx<C>, cred: Credential, endpoint: { url: string; secret: string }): Promise<{ hook: Json; expiresAt?: number } | null>;
+  /** Remove what `register` created. Best effort: runs before revoke, and after a renewal for the old one. */
+  unregister?(ctx: Ctx<C>, cred: Credential, hook: Json): Promise<void>;
+};
+
+const utf8 = new TextEncoder();
+
+/** Hex HMAC-SHA256 of `message` under `secret` (GitHub `sha256=`, Slack `v0=`). */
+export async function hmacHex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey("raw", utf8.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, utf8.encode(message)))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Compare a received signature or token with the expected one. Compares digests, so timing leaks nothing about `expected`. */
+export async function safeEqual(got: string, expected: string): Promise<boolean> {
+  const h = async (s: string) => new Uint8Array(await crypto.subtle.digest("SHA-256", utf8.encode(s)));
+  const [a, b] = await Promise.all([h(got), h(expected)]);
+  return a.every((x, i) => x === b[i]);
+}
 
 /**
  * How a proxied request carries the credential: a header (default `Authorization: Bearer <token>`),
@@ -97,6 +142,8 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
 
   return {
     conn,
+    /** What definition hooks see; extensions call webhook hooks with it. */
+    ctx,
 
     /** Begin an authorization (first connect or re-auth). The URL to send the user to, or null if it finished inline. */
     async connect(input: Record<string, string> = {}): Promise<string | null> {

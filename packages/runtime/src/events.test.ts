@@ -199,7 +199,7 @@ test("a large backlog: oldest dropped past 1000, the rest delivered in order, ke
   const seqs = t.bodies().map((e) => e.seq);
   expect(seqs.length).toBe(1000);
   expect(seqs).toEqual(Array.from({ length: 1000 }, (_, i) => 202 + i));
-  expect(t.bodies()[0]!.data).toEqual({ n: 200 });
+  expect(t.bodies()[0]!.data as unknown).toEqual({ n: 200 });
   expect(t.live.size).toBe(0);
 });
 
@@ -212,7 +212,7 @@ test("large payloads: each event is its own stored value, so a backlog past 2 MB
   for (let n = 0; n < 20; n++) expect(await t.call("hook", { n, big })).toEqual({ ok: null }); // ~10 MB in total
   t.set(200);
   await t.w.advance(3_600_000);
-  expect(t.bodies().map((e) => (e.type === "webhook" ? (e.data as { n: number }).n : e.type))).toEqual([
+  expect(t.bodies().map((e) => (e.type === "webhook" ? (e.data as unknown as { n: number }).n : e.type))).toEqual([
     "connection.active",
     ...Array.from({ length: 20 }, (_, i) => i),
   ]);

@@ -17,6 +17,8 @@ export type RuntimeOptions = {
   definitions: Record<string, AnyDefinition>;
   settings: () => Promise<Settings>;
   extensions?: Extension[];
+  /** The Worker's clock (`api.now`); connection instances use their driver's. Default `Date.now`. */
+  now?: () => number;
 };
 
 /**
@@ -37,6 +39,7 @@ export function runtime(o: RuntimeOptions) {
       settings,
       internal: new Set(exts.flatMap((e) => e.internal ?? [])),
       ...(index ? { index } : {}),
+      ...(o.now ? { now: o.now } : {}),
     }),
   };
 }

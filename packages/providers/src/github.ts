@@ -1,5 +1,5 @@
-import { defineConnection, type OAuth2Config, oauth2, rateHeaders } from "@openconnect/connections";
-import type { OAuth2 } from "@openconnect/kernel";
+import { defineConnection, hmacHex, type OAuth2Config, oauth2, rateHeaders, safeEqual } from "@openconnect/connections";
+import type { Json, OAuth2 } from "@openconnect/kernel";
 
 const API = "https://api.github.com";
 // The REST API rejects requests without a User-Agent.
@@ -41,6 +41,24 @@ export const github = defineConnection({
     inject(_url, h, cred) {
       h.set("authorization", `Bearer ${(cred as OAuth2).accessToken}`);
       if (!h.has("user-agent")) h.set("user-agent", "openconnect");
+    },
+  },
+  /**
+   * Repo and org hooks (`X-Hub-Signature-256`), on the per-connection route with the connection's
+   * own secret. Not auto-registered: GitHub has no account-wide hooks, so which repos or orgs to
+   * hook is the app's call. It creates them through the proxy (`POST /repos/{o}/{r}/hooks`,
+   * `content_type: "json"`) with the URL and secret from `webhooks.endpoint`.
+   */
+  // ponytail: no app-level route; GitHub App webhooks route by installation id, which the index doesn't hold yet.
+  webhooks: {
+    async verify(_ctx, req, secret) {
+      return secret !== null && safeEqual(req.headers.get("x-hub-signature-256") ?? "", `sha256=${await hmacHex(secret, req.body)}`);
+    },
+    parse(req) {
+      const topic = req.headers.get("x-github-event") ?? "";
+      if (topic === "ping") return { reply: null };
+      const delivery = req.headers.get("x-github-delivery");
+      return { topic, payload: JSON.parse(req.body) as Json, ...(delivery ? { delivery } : {}) };
     },
   },
   rate: {

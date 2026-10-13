@@ -2,6 +2,7 @@ import { backoff, type Driver, type Json, type State } from "@openconnect/kernel
 import type { Hosted } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 import { sign } from "./signature.ts";
+import type { WebhookData } from "./webhooks.ts";
 
 /**
  * Event delivery to the user's server: POST, signed (Standard Webhooks, see signature.ts),
@@ -15,14 +16,14 @@ import { sign } from "./signature.ts";
 type Base = { id: string; seq: number; at: number; connection: { definition: string; id: string } };
 /** `connection.<to>` on every state change, straight from the kernel outbox. */
 export type LifecycleEvent = Base & { type: `connection.${State}`; data: { from: State | null; to: State; reason?: string } };
-/** A provider webhook routed to this connection (#25). `data` is whatever the webhook extension emits. */
-export type WebhookEvent = Base & { type: "webhook"; data: Json };
+/** A provider webhook routed to this connection (#25), shaped by the webhooks extension. */
+export type WebhookEvent = Base & { type: "webhook"; data: WebhookData };
 /** The POST body. `id` = `<instance>:<seq>`, the same on every retry: dedupe on it. */
 export type ConnectionEvent = LifecycleEvent | WebhookEvent;
 
 /** `seq` = last event written, `done` = last delivered or dropped, `kseq` = last kernel event copied in, `retryAt` set while parked. */
 type Head = { seq: number; done: number; kseq: number; attempt: number; retryAt: number | null };
-type New = Pick<ConnectionEvent, "type" | "at" | "data">;
+type New = { type: ConnectionEvent["type"]; at: number; data: Json };
 
 const HEAD = "events.head";
 const TIMER = "events.retry";
@@ -62,7 +63,7 @@ async function append(h: Hosted, add: (head: Head) => { items: New[]; kseq: numb
   if (!a?.items.length) return head;
   for (const [i, e] of a.items.entries()) {
     const s = head.seq + i + 1;
-    // ponytail: one event must fit one stored value (2 MB on DOs); #25 truncates or stores a reference past that.
+    // One event must fit one stored value (2 MB on DOs); webhooks.ts drops payloads past MAX_PAYLOAD.
     await d.store.put(ekey(s), { ...e, seq: s, id: `${h.instance}:${s}`, connection: { definition: h.def.id, id: h.id } } as unknown as Json);
   }
   const seq = head.seq + a.items.length;
