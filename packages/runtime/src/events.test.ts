@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { apiKey, defineConnection } from "@openconnect/connections";
 import { type Driver, importHmacKey, importKeys, type Json, type Program } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
-import { type ConnectionEvent, emit, events, type Extension, runtime } from "./index.ts";
+import { type ConnectionEvent, directory, emit, events, type Extension, memoryIndex, proxy, runtime } from "./index.ts";
 import { sign, verify } from "./signature.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -227,4 +227,39 @@ test("after() skips the outbox when no state changed: one record read, no decryp
   await t.call("status");
   // status reads the record itself (decrypting); events only reads it once more for the seq.
   expect(t.reads.record).toBe(2);
+});
+
+test("alongside proxy() and directory(): proxied calls send nothing, state changes reach both", async () => {
+  const sent: string[] = [];
+  const proxied = defineConnection({ id: "keyed", auth: apiKey(["key"]), proxy: { baseUrl: "https://api.test", inject: { query: "api_key" } } });
+  const fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url) === URL_) sent.push((JSON.parse(init?.body as string) as ConnectionEvent).type);
+    return new Response("ok");
+  }) as typeof globalThis.fetch;
+  const settings = {
+    keys: await importKeys({ 1: key(1) }, 1),
+    stateKey: await importHmacKey(key(9)),
+    apiKey: "secret",
+    redirectUri: "https://oc.test/callback",
+    config: { keyed: null },
+    fetch,
+    events: { url: URL_, secret: SECRET },
+  };
+  const index = memoryIndex();
+  const rt = runtime({ definitions: { keyed: proxied }, settings: async () => settings, extensions: [directory(index), proxy(), events()] });
+  const c = checked(rt.program);
+  const w = memory(c.wrapped);
+  const send = (method: string, path: string, body?: Json) =>
+    rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.call);
+
+  expect((await send("POST", "/connections/keyed/k1/connect", { key: "sk" })).status).toBe(200);
+  await w.advance(0);
+  for (let n = 0; n < 3; n++) expect(await (await send("GET", "/proxy/keyed/k1/me")).text()).toBe("ok");
+  await w.advance(0);
+  expect(sent).toEqual(["connection.active"]);
+  await send("POST", "/connections/keyed/k1/revoke");
+  await w.advance(0);
+  expect(sent).toEqual(["connection.active", "connection.revoked"]);
+  expect((await index.list({})).connections.map((r) => [r.id, r.state])).toEqual([["k1", "revoked"]]);
+  expect(c.live.size).toBe(0);
 });
