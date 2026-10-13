@@ -15,6 +15,14 @@ import type { DefinitionInfo, Detail, Overview } from "./index.ts";
 export type Win = Pick<Window, "document" | "location" | "sessionStorage" | "fetch" | "addEventListener" | "removeEventListener" | "confirm">;
 
 export const KEY = "openconnect.dashboard.key";
+
+/** Usable as a path segment: not empty, `.` or `..`. */
+export const addressable = (s: string) => s !== "" && s !== "." && s !== "..";
+function address(args: string[]): [string, string] {
+  const [def = "", id = "", ...rest] = args;
+  if (rest.length || !addressable(def) || !addressable(id)) throw new Error(`Not a connection address: definition and id can't be empty, "." or "..".`);
+  return [def, id];
+}
 const STATES = ["pending", "active", "reauth_required", "revoked"];
 // ponytail: field types are guessed from names, as in @openconnect/connect's form.
 const SECRET = /key|secret|token|password/i;
@@ -87,7 +95,15 @@ export function start(win: Win) {
     }
     return b as T;
   }
-  const method = (def: string, id: string, m: string, args: unknown = null) => api(`/connections/${encodeURIComponent(def)}/${encodeURIComponent(id)}/${m}`, "POST", args);
+  /**
+   * A path segment from a definition or connection id. `.`, `..` and empty would be collapsed by URL
+   * parsing (`/connections/keyed/../x`) and reach another route, so they're refused, as in the SDK (#28).
+   */
+  const seg = (s: string) => {
+    if (!addressable(s)) throw new Error(`Not a connection address: "${s}" (definition and id can't be empty, "." or "..").`);
+    return encodeURIComponent(s);
+  };
+  const method = (def: string, id: string, m: string, args: unknown = null) => api(`/connections/${seg(def)}/${seg(id)}/${m}`, "POST", args);
   const overview = async () => (info ??= await api<Overview>("/dashboard/api/overview"));
   const problem = (e: unknown) => h("p", { class: "oc-error", role: "alert" }, e instanceof Error ? e.message : String(e));
 
@@ -214,7 +230,8 @@ export function start(win: Win) {
       e.type,
       time(e.at),
       e.type === "webhook" ? `${(e.data as { topic?: string }).topic ?? ""}` : JSON.stringify(e.data),
-      redeliver ? h("button", { type: "button", onclick: redeliver(e.slot) }, "Redeliver") : "",
+      `${e.size} B${e.copy ? ", redelivered copy" : ""}${e.dropped ? ", dropped" : e.deliveredAt ? `, delivered ${time(e.deliveredAt)}` : ""}`,
+      redeliver && e.redeliverable ? h("button", { type: "button", onclick: redeliver(e.slot) }, "Redeliver") : redeliver ? "body not kept" : "",
     ]);
   }
 
@@ -222,7 +239,7 @@ export function start(win: Win) {
     const o = await overview();
     const d: DefinitionInfo | undefined = o.definitions.find((x) => x.id === def);
     if (!d) throw new Error(`No definition ${def} in this deployment.`);
-    const x = await api<Detail>(`/dashboard/api/connections/${encodeURIComponent(def)}/${encodeURIComponent(id)}`);
+    const x = await api<Detail>(`/dashboard/api/connections/${seg(def)}/${seg(id)}`);
     const st = "ok" in x.status ? (x.status.ok as { state: string; reason?: string; metadata: unknown }) : null;
     const missing = "error" in x.status && x.status.error.code === "not_found";
     const parts: Child[] = [h("h2", {}, `${def} / `, h("code", {}, id))];
@@ -269,13 +286,13 @@ export function start(win: Win) {
       );
       if (ev.enabled && ev.pending)
         parts.push(h("button", { type: "button", onclick: act(async () => (await method(def, id, "events.flush"), h("p", { class: "oc-note" }, "Delivery started; refresh to see it."))) }, "Deliver now"));
-      if (ev.queued.length) parts.push(h("h4", {}, "Queued (head first)"), table(["Slot", "Id", "Type", "At", "Data", ""], eventRows(ev.queued)));
+      if (ev.queued.length) parts.push(h("h4", {}, "Queued (head first)"), table(["Slot", "Id", "Type", "At", "Data", "Size", ""], eventRows(ev.queued)));
       const again = (slot: number) =>
         act(async () => {
           const r = await method(def, id, "events.redeliver", { slot });
           return h("p", { class: "oc-note" }, `Queued again as slot ${(r as { slot: number }).slot}, same webhook-id.`);
         });
-      if (ev.recent.length) parts.push(h("h4", {}, "Recent (newest first)"), table(["Slot", "Id", "Type", "At", "Data", ""], eventRows(ev.recent, ev.enabled ? again : undefined)));
+      if (ev.recent.length) parts.push(h("h4", {}, "Recent (newest first)"), table(["Slot", "Id", "Type", "At", "Data", "Delivery", ""], eventRows(ev.recent, ev.enabled ? again : undefined)));
     }
 
     // Provider webhooks.
@@ -355,10 +372,11 @@ export function start(win: Win) {
     const mine = ++gen;
     if (!key) return void root.replaceChildren(login(note));
     const [path = "", query = ""] = win.location.hash.replace(/^#\/?/, "").split("?");
-    const [view, ...args] = path.split("/").filter(Boolean).map(decodeURIComponent);
     let node: Node;
     try {
-      node = view === "c" && args.length === 2 ? await connection(args[0]!, args[1]!) : view === "definitions" ? await definitions() : await connections(new URLSearchParams(query));
+      // Empty segments kept (`#/c//x`), so the connection route can refuse them. A bad escape throws here too.
+      const [view, ...args] = path.split("/").map(decodeURIComponent);
+      node = view === "c" ? await connection(...address(args)) : view === "definitions" ? await definitions() : await connections(new URLSearchParams(query));
     } catch (e) {
       if (!key) return void (mine === gen && root.replaceChildren(login(problem(e))));
       node = problem(e);

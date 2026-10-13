@@ -36,7 +36,7 @@ packages/runtime/
   src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
   src/proxy.ts        proxy() extension: /proxy/:def/:id/<path>, token + rate permits in one DO call
-  src/events.ts       events extension: signed, ordered, at-least-once delivery to the user's server; emit(); events.status/flush/redeliver (KEPT newest done events stay)
+  src/events.ts       events extension: signed, ordered, at-least-once delivery to the user's server; emit(); events.status/flush/redeliver (slots ≠ seqs; KEPT newest done keep a summary, bodies ≤ 64 KB)
   src/signature.ts    Standard Webhooks sign/verify, no imports (`/signature` export, for the SDK)
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)

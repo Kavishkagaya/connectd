@@ -69,6 +69,11 @@ try {
   await page.waitForSelector("text=same webhook-id");
   await t.w.advance(0);
   check("redelivered: the same body", t.delivered.length === before + 1 && t.delivered.at(-1) === t.delivered.at(-2), t.delivered.length);
+  await page.goto(`${URL_}/dashboard#/c/keyed/%2E%2E`);
+  await page.waitForSelector("text=Not a connection address");
+  check("the router refuses `..` as an id", true);
+  await page.goto(`${URL_}/dashboard#/c/keyed/alice`);
+  await page.waitForSelector('button:text-is("Revoke")');
   page.once("dialog", (d: { accept(): Promise<void> }) => d.accept());
   await page.click('button:text-is("Revoke")');
   await page.waitForSelector("text=Revoked.");

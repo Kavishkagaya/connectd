@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { apiKey, defineConnection } from "@openconnect/connections";
 import { type Driver, importHmacKey, importKeys, type Json, type Program } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
-import { type ConnectionEvent, directory, emit, events, type EventsStatus, type Extension, KEPT, memoryIndex, proxy, runtime } from "./index.ts";
+import { BODY_KEPT, type ConnectionEvent, directory, emit, events, type EventsStatus, type Extension, KEPT, memoryIndex, proxy, runtime } from "./index.ts";
 import { sign, verify } from "./signature.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -17,7 +17,7 @@ const hook: Extension = { connection: (h) => ({ methods: { hook: async (a) => (a
 const LIMIT = 2 * 1024 * 1024;
 function checked(program: Program) {
   const live = new Set<string>();
-  const reads = { record: 0 };
+  const reads = { record: 0, bodies: 0 };
   const wrapped: Program = (d, instance) => {
     const fit = (k: string, v: Json) => {
       if (JSON.stringify(v).length > LIMIT) throw new Error(`value too large: ${k}`);
@@ -25,7 +25,7 @@ function checked(program: Program) {
     };
     const store: Driver["store"] = {
       ...d.store,
-      get: (k) => (k === "record" && reads.record++, d.store.get(k)),
+      get: (k) => (k === "record" && reads.record++, k.startsWith("events.e:") && reads.bodies++, d.store.get(k)),
       put: (k, v, o) => (fit(k, v), d.store.put(k, v, o)),
       cas: (k, e, v, o) => (fit(k, v), d.store.cas(k, e, v, o)),
       delete: (k) => (live.delete(k), d.store.delete(k)),
@@ -216,7 +216,8 @@ test("large payloads: each event is its own stored value, so a backlog past 2 MB
     "connection.active",
     ...Array.from({ length: 20 }, (_, i) => i),
   ]);
-  expect(t.live.size).toBe(KEPT);
+  // Done: bodies over BODY_KEPT aren't kept (slot 1, small, fell out of the KEPT window).
+  expect([...t.live]).toEqual([]);
 });
 
 test("after() skips the outbox when no state changed: one record read, no decrypt", async () => {
@@ -275,10 +276,11 @@ test("events.status: pending, the parked head's attempt, retry time and error; r
   const parked = await status();
   expect(parked).toMatchObject({ pending: 2, attempt: 1, error: "HTTP 500", recent: [] });
   expect(parked.retryAt).toBeGreaterThan(t.w.now());
+  const pend = { copy: false, deliveredAt: null, dropped: false, redeliverable: false };
   expect(parked.queued).toEqual([
-    { slot: 1, id: "conn:keyed:k1:1", seq: 1, type: "connection.active", at: t.w.now(), data: { from: null, to: "active" } },
+    { slot: 1, id: "conn:keyed:k1:1", seq: 1, type: "connection.active", at: t.w.now(), data: { from: null, to: "active" }, size: expect.any(Number), ...pend },
     // Webhook payloads aren't listed: topic and delivery only.
-    { slot: 2, id: "conn:keyed:k1:2", seq: 2, type: "webhook", at: t.w.now(), data: { topic: "push", delivery: "d1" } },
+    { slot: 2, id: "conn:keyed:k1:2", seq: 2, type: "webhook", at: t.w.now(), data: { topic: "push", delivery: "d1" }, size: expect.any(Number), ...pend },
   ]);
   t.set(200, true);
   await t.w.advance(parked.retryAt! - t.w.now());
@@ -292,7 +294,10 @@ test("events.status: pending, the parked head's attempt, retry time and error; r
   expect(t.types()).toEqual(["connection.active", "webhook"]);
   const done = await status();
   expect(done).toMatchObject({ pending: 0, attempt: 0, retryAt: null, error: null, queued: [] });
-  expect(done.recent.map((e) => e.slot)).toEqual([2, 1]);
+  expect(done.recent.map((e) => [e.slot, e.deliveredAt, e.redeliverable])).toEqual([
+    [2, t.w.now(), true],
+    [1, t.w.now(), true],
+  ]);
 });
 
 test("events.redeliver: a done event goes out again with the same id and body, after what's queued", async () => {
@@ -308,9 +313,9 @@ test("events.redeliver: a done event goes out again with the same id and body, a
   expect(await verify(SECRET, again.headers, again.body, { now: t.w.now() })).toBe(true);
   // The copy is listed in its own slot, with the original's id.
   const s = ((await t.call("events.status")) as { ok: EventsStatus }).ok;
-  expect(s.recent.map((e) => [e.slot, e.id])).toEqual([
-    [2, "conn:keyed:k1:1"],
-    [1, "conn:keyed:k1:1"],
+  expect(s.recent.map((e) => [e.slot, e.id, e.copy])).toEqual([
+    [2, "conn:keyed:k1:1", true],
+    [1, "conn:keyed:k1:1", false],
   ]);
 
   // Not yet delivered, not kept, not a slot, or events off.
@@ -336,4 +341,42 @@ test("only the KEPT newest done events stay redeliverable", async () => {
   expect(t.live.size).toBe(KEPT);
   expect(await t.call("events.redeliver", { slot: 6 })).toMatchObject({ error: { code: "not_found" } });
   expect(await t.call("events.redeliver", { slot: 7 })).toEqual({ ok: { slot: KEPT + 7 } });
+});
+
+test("a redelivered copy takes no seq: real events stay gapless, ids unique; the copy arrives after newer ones", async () => {
+  const t = await setup();
+  await t.call("connect", { key: "sk" }); // seq 1
+  for (let n = 0; n < 4; n++) await t.call("hook", { n }); // seq 2..5
+  await t.w.advance(0);
+  expect(await t.call("events.redeliver", { slot: 3 })).toEqual({ ok: { slot: 6 } });
+  await t.call("hook", { n: 4 }); // the next real event: seq 6, in slot 7
+  await t.call("revoke"); // seq 7
+  await t.w.advance(0);
+  const got = t.bodies();
+  expect(got.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 3, 6, 7]);
+  expect(got.map((e) => e.id)).toEqual([1, 2, 3, 4, 5, 3, 6, 7].map((n) => `conn:keyed:k1:${n}`));
+  // The copy is the same body; every real event has its own id.
+  expect(t.delivered()[5]!.body).toBe(t.delivered()[2]!.body);
+  const real = got.filter((_, i) => i !== 5);
+  expect(new Set(real.map((e) => e.id)).size).toBe(real.length);
+  expect(real.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+});
+
+test("retention is bounded by bytes: big bodies aren't kept once done (payload_not_retained), status reads no body", async () => {
+  const t = await setup();
+  await t.call("connect", { key: "sk" });
+  await t.call("hook", { big: "x".repeat(BODY_KEPT) }); // just over the cap with its envelope
+  await t.call("hook", { small: 1 });
+  await t.w.advance(0);
+  expect([...t.live].sort()).toEqual(["events.e:1", "events.e:3"]);
+  t.reads.bodies = 0;
+  const s = ((await t.call("events.status")) as { ok: EventsStatus }).ok;
+  expect(t.reads.bodies).toBe(0);
+  expect(s.recent.map((e) => [e.slot, e.redeliverable, e.size > BODY_KEPT])).toEqual([
+    [3, true, false],
+    [2, false, true],
+    [1, true, false],
+  ]);
+  expect(await t.call("events.redeliver", { slot: 2 })).toMatchObject({ error: { code: "payload_not_retained", status: 410 } });
+  expect(await t.call("events.redeliver", { slot: 3 })).toEqual({ ok: { slot: 4 } });
 });

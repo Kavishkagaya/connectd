@@ -173,3 +173,25 @@ test("ids and metadata are text, never markup", async () => {
   expect(u.root.all((e) => e.tagName === "img")).toEqual([]);
   expect(u.text()).toContain(`account=${evil}`);
 });
+
+test("the router refuses `.`, `..` and empty definition or id: nothing is fetched for them", async () => {
+  const u = await ui();
+  await u.api("/connections/keyed/k1/connect", { apiKey: "acct_1" });
+  for (const hash of ["#/c/keyed/..", "#/c/keyed/.", "#/c/keyed/%2E%2E", "#/c/%2e/k1", "#/c//k1", "#/c/keyed/", "#/c/keyed", "#/c/keyed/k1/x", "#/c/keyed/%E0"]) {
+    const before = u.requests.length;
+    await u.go(hash);
+    expect(u.text()).toContain(hash.endsWith("%E0") ? "URI" : "Not a connection address");
+    expect(u.requests.slice(before).filter((r) => r.path.startsWith("/dashboard/api/connections") || r.path.startsWith("/connections/"))).toEqual([]);
+  }
+  // The open form leads to the same refusal.
+  await u.go("#/");
+  const open = u.root.all((e) => e.tagName === "form").find((f) => f.text.includes("Open or start"))!;
+  open.get("select", "definition").value = "keyed";
+  open.get("input", "id").value = "..";
+  await u.click("button", "Open", open);
+  expect(u.win.location.hash).toBe("#/c/keyed/..");
+  expect(u.text()).toContain("Not a connection address");
+  // A real id still works.
+  await u.go("#/c/keyed/k1");
+  expect(u.text()).toContain("Stateactive");
+});
