@@ -144,6 +144,12 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
     return hs;
   }
 
+  /** Run the definition's callback step: the credential, not stored yet (a frontend session holds it until the app's page confirms, #29). */
+  async function exchange(params: Record<string, string>, hs: Handshake): Promise<Credential> {
+    if (!def.auth.callback) throw new Error(`${def.id}: no callback step`);
+    return def.auth.callback(ctx, params, hs.data);
+  }
+
   async function finish(cred: Credential) {
     const meta = def.metadata ? await def.metadata(ctx, cred) : null;
     await conn.activate(cred);
@@ -178,10 +184,12 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
 
     /** The provider redirected back. `params` is the callback query, `state` included; `hs` if already taken. */
     async callback(params: Record<string, string>, hs?: Handshake) {
-      const h = hs ?? (await handshake(params));
-      if (!def.auth.callback) throw new Error(`${def.id}: no callback step`);
-      await finish(await def.auth.callback(ctx, params, h.data));
+      await finish(await exchange(params, hs ?? (await handshake(params))));
     },
+
+    exchange,
+    /** Check a credential (`metadata`) and activate with it. */
+    finish,
 
     token: conn.token,
 

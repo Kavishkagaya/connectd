@@ -15,6 +15,8 @@ test("secrets: encrypt/decrypt across key versions, signing", async () => {
   expect(await verify(s, hk)).toBe("payload");
   expect(await verify(s.replace(/.$/, (c) => (c === "A" ? "B" : "A")), hk)).toBe(null);
   expect(await verify(`${s}.x`, hk)).toBe(null);
+  expect(await verify("not base64!.@@@", hk)).toBe(null); // malformed input is null, not a throw
+  expect(await verify(`${s.split(".")[0]}.%%%`, hk)).toBe(null);
 });
 
 test("secrets store: rotation re-seals on read, then the old key can go", async () => {

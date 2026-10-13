@@ -1,4 +1,4 @@
-import { claims, type ConnectOptions, connect, type Result, type SessionInfo, session, type Token } from "./connect.ts";
+import { claims, type ConnectOptions, connect, type Result, resume, type SessionInfo, session, type Token } from "./connect.ts";
 
 /**
  * The prebuilt UI (#29): a connect button, or a form for API-key definitions, rendered into `el`.
@@ -7,6 +7,7 @@ import { claims, type ConnectOptions, connect, type Result, type SessionInfo, se
  *   const unmount = mount(document.getElementById("github")!, { url, token, onResult: (r) => ... });
  *
  * React: `useEffect(() => mount(ref.current!, opts), [])` (unmount is the cleanup).
+ * On a return URL (redirect mode) it runs `resume()` first and reports that result.
  */
 export type MountOptions = Omit<ConnectOptions, "fields" | "token"> & {
   token: Token;
@@ -87,8 +88,13 @@ export function mount(el: HTMLElement, o: MountOptions): () => void {
   }
 
   token()
-    .then((t) => session({ url: o.url, token: t, window: win }))
-    .then((info) => live && render(info))
+    .then(async (t) => {
+      const back = await resume({ url: o.url, token: t, window: win });
+      const info = await session({ url: o.url, token: t, window: win });
+      if (!live) return;
+      render(info);
+      if (back) show(back);
+    })
     .catch((e: Error & { code?: string }) => {
       root.replaceChildren(status);
       show({ status: "error", code: e.code ?? "error", message: e.message });

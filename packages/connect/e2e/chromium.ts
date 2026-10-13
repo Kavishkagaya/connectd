@@ -4,9 +4,10 @@
  *
  *   PLAYWRIGHT=/path/to/node_modules/playwright/index.mjs bun packages/connect/e2e/chromium.ts
  *
- * Two sites (app on 127.0.0.1:5173, runtime on localhost:8788) and a fake provider page: popup
- * (token given, and fetched after the click), a popup the user closes, the API-key form, redirect
- * mode, and a second browser that can't finish someone else's flow.
+ * Two sites (app on 127.0.0.1:5173, served with `Referrer-Policy: no-referrer`; runtime on
+ * localhost:8788) and a fake provider page: popup (token given, and fetched after the click), a
+ * provider page with COOP `same-origin` (cuts the opener), a popup the user closes, the API-key
+ * form, redirect mode, and a ticket minted outside a browser that a victim opens.
  */
 import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
 import { fakeOAuth } from "@openconnect/connections/testing";
@@ -21,6 +22,11 @@ const example = defineConnection({
   id: "example",
   auth: oauth2<{ clientId: string }>({ authorizeUrl: `${RT}/fake/authorize`, tokenUrl: "https://example.test/token" }),
 });
+// A provider whose consent page cuts the opener (COOP), like some identity providers.
+const coopy = defineConnection({
+  id: "coopy",
+  auth: oauth2<{ clientId: string }>({ authorizeUrl: `${RT}/fake/authorize?coop=1`, tokenUrl: "https://example.test/token" }),
+});
 const keyed = defineConnection({ id: "keyed", auth: apiKey(["apiKey"]) });
 const p = fakeOAuth({
   tokenUrl: "https://example.test/token",
@@ -32,11 +38,11 @@ const settings = {
   stateKey: await importHmacKey(key(9)),
   apiKey: "secret",
   redirectUri: `${RT}/callback`,
-  config: { example: { clientId: "cid" }, keyed: null },
+  config: { example: { clientId: "cid" }, coopy: { clientId: "cid" }, keyed: null },
   fetch: p.fetch,
   sessions: { key: await importHmacKey(key(5)), origins: [APP] },
 };
-const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [sessions()] });
+const rt = runtime({ definitions: { example, coopy, keyed }, settings: async () => settings, extensions: [sessions()] });
 const w = memory(rt.program, { now: Date.now() });
 const rtServer = Bun.serve({
   port: 8788,
@@ -46,7 +52,7 @@ const rtServer = Bun.serve({
     if (u.pathname === "/fake/authorize") {
       const b = p.approve(req.url);
       return new Response(`<p>Provider consent</p><a id=ok href="${RT}/callback?code=${b.code}&state=${encodeURIComponent(b.state)}">Allow</a>`, {
-        headers: { "content-type": "text/html" },
+        headers: { "content-type": "text/html", ...(u.searchParams.get("coop") ? { "cross-origin-opener-policy": "same-origin" } : {}) },
       });
     }
     return rt.fetch(req, w.call);
@@ -62,7 +68,7 @@ const appServer = Bun.serve({
     if (u.pathname === "/page.js") return new Response(js, { headers: { "content-type": "text/javascript" } });
     if (u.pathname === "/token") {
       const q = u.searchParams;
-      const args = q.get("return") ? { returnUrl: `${APP}/back` } : { origin: APP };
+      const args = q.get("return") ? { returnUrl: `${APP}/back?def=${q.get("def")}&id=${q.get("id")}` } : { origin: APP };
       const r = await rt.fetch(
         new Request(`${RT}/connections/${q.get("def")}/${q.get("id")}/session`, {
           method: "POST",
@@ -74,8 +80,8 @@ const appServer = Bun.serve({
       return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } });
     }
     return new Response(
-      `<!doctype html><button id=popup>popup</button><button id=lazy>lazy</button><button id=redir>redirect</button><div id=ui></div><pre id=out></pre><script type=module src=/page.js></script>`,
-      { headers: { "content-type": "text/html" } },
+      `<!doctype html><button id=popup>popup</button><button id=lazy>lazy</button><button id=coop>coop</button><button id=fresh>fresh</button><button id=redir>redirect</button><div id=ui></div><pre id=out></pre><script type=module src=/page.js></script>`,
+      { headers: { "content-type": "text/html", "referrer-policy": "no-referrer" } },
     );
   },
 });
@@ -111,11 +117,11 @@ try {
   }
   check("popup connection active", (await state("example", "p1")) === "active");
   // closed by the user
-  const [popup2] = await Promise.all([page.waitForEvent("popup"), page.click("#popup")]);
+  const [popup2] = await Promise.all([page.waitForEvent("popup"), page.click("#fresh")]);
   await popup2.waitForSelector("#ok");
   await popup2.close();
   await page.waitForFunction(() => document.getElementById("out")!.textContent!.includes("closed"), null, { timeout: 5000 });
-  check("closed detected", (await page.textContent("#out")) === 'popup:{"status":"closed"}');
+  check("closed detected", (await page.textContent("#out")) === 'fresh:{"status":"closed"}');
   // API-key form
   await page.fill("#ui input[name=apiKey]", "sk-123");
   await page.click("#ui button");
@@ -125,28 +131,55 @@ try {
     (await page.textContent("#out")) === 'form:{"status":"connected"}' && (await state("keyed", "k1")) === "active",
     await page.textContent("#out"),
   );
+  // A provider page with COOP same-origin cuts the opener: Chromium reports the popup closed once it
+  // navigates there, so connect() resolves `closed` after one session() check, or `connected` if the
+  // popup already finished (a fast click here). The popup itself goes on to the return URL, where
+  // resume() confirms and closes it: the connection ends up active either way.
+  const [cp] = await Promise.all([page.waitForEvent("popup"), page.click("#coop")]);
+  await cp.waitForSelector("#ok");
+  await cp.click("#ok");
+  await page.waitForFunction(() => document.getElementById("out")!.textContent!.startsWith("coop:"), null, { timeout: 10000 });
+  const coopOut = await page.textContent("#out");
+  check("coop: opener resolves closed or connected", coopOut === 'coop:{"status":"closed"}' || coopOut === 'coop:{"status":"connected"}', coopOut);
+  let coopState = "";
+  for (let i = 0; i < 50 && coopState !== "active"; i++) {
+    coopState = await state("coopy", "c1");
+    await Bun.sleep(100);
+  }
+  check("coop: completed on the return URL in the popup", coopState === "active", coopState);
   // redirect mode
   await page.click("#redir");
   await page.waitForSelector("#ok");
   await page.click("#ok");
-  await page.waitForURL(`${APP}/back?openconnect=connected`);
+  await page.waitForURL(/\/back\?def=example&id=r1&openconnect=authorized&completion=/);
   await page.waitForFunction(() => document.getElementById("out")!.textContent!.startsWith("redirect:"));
-  check("redirect", (await page.textContent("#out")) === 'redirect:{"status":"connected"}' && (await state("example", "r1")) === "active");
-  // CSRF: a link (no form, no Origin) can't start; another browser context (no cookie) can't finish
-  const t = await (await fetch(`${APP}/token?def=example&id=x1`)).json();
-  const res = await rt.fetch(
+  check(
+    "redirect",
+    (await page.textContent("#out")) === 'redirect:{"status":"connected"}' && (await state("example", "r1")) === "active",
+    await page.textContent("#out"),
+  );
+  // Login CSRF: the attacker (user x1) mints a ticket outside a browser, forging Origin, and sends the
+  // link to a victim logged in to the app as v1. The victim's browser does the provider login; the
+  // completion lands on the victim's app page, whose session is v1's: it never activates x1.
+  const t = await (await fetch(`${APP}/token?def=example&id=x1&return=1`)).json();
+  const tic = await rt.fetch(
     new Request(`${RT}/session/authorize`, {
       method: "POST",
-      headers: { origin: APP },
-      body: new URLSearchParams({ token: t.token, mode: "popup", nonce: "" }),
+      headers: { origin: APP, authorization: `Bearer ${t.token}` },
+      body: JSON.stringify({ mode: "redirect" }),
     }),
     w.call,
   );
-  const loc = res.headers.get("location")!;
+  const ticket = ((await tic.json()) as { ticket: string }).ticket;
   const victim = await (await browser.newContext()).newPage();
-  await victim.goto(loc);
+  await victim.goto(APP);
+  await victim.evaluate(() => localStorage.setItem("user", "v1"));
+  await victim.goto(`${RT}/session/authorize?ticket=${encodeURIComponent(ticket)}`);
   await victim.click("#ok");
-  check("victim browser refused (no binding cookie)", (await victim.content()).includes("session_mismatch") && (await state("example", "x1")) === "pending");
+  await victim.waitForURL(/openconnect=authorized/);
+  await victim.waitForFunction(() => document.getElementById("out")!.textContent!.startsWith("redirect:"));
+  const vout = await victim.textContent("#out");
+  check("victim's page can't confirm the attacker's flow", vout!.includes("bad_completion") && (await state("example", "x1")) === "pending", vout);
 } finally {
   await browser.close();
   rtServer.stop();

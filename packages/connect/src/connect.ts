@@ -7,6 +7,12 @@
  *     const r = await connect({ url: "https://connect.example.com", token });
  *     if (r.status === "connected") ...
  *   };
+ *   // redirect mode, on the return URL's page:
+ *   const r = await resume({ url, token });
+ *
+ * The flow: open the popup (blank) → `POST /session/authorize` with fetch → a single-use ticket →
+ * navigate the popup (or this page) to `GET /session/authorize?ticket=` → provider → `/callback`,
+ * which posts a `completion` back (or puts it on the return URL) → `POST /session/complete`.
  */
 
 /** `GET /session` (the runtime's `SessionInfo`). */
@@ -26,9 +32,9 @@ export type Result =
   | { status: "connected" }
   /** The runtime or the provider said no (`access_denied`, `bad_request`, `session_expired`...), or `timeout`, `popup_blocked`. */
   | { status: "error"; code: string; message: string }
-  /** The popup was closed before it reported. `session()` tells the connection's state. */
+  /** The popup was closed before it reported, and the connection isn't active. */
   | { status: "closed" }
-  /** The page is navigating away (redirect mode); the result comes back on the return URL (`readResult`). */
+  /** The page is navigating away (redirect mode); the result comes back on the return URL (`resume`). */
   | { status: "redirecting" };
 
 export type Token = string | (() => Promise<string>);
@@ -76,48 +82,28 @@ export async function session(o: { url: string; token: string; window?: Window }
   return r.body as unknown as SessionInfo;
 }
 
-/**
- * Submit a hidden form to `/session/authorize`, top level, into `target` (the popup's name, or
- * `_self`). A form POST, not a link: the token stays out of URLs and history, and the browser sends
- * `Origin`, which the runtime checks against the session.
- */
-function submit(win: Window, url: string, fields: Record<string, string>, target: string) {
-  const doc = win.document;
-  const form = doc.createElement("form");
-  form.method = "POST";
-  form.action = `${base(url)}/session/authorize`;
-  form.target = target;
-  form.style.display = "none";
-  for (const [name, value] of Object.entries(fields)) {
-    const input = doc.createElement("input");
-    input.type = "hidden";
-    input.name = name;
-    input.value = value;
-    form.appendChild(input);
-  }
-  doc.body.appendChild(form);
-  form.submit();
-  form.remove();
-}
-
 function nonce(win: Window) {
   return Array.from(win.crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+/** What the callback hands back: a completion to confirm, or the end already. */
+type Back = Result | { status: "authorized"; completion: string };
+
 /** Wait for the popup's message (from the runtime's origin, from that window, with our nonce), its closing, or the timeout. */
-function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: number): Promise<Result> {
+function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: number): Promise<Back> {
   return new Promise((resolve) => {
     let closedOnce = false;
-    const done = (r: Result) => {
+    const done = (r: Back) => {
       win.removeEventListener("message", onMessage);
       win.clearInterval(poll);
       win.clearTimeout(timer);
       resolve(r);
     };
     function onMessage(e: MessageEvent) {
-      const d = e.data as { type?: unknown; nonce?: unknown; status?: unknown; code?: unknown; message?: unknown } | null;
+      const d = e.data as { type?: unknown; nonce?: unknown; status?: unknown; completion?: unknown; code?: unknown; message?: unknown } | null;
       if (e.origin !== origin || e.source !== popup || !d || d.type !== "openconnect" || d.nonce !== n) return;
-      done(d.status === "connected" ? { status: "connected" } : err(String(d.code ?? "error"), String(d.message ?? "")));
+      if (d.status === "authorized" && typeof d.completion === "string") done({ status: "authorized", completion: d.completion });
+      else done(d.status === "connected" ? { status: "connected" } : err(String(d.code ?? "error"), String(d.message ?? "")));
     }
     win.addEventListener("message", onMessage);
     // The page posts, then closes itself: give a message already in flight one more tick to land.
@@ -133,6 +119,14 @@ function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: 
   });
 }
 
+/** The app's page confirms what the callback handed it: that activates the connection. */
+async function confirm(win: Window, url: string, token: string, completion: string): Promise<Result> {
+  const r = await call(win, url, "/complete", token, { method: "POST", body: JSON.stringify({ completion }) });
+  if (!r.ok) return err(r.error.code, r.error.message);
+  const state = (r.body as { state?: string } | null)?.state;
+  return state === "active" ? { status: "connected" } : err("not_active", `connection is ${state}`);
+}
+
 /**
  * Connect: a popup (default) or a redirect to the provider, or an API-key form's fields.
  * Call it synchronously from a user gesture (a click handler): the popup opens before anything is
@@ -140,11 +134,9 @@ function wait(win: Window, popup: Window, origin: string, n: string, timeoutMs: 
  */
 export function connect(o: ConnectOptions): Promise<Result> {
   const win = o.window ?? window;
-  const mode = o.mode ?? "popup";
   const n = nonce(win);
-  const name = `openconnect-${n}`;
   // Open first (blank), navigate after: the gesture only counts until the first await.
-  const popup = !o.fields && mode === "popup" ? win.open("", name, "popup,width=520,height=680") : null;
+  const popup = !o.fields && (o.mode ?? "popup") === "popup" ? win.open("", `openconnect-${n}`, "popup,width=520,height=680") : null;
 
   return (async (): Promise<Result> => {
     const token = typeof o.token === "string" ? o.token : await o.token();
@@ -154,24 +146,51 @@ export function connect(o: ConnectOptions): Promise<Result> {
       const state = (r.body as { state?: string } | null)?.state;
       return state === "active" ? { status: "connected" } : err("not_active", `connection is ${state}`);
     }
-    if (mode === "popup" && popup) {
-      submit(win, o.url, { token, mode, nonce: n }, name);
-      return wait(win, popup, new URL(o.url).origin, n, o.timeoutMs ?? 600_000);
+    if ((o.mode ?? "popup") === "popup" && !popup && (o.fallback === false || !claims(token)?.returnUrl)) return err("popup_blocked", "the browser blocked the popup");
+    const mode = popup ? "popup" : "redirect";
+    // A fetch, so the runtime sees this page's real Origin whatever its Referrer-Policy. Errors land here, not in the popup.
+    const r = await call(win, o.url, "/authorize", token, { method: "POST", body: JSON.stringify({ mode, nonce: n }) });
+    if (!r.ok) {
+      popup?.close();
+      return err(r.error.code, r.error.message);
     }
-    if (mode === "popup" && (o.fallback === false || !claims(token)?.returnUrl)) return err("popup_blocked", "the browser blocked the popup");
-    submit(win, o.url, { token, mode: "redirect", nonce: n }, "_self");
-    return { status: "redirecting" };
+    const next = `${base(o.url)}/session/authorize?ticket=${encodeURIComponent((r.body as unknown as { ticket: string }).ticket)}`;
+    if (!popup) {
+      win.location.assign(next);
+      return { status: "redirecting" };
+    }
+    // Closed while we waited for the token or the ticket: navigating it now would open a new tab.
+    if (popup.closed) return { status: "closed" };
+    popup.location.href = next;
+    const back = await wait(win, popup, new URL(o.url).origin, n, o.timeoutMs ?? 600_000);
+    if (back.status === "authorized") return confirm(win, o.url, token, back.completion);
+    if (back.status === "closed") {
+      // The popup may have finished without reaching us (its opener cut by a provider's COOP, then `resume()` on the return URL).
+      const info = await session({ url: o.url, token, window: win }).catch(() => null);
+      if (info?.state === "active") return { status: "connected" };
+    }
+    return back;
   })().catch((e) => {
     popup?.close();
     return err("error", e instanceof Error ? e.message : String(e));
   });
 }
 
-/** After a redirect-mode flow: the result on the return URL (`?openconnect=connected|error&code=`), or null if there is none. */
-export function readResult(href: string = window.location.href): Result | null {
-  const q = new URL(href).searchParams;
-  const s = q.get("openconnect");
-  if (s === "connected") return { status: "connected" };
-  if (s === "error") return err(q.get("code") ?? "error", "");
-  return null;
+/**
+ * On the return URL's page, after a redirect (or a popup that lost its opener): confirm what the
+ * callback handed back and return the result, or null if the URL carries none. A popup closes itself after.
+ */
+export async function resume(o: { url: string; token: Token; href?: string; window?: Window }): Promise<Result | null> {
+  const win = o.window ?? window;
+  const q = new URL(o.href ?? win.location.href).searchParams;
+  const status = q.get("openconnect");
+  let r: Result | null = null;
+  if (status === "error") r = err(q.get("code") ?? "error", "");
+  if (status === "connected") r = { status: "connected" };
+  if (status === "authorized") {
+    const completion = q.get("completion") ?? "";
+    r = await confirm(win, o.url, typeof o.token === "string" ? o.token : await o.token(), completion).catch((e: Error) => err("error", e.message));
+  }
+  if (r && win.name.startsWith("openconnect-")) win.close();
+  return r;
 }

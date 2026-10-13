@@ -1,5 +1,17 @@
 import { bind, type Definition, InputError, safeEqual } from "@openconnect/connections";
-import { type Driver, handleRate, IllegalTransition, type Json, type Keys, NotActive, OAuthError, type Program, RATE } from "@openconnect/kernel";
+import {
+  type Driver,
+  encrypt,
+  handleRate,
+  IllegalTransition,
+  type Json,
+  type Keys,
+  NotActive,
+  OAuthError,
+  type Program,
+  RATE,
+  randomId,
+} from "@openconnect/kernel";
 
 /**
  * The connection host: one Program that runs any definition from a registry, one instance per
@@ -38,7 +50,7 @@ export type Settings = {
 
 /**
  * Where a frontend session's authorization ends (#29): stored with the handshake, handed back by
- * `callback`. `cookie` is set in the browser that started it and checked at the callback.
+ * `callback`. `cookie` is set in the browser that opened the ticket and checked at the callback.
  */
 export type Target = {
   mode: "popup" | "redirect";
@@ -118,7 +130,11 @@ async function status(b: Bound): Promise<Json> {
   return { state: s.state, ...(s.reason ? { reason: s.reason } : {}), metadata: await b.metadata() };
 }
 
-const builtins = (b: Bound, hooks: Hooks[], instance: string): Record<string, Method> => ({
+/** A session's authorized credential waits under `DONE + <completion>` for `session.complete` (#29). */
+export const DONE = "session.done:";
+const DONE_TTL_MS = 600_000;
+
+const builtins = (b: Bound, hooks: Hooks[], instance: string, d: Driver, keys: Keys): Record<string, Method> => ({
   connect: async (a) => ({ url: await b.connect(input(a)) }),
   callback: async (a) => {
     const { [COOKIES]: cookies = "", ...params } = input(a);
@@ -128,14 +144,16 @@ const builtins = (b: Bound, hooks: Hooks[], instance: string): Record<string, Me
       await b.callback(params, hs);
       return status(b);
     }
-    // A session's handshake finishes only in the browser that started it, so a victim can't be sent
-    // to the provider with someone else's flow (login CSRF). Errors go back to the target as data.
+    // A session's handshake finishes only in the browser that opened its ticket, so a victim can't be
+    // sent to the provider with someone else's flow (login CSRF). Errors go back to the target as data.
     try {
       if (!(await safeEqual(cookie(cookies, target.cookie.name) ?? "", target.cookie.value)))
         throw new Fail("session_mismatch", 403, "this browser did not start the authorization");
-      await b.callback(params, hs);
-      const s = (await status(b)) as { state: string };
-      return { target, state: s.state };
+      // Not activated yet: the credential waits, sealed, for the app's page to confirm (#29), since
+      // whoever started the flow (a ticket can be minted outside a browser) may not be this browser's user.
+      const completion = randomId();
+      await d.store.put(`${DONE}${completion}`, await encrypt(JSON.stringify(await b.exchange(params, hs)), keys), { ttlMs: DONE_TTL_MS });
+      return { target, completion };
     } catch (e) {
       return { target, error: fault(e, instance) } as unknown as Json;
     }
@@ -170,7 +188,7 @@ export function host(o: { definitions: Record<string, AnyDefinition>; settings: 
       stateKey: s.stateKey,
     }) as Bound;
     const hooks = o.connection.map((f) => f({ d, instance, def, id, bound, settings: s }));
-    const methods: Record<string, Method> = Object.assign({}, ...hooks.map((h) => h.methods), builtins(bound, hooks, instance));
+    const methods: Record<string, Method> = Object.assign({}, ...hooks.map((h) => h.methods), builtins(bound, hooks, instance, d, s.keys));
     return { bound, hooks, methods };
   }
 

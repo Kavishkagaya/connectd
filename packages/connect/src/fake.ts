@@ -5,10 +5,11 @@ import { memory } from "@openconnect/kernel/memory";
 import { runtime, sessions } from "@openconnect/runtime";
 
 /**
- * Tests only: just enough of a browser window (DOM elements, window.open, postMessage, timers) to
- * drive `connect()` and `mount()`, in front of the real runtime on the memory driver. The fake plays
- * the browser's part: a submitted form is POSTed with the page's Origin, the provider approves, the
- * callback runs with the binding cookie, and the popup page's postMessage is delivered.
+ * Tests only: just enough of a browser window (DOM elements, window.open, location, postMessage,
+ * timers) to drive `connect()` and `mount()`, in front of the real runtime on the memory driver.
+ * The fake plays the browser's part: the page's fetches carry its Origin, a navigation carries
+ * nothing (as from a `Referrer-Policy: no-referrer` page), the provider approves, the callback runs
+ * with the binding cookie, and the popup page's postMessage is delivered.
  */
 
 export const APP = "https://app.test";
@@ -53,15 +54,12 @@ export class El {
   dispatch(t: string) {
     for (const f of this.listeners[t] ?? []) f({ type: t, preventDefault() {} });
   }
-  submit() {
-    this.win.submitted.push({ action: this.action, target: this.target, method: this.method, fields: Object.fromEntries(this.children.map((c) => [c.name, c.value])) });
-  }
   all(tag: string): El[] {
     return this.children.flatMap((c) => [...(c.tagName === tag ? [c] : []), ...c.all(tag)]);
   }
 }
 
-export type Popup = { name: string; closed: boolean; close(): void };
+export type Popup = { name: string; closed: boolean; close(): void; location: { href: string } };
 
 export class FakeWindow {
   now = 0;
@@ -69,16 +67,36 @@ export class FakeWindow {
   nextId = 1;
   messages: Listener[] = [];
   opened: Popup[] = [];
-  submitted: { action: string; target: string; method: string; fields: Record<string, string> }[] = [];
+  /** Top-level navigations: the popup's (`popup`) or this page's. */
+  navigations: { url: string; popup?: Popup }[] = [];
+  location = { href: `${APP}/`, assign: (url: string) => void this.navigations.push({ url }) };
+  name = "";
+  closed = false;
   blockPopups = false;
   crypto = globalThis.crypto;
   document = { createElement: (t: string) => new El(t, this), body: new El("body", this) };
   constructor(readonly fetch: (input: string, init?: RequestInit) => Promise<Response>) {}
   open(_url: string, name: string): Popup | null {
     if (this.blockPopups) return null;
-    const p = { name, closed: false, close: () => void (p.closed = true) };
+    const nav = this.navigations;
+    const p: Popup = {
+      name,
+      closed: false,
+      close: () => void (p.closed = true),
+      location: {
+        set href(url: string) {
+          nav.push({ url, popup: p });
+        },
+        get href() {
+          return "about:blank";
+        },
+      },
+    };
     this.opened.push(p);
     return p;
+  }
+  close() {
+    this.closed = true;
   }
   addEventListener(t: string, f: Listener) {
     if (t === "message") this.messages.push(f);
@@ -147,29 +165,35 @@ export async function setup() {
   const status = async (def: string, id: string) => ((await (await send(`/connections/${def}/${id}`, { headers: { authorization: "Bearer secret" } })).json()) as { state: string }).state;
 
   // The page's fetch: cross-origin, so the browser adds Origin.
-  const win = new FakeWindow((input, init = {}) => send(new URL(input).pathname, { ...init, headers: { ...(init.headers as Record<string, string>), origin: APP } }));
+  const requests: { path: string; body: unknown }[] = [];
+  const win = new FakeWindow((input, init = {}) => {
+    requests.push({ path: new URL(input).pathname, body: init.body ? JSON.parse(String(init.body)) : null });
+    return send(new URL(input).pathname, { ...init, headers: { ...(init.headers as Record<string, string>), origin: APP } });
+  });
 
   /**
-   * Play the browser for the last submitted form: POST it with the page's Origin, let the user
-   * approve (or deny) at the provider, run the callback with the cookie, and deliver the popup page's message.
+   * Play the browser for the last navigation: GET the ticket URL (no Origin, no Referer), let the
+   * user approve (or deny) at the provider, run the callback with the cookie, and deliver the popup
+   * page's message, unless `noOpener` (a provider's COOP cut it): then the popup goes on to the return URL.
    */
-  const finish = async (o: { deny?: string } = {}) => {
-    const f = win.submitted.at(-1)!;
-    const res = await send(new URL(f.action).pathname, { method: "POST", headers: { origin: APP }, body: new URLSearchParams(f.fields) });
+  const finish = async (o: { deny?: string; noOpener?: boolean } = {}) => {
+    const nav = win.navigations.at(-1)!;
+    const res = await send(new URL(nav.url).pathname + new URL(nav.url).search);
     if (res.status !== 303) throw new Error(`authorize ${res.status}: ${await res.text()}`);
     const cookie = (res.headers.get("set-cookie") ?? "").split(";")[0]!;
     const back = p.approve(res.headers.get("location")!);
     const q = o.deny ? `error=${o.deny}` : `code=${back.code}`;
     const done = await send(`/callback?${q}&state=${encodeURIComponent(back.state)}`, { headers: { cookie } });
     const html = await done.text();
-    const m = /postMessage\((\{.*\}), "([^"]+)"\)/.exec(html);
-    const popup = win.opened.find((x) => x.name === f.target);
+    const m = /postMessage\((\{.*?\}), "([^"]+)"\); window.close\(\); \} else if \((.*?)\) location/.exec(html);
+    const popup = nav.popup;
+    let returnUrl: string | null = null;
     // The browser drops a message whose target origin isn't the opener's.
-    if (m && popup && JSON.parse(`"${m[2]}"`) === APP) {
+    if (m && popup && !o.noOpener && JSON.parse(`"${m[2]}"`) === APP) {
       win.post(JSON.parse(m[1]!), OC, popup);
       popup.close();
-    }
-    return { done, html, location: done.headers.get("location") };
+    } else if (m) returnUrl = JSON.parse(m[3]!);
+    return { done, html, location: done.headers.get("location"), returnUrl };
   };
-  return { win, token, status, finish, send };
+  return { win, token, status, finish, send, requests };
 }

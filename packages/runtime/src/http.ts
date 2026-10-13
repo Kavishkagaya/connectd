@@ -77,8 +77,8 @@ export const routes: Record<string, Route> = {
       // The Cookie header overwrites any query parameter of that name: the binding comes from the browser only.
       const res = await api.call(r.instance, "callback", { ...q, [COOKIES]: req.headers.get("cookie") ?? "" });
       if ("ok" in res && res.ok && typeof res.ok === "object" && "target" in res.ok) {
-        const s = res.ok as { target: Target; error?: Fault };
-        return complete(api.settings, s.target, s.error ?? null);
+        const s = res.ok as { target: Target; completion?: string; error?: Fault };
+        return complete(api.settings, s.target, s.error ? { status: "error", code: s.error.code, message: s.error.message } : { status: "authorized", completion: s.completion ?? "" });
       }
       return reply(res);
     },

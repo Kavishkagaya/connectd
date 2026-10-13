@@ -1,59 +1,81 @@
 import { expect, test } from "bun:test";
-import { claims, connect, readResult, session } from "./connect.ts";
+import { claims, connect, type Result, resume, session } from "./connect.ts";
 import { APP, OC, setup } from "./fake.ts";
 
 const W = (w: unknown) => w as Window;
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
+};
+const watch = (p: Promise<Result>) => {
+  const s: { r?: Result } = {};
+  p.then((r) => (s.r = r));
+  return s;
+};
 
-test("popup: opens synchronously, submits the token by form, resolves with the opener message", async () => {
+test("popup: opens synchronously, fetches a ticket, navigates, confirms the completion", async () => {
   const t = await setup();
   const token = await t.token("example", "u1");
   const p = connect({ url: `${OC}/`, token, window: W(t.win) });
   // Before any await: the popup is open (the click's user activation is still there).
   expect(t.win.opened).toHaveLength(1);
-  await Promise.resolve();
-  const f = t.win.submitted[0]!;
-  expect(f).toMatchObject({ action: `${OC}/session/authorize`, method: "POST", target: t.win.opened[0]!.name, fields: { token, mode: "popup" } });
-  expect(t.win.document.body.children).toHaveLength(0); // the form is gone again
+  await settle();
+  const nav = t.win.navigations[0]!;
+  expect(nav.popup).toBe(t.win.opened[0]!);
+  expect(nav.url).toStartWith(`${OC}/session/authorize?ticket=`);
+  expect(nav.url).not.toContain(encodeURIComponent(token)); // the token stays out of URLs
 
   const { html } = await t.finish();
-  expect(html).toContain("postMessage");
+  expect(html).toContain('"status":"authorized"');
   expect(await p).toEqual({ status: "connected" });
   expect(await t.status("example", "u1")).toBe("active");
   expect(t.win.messages).toHaveLength(0); // listener removed
 });
 
-test("popup: a token function is awaited after the window opened; its failure closes the popup", async () => {
+test("popup: a token function is awaited after the window opened; failures close the popup, in the opener", async () => {
   const t = await setup();
   let release!: (s: string) => void;
   const p = connect({ url: OC, token: () => new Promise((r) => (release = r)), window: W(t.win) });
   expect(t.win.opened).toHaveLength(1);
-  expect(t.win.submitted).toHaveLength(0);
+  expect(t.win.navigations).toHaveLength(0);
   release(await t.token("example", "u1"));
-  await new Promise((r) => setTimeout(r, 0));
-  expect(t.win.submitted).toHaveLength(1);
+  await settle();
+  expect(t.win.navigations).toHaveLength(1);
   await t.finish();
   expect(await p).toEqual({ status: "connected" });
 
-  const q = connect({ url: OC, token: () => Promise.reject(new Error("backend down")), window: W(t.win) });
-  expect(await q).toEqual({ status: "error", code: "error", message: "backend down" });
+  expect(await connect({ url: OC, token: () => Promise.reject(new Error("backend down")), window: W(t.win) })).toEqual({ status: "error", code: "error", message: "backend down" });
   expect(t.win.opened[1]!.closed).toBe(true);
+  // A refused ticket (here an expired-looking forged token) is an error in the opener, not JSON in the popup.
+  expect(await connect({ url: OC, token: "forged", window: W(t.win) })).toMatchObject({ status: "error", code: "unauthorized" });
+  expect(t.win.opened[2]!.closed).toBe(true);
+  expect(t.win.navigations).toHaveLength(1);
+});
+
+test("popup closed while the token was being fetched: not navigated (that would open a tab)", async () => {
+  const t = await setup();
+  let release!: (s: string) => void;
+  const p = connect({ url: OC, token: () => new Promise((r) => (release = r)), window: W(t.win) });
+  t.win.opened[0]!.close();
+  release(await t.token("example", "u1"));
+  expect(await p).toEqual({ status: "closed" });
+  expect(t.win.navigations).toHaveLength(0);
 });
 
 test("popup: messages from another origin, window or attempt are ignored; provider errors come back", async () => {
   const t = await setup();
   const p = connect({ url: OC, token: await t.token("example", "u1"), window: W(t.win) });
-  await Promise.resolve();
+  await settle();
   const popup = t.win.opened[0]!;
-  const nonce = t.win.submitted[0]!.fields.nonce;
+  const nonce = (t.requests.find((r) => r.path === "/session/authorize")!.body as { nonce: string }).nonce;
+  expect(nonce).toMatch(/^[0-9a-f]{24}$/);
   const ok = { type: "openconnect", nonce, status: "connected" };
   t.win.post(ok, "https://evil.test", popup);
   t.win.post(ok, OC, {});
   t.win.post({ ...ok, nonce: "other" }, OC, popup);
   t.win.post("connected", OC, popup);
-  let settled = false;
-  p.then(() => (settled = true));
-  await new Promise((r) => setTimeout(r, 0));
-  expect(settled).toBe(false);
+  const s = watch(p);
+  await settle();
+  expect(s.r).toBeUndefined();
 
   await t.finish({ deny: "access_denied" });
   expect(await p).toMatchObject({ status: "error", code: "access_denied" });
@@ -63,7 +85,7 @@ test("popup: messages from another origin, window or attempt are ignored; provid
 test("popup: closed before it reported, and timeout", async () => {
   const t = await setup();
   const p = connect({ url: OC, token: await t.token("example", "u1"), window: W(t.win) });
-  await Promise.resolve();
+  await settle();
   t.win.opened[0]!.close();
   t.win.advance(300); // seen closed once: a message may still be in flight
   t.win.advance(300);
@@ -71,10 +93,26 @@ test("popup: closed before it reported, and timeout", async () => {
   expect(t.win.timers).toHaveLength(0);
 
   const q = connect({ url: OC, token: await t.token("example", "u1"), window: W(t.win), timeoutMs: 5_000 });
-  await Promise.resolve();
+  await settle();
   t.win.advance(5_000);
   expect(await q).toMatchObject({ status: "error", code: "timeout" });
   expect(t.win.opened[1]!.closed).toBe(true);
+});
+
+test("popup that lost its opener (COOP): it goes on to the return URL, resume() confirms there, the opener sees it active", async () => {
+  const t = await setup();
+  const token = await t.token("example", "u1", { returnUrl: `${APP}/back` });
+  const p = connect({ url: OC, token, window: W(t.win) });
+  await settle();
+  const { returnUrl } = await t.finish({ noOpener: true });
+  expect(returnUrl).toStartWith(`${APP}/back?openconnect=authorized&completion=`);
+  // The app's page, loaded in the popup: confirms, then closes the popup.
+  const inPopup = Object.assign(Object.create(t.win), { name: t.win.opened[0]!.name, close: () => t.win.opened[0]!.close() });
+  expect(await resume({ url: OC, token, href: returnUrl!, window: W(inPopup) })).toEqual({ status: "connected" });
+  expect(t.win.opened[0]!.closed).toBe(true);
+  t.win.advance(600);
+  await settle();
+  expect(await p).toEqual({ status: "connected" });
 });
 
 test("popup blocked: falls back to a redirect when the session has a returnUrl, else says so", async () => {
@@ -82,23 +120,31 @@ test("popup blocked: falls back to a redirect when the session has a returnUrl, 
   t.win.blockPopups = true;
   const token = await t.token("example", "u1", { returnUrl: `${APP}/settings` });
   expect(await connect({ url: OC, token, window: W(t.win) })).toEqual({ status: "redirecting" });
-  expect(t.win.submitted[0]).toMatchObject({ target: "_self", fields: { mode: "redirect" } });
+  expect(t.win.navigations[0]!.popup).toBeUndefined();
   const { location } = await t.finish();
-  expect(location).toBe(`${APP}/settings?openconnect=connected`);
-  expect(readResult(location!)).toEqual({ status: "connected" });
+  expect(location).toStartWith(`${APP}/settings?openconnect=authorized&completion=`);
+  expect(await t.status("example", "u1")).toBe("pending");
+  expect(await resume({ url: OC, token, href: location!, window: W(t.win) })).toEqual({ status: "connected" });
+  expect(await t.status("example", "u1")).toBe("active");
+  expect(t.win.closed).toBe(false); // not a popup: resume() leaves the page alone
 
   expect(await connect({ url: OC, token: await t.token("example", "u2"), window: W(t.win) })).toMatchObject({ status: "error", code: "popup_blocked" });
   expect(await connect({ url: OC, token, window: W(t.win), fallback: false })).toMatchObject({ status: "error", code: "popup_blocked" });
 });
 
-test("redirect mode: navigates this window; the result is read back from the return URL", async () => {
+test("redirect mode: navigates this window; resume() reads the result back, a completion once", async () => {
   const t = await setup();
   const token = await t.token("example", "u1", { returnUrl: `${APP}/back` });
   expect(await connect({ url: OC, token, mode: "redirect", window: W(t.win) })).toEqual({ status: "redirecting" });
   expect(t.win.opened).toHaveLength(0);
-  const { location } = await t.finish({ deny: "access_denied" });
-  expect(readResult(location!)).toEqual({ status: "error", code: "access_denied", message: "" });
-  expect(readResult(`${APP}/back`)).toBeNull();
+  const { location } = await t.finish();
+  expect(await resume({ url: OC, token: async () => token, href: location!, window: W(t.win) })).toEqual({ status: "connected" });
+  expect(await resume({ url: OC, token, href: location!, window: W(t.win) })).toMatchObject({ status: "error", code: "bad_completion" });
+
+  await connect({ url: OC, token, mode: "redirect", window: W(t.win) });
+  const denied = await t.finish({ deny: "access_denied" });
+  expect(await resume({ url: OC, token, href: denied.location!, window: W(t.win) })).toEqual({ status: "error", code: "access_denied", message: "" });
+  expect(await resume({ url: OC, token, href: `${APP}/back`, window: W(t.win) })).toBeNull();
 });
 
 test("fields: an API key through the session, no window; errors are results", async () => {

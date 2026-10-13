@@ -41,7 +41,7 @@ packages/runtime/
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
   src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection
-  src/session.ts      sessions() extension (#29): browser session tokens, public /session routes (CORS), /callback redirect or popup page
+  src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
   src/client.ts       openconnect({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/call/fetch, connections.page/list, OpenConnectError
@@ -50,7 +50,7 @@ packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.j
   src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
 
 packages/connect/     browser package (#29), zero dependencies, DOM only (tsconfig.web.json; the root tsc skips it)
-  src/connect.ts      headless: connect({ url, token, mode: popup | redirect, fields? }) → Result, session(), readResult(), claims()
+  src/connect.ts      headless: connect({ url, token, mode: popup | redirect, fields? }) → Result, resume() on the return URL, session(), claims()
   src/ui.ts           mount(el, opts): prebuilt button, or a form for API-key definitions; returns unmount
   src/fake.ts         fake window/DOM in front of the real runtime, for the tests
   e2e/chromium.ts     one real-Chromium check, run by hand (needs Playwright; not in `bun run test`)

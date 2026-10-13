@@ -1,5 +1,5 @@
-import { type Json, NotActive, randomId, sign, verify } from "@openconnect/kernel";
-import { Fail, type Fault, fault, type Hosted, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
+import { decrypt, type Json, NotActive, randomId, sign, verify } from "@openconnect/kernel";
+import { DONE, Fail, type Fault, fault, type Hosted, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { type Api, ERROR_HEADER, type Route } from "./http.ts";
 import type { Extension } from "./runtime.ts";
 
@@ -7,18 +7,24 @@ import type { Extension } from "./runtime.ts";
  * Frontend connect sessions (#29). The app's backend asks for a short-lived token scoped to one
  * connection (`POST /connections/:def/:id/session`, API key); the browser uses only that token:
  *
- *   GET  /session              what to render: flow (redirect | form), fields, state      (CORS)
- *   POST /session/connect      submit an API-key form: `{ fields }`                       (CORS)
- *   POST /session/authorize    form submit (top-level, popup or same window) → provider   (navigation)
+ *   GET  /session                     what to render: flow (redirect | form), fields, state       (CORS)
+ *   POST /session/connect             submit an API-key form: `{ fields }`                        (CORS)
+ *   POST /session/authorize           `{ mode, nonce }` → `{ ticket }`, single use, 60 s          (CORS)
+ *   GET  /session/authorize?ticket=   the popup or the page navigates here → cookie, provider     (navigation)
+ *   POST /session/complete            `{ completion }` → activates; the app's page confirms       (CORS)
  *
- * The provider comes back to `/callback`, which redirects to the token's return URL or answers a
- * page that posts the result to `window.opener` on the token's origin. A token can start an
- * authorization and nothing else: no token(), no proxy, no status beyond the state.
+ * The provider comes back to `/callback`, which exchanges the code but doesn't activate: it hands
+ * a single-use `completion` to the app's page only (posted to `window.opener` on the token's
+ * origin, or on the token's return URL), and that page confirms it with its own token. A token can
+ * start and confirm an authorization of its connection, and nothing else: no token(), no proxy,
+ * no status beyond the state.
  */
 
 const TYP = "openconnect.session";
+const TICKET = "openconnect.ticket";
 const TTL_MS = 10 * 60_000;
 const MAX_TTL_MS = 60 * 60_000;
+const TICKET_TTL_MS = 60_000;
 /** The binding cookie lives as long as a handshake (#7). */
 const COOKIE_MAX_AGE = 600;
 
@@ -39,8 +45,12 @@ export type SessionInfo = {
   expiresAt: number;
 };
 
-/** What a session ends with: posted to the opener, or as `?openconnect=connected|error&code=` on the return URL. */
-export type Outcome = { status: "connected" } | { status: "error"; code: string; message: string };
+/**
+ * How an authorization ends in the browser: posted to the opener, or on the return URL as
+ * `?openconnect=authorized&completion=` / `?openconnect=error&code=`. `authorized` still needs
+ * `POST /session/complete`; `connected` is a flow that finished inline.
+ */
+export type Outcome = { status: "authorized"; completion: string } | { status: "connected" } | { status: "error"; code: string; message: string };
 
 const bad = (m: string) => new Fail("bad_request", 400, m);
 const off = () => new Fail("not_configured", 503, "sessions are off: set settings.sessions");
@@ -81,19 +91,25 @@ async function issue(h: Hosted, a: Json): Promise<Json> {
   return { token: await sign(JSON.stringify(claims), s.key), expiresAt: exp };
 }
 
-async function claimsOf(api: Api, token: string): Promise<Claims> {
+/** A signed payload of type `typ`, or a 401. `verify` is null for anything malformed, so garbage never throws. */
+async function signed<T extends { typ: string }>(api: Api, value: string, typ: T["typ"]): Promise<T> {
   const s = api.settings.sessions;
   if (!s) throw off();
-  const p = await verify(token, s.key);
-  let c: Partial<Claims> | null = null;
+  const p = await verify(value, s.key);
+  let c: (Partial<T> & { def?: unknown; id?: unknown }) | null = null;
   try {
-    c = p ? (JSON.parse(p) as Partial<Claims>) : null;
+    c = p ? (JSON.parse(p) as Partial<T>) : null;
   } catch {}
-  if (!c || c.typ !== TYP || typeof c.def !== "string" || typeof c.id !== "string" || typeof c.exp !== "number" || typeof c.origin !== "string")
-    throw new Fail("unauthorized", 401, "missing or forged session token");
-  if (c.exp <= api.now()) throw new Fail("session_expired", 401, "session token expired");
+  if (!c || c.typ !== typ || typeof c.def !== "string" || typeof c.id !== "string") throw new Fail("unauthorized", 401, `missing or forged ${typ === TYP ? "session token" : "ticket"}`);
   if (!Object.hasOwn(api.definitions, c.def)) throw new Fail("not_found", 404, `unknown definition ${c.def}`);
-  return c as Claims;
+  return c as T;
+}
+
+async function claimsOf(api: Api, token: string): Promise<Claims> {
+  const c = await signed<Claims>(api, token, TYP);
+  if (typeof c.exp !== "number" || typeof c.origin !== "string") throw new Fail("unauthorized", 401, "missing or forged session token");
+  if (c.exp <= api.now()) throw new Fail("session_expired", 401, "session token expired");
+  return c;
 }
 
 /** A Reply's fault, thrown as is (keeps `state`/`reason`). */
@@ -118,31 +134,36 @@ function cookieHeader(s: Settings, c: Target["cookie"], maxAge: number) {
 const script = (v: Json) => JSON.stringify(v).replace(/[<>&\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
 const html = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+/** The bound return URL with the outcome on it, if it is still allowed. */
+function returnTo(s: Settings, t: Target, o: Outcome): string | null {
+  if (!t.returnUrl || !allowed(s, originOf(t.returnUrl))) return null;
+  const u = new URL(t.returnUrl);
+  u.searchParams.set("openconnect", o.status);
+  if (o.status === "authorized") u.searchParams.set("completion", o.completion);
+  if (o.status === "error") u.searchParams.set("code", o.code);
+  return u.href;
+}
+
 /**
  * End a session's authorization in the browser: redirect to the bound return URL, or a page that
- * posts the outcome to `window.opener` (only on the bound origin) and closes. Clears the binding cookie.
+ * posts the outcome to `window.opener` (only on the bound origin) and closes. A popup whose opener
+ * is gone (a provider page with COOP cuts it) goes on to the return URL instead, if there is one.
+ * Clears the binding cookie. The allowlist is re-checked: origins may have narrowed since the token was issued.
  */
-export function complete(s: Settings, t: Target, error: Fault | null): Response {
-  const outcome: Outcome = error ? { status: "error", code: error.code, message: error.message } : { status: "connected" };
+export function complete(s: Settings, t: Target, o: Outcome): Response {
   const headers = { ...NO_STORE, "set-cookie": cookieHeader(s, t.cookie, 0) };
-  // Allowlist re-checked: the origins may have narrowed since the token was issued.
-  if (t.mode === "redirect" && t.returnUrl && allowed(s, originOf(t.returnUrl))) {
-    const u = new URL(t.returnUrl);
-    u.searchParams.set("openconnect", outcome.status);
-    if (error) u.searchParams.set("code", error.code);
-    return new Response(null, { status: 303, headers: { ...headers, location: u.href } });
-  }
+  const back = returnTo(s, t, o);
+  if (t.mode === "redirect" && back) return new Response(null, { status: 303, headers: { ...headers, location: back } });
   if (t.mode !== "popup" || !allowed(s, t.origin)) {
-    const f = error ?? { code: "forbidden", status: 403, message: "the session's origin is no longer allowed" };
+    const f = { code: "forbidden", status: 403, message: "the session's origin or return URL is no longer allowed" };
     return Response.json({ error: f }, { status: f.status, headers: { ...headers, [ERROR_HEADER]: f.code } });
   }
-  const message = { type: "openconnect", nonce: t.nonce, definition: t.definition, id: t.id, ...outcome };
+  const message = { type: "openconnect", nonce: t.nonce, definition: t.definition, id: t.id, ...o };
   const nonce = randomId();
-  const text = error ? `Could not connect (${error.code}). You can close this window.` : "Connected. You can close this window.";
+  const text = o.status === "error" ? `Could not connect (${o.code}). You can close this window.` : "Done. You can close this window.";
   const body = `<!doctype html><meta charset="utf-8"><title>openconnect</title><p>${html(text)}</p>
-<script nonce="${nonce}">if (window.opener) window.opener.postMessage(${script(message)}, ${script(t.origin)}); window.close();</script>`;
+<script nonce="${nonce}">if (window.opener) { window.opener.postMessage(${script(message)}, ${script(t.origin)}); window.close(); } else if (${script(back)}) location.replace(${script(back)});</script>`;
   return new Response(body, {
-    status: error ? error.status : 200,
     headers: {
       ...headers,
       "content-type": "text/html; charset=utf-8",
@@ -152,37 +173,20 @@ export function complete(s: Settings, t: Target, error: Fault | null): Response 
   });
 }
 
-/** `POST /session/authorize`: a form submitted by the app's page, top level (popup or same window). */
-async function authorize(req: Request, api: Api): Promise<Response> {
-  if (!api.settings.sessions) throw off();
-  if (req.method !== "POST") throw new Fail("method_not_allowed", 405, "POST only: submit a form from the app's page");
-  const form = await req.formData().catch(() => null);
-  if (!form) throw bad("expected a form body");
-  const c = await claimsOf(api, String(form.get("token") ?? ""));
-  // A cross-site form POST carries Origin, so only the app's own page can start a flow with its
-  // token (a link or another site's form can't push a victim through someone else's flow).
-  if (req.headers.get("origin") !== c.origin || !allowed(api.settings, c.origin)) throw new Fail("forbidden", 403, "origin does not match the session");
-  const mode = String(form.get("mode") ?? "popup");
-  const nonce = String(form.get("nonce") ?? "");
-  if (mode !== "popup" && mode !== "redirect") throw bad("mode must be popup or redirect");
-  if (!/^[\w-]{0,64}$/.test(nonce)) throw bad("bad nonce");
-  if (mode === "redirect" && !c.returnUrl) throw bad("redirect mode needs a returnUrl in the session");
-  if (!api.definitions[c.def]?.auth.callback) throw bad(`${c.def} takes fields: POST /session/connect`);
-  const target: Target = {
-    mode,
-    origin: c.origin,
-    ...(c.returnUrl ? { returnUrl: c.returnUrl } : {}),
-    nonce,
-    cookie: { name: `oc-${randomId(6)}`, value: randomId() },
-    definition: c.def,
-    id: c.id,
-  };
-  // ponytail: no per-session input (scopes): the definition's or config's apply. Bind `input` into the token when an app needs per-user scopes.
-  const r = await api.call(instanceOf(c.def, c.id), "session.authorize", target as unknown as Json);
-  if ("error" in r) return complete(api.settings, target, r.error);
-  const url = (r.ok as { url: string | null }).url;
-  if (url === null) return complete(api.settings, target, null);
-  return new Response(null, { status: 303, headers: { ...NO_STORE, location: url, "set-cookie": cookieHeader(api.settings, target.cookie, COOKIE_MAX_AGE) } });
+/**
+ * `GET /session/authorize?ticket=`: the popup or the app's page navigates here. Takes the ticket
+ * (once), sets the binding cookie in this browser, and sends it to the provider.
+ */
+async function navigate(req: Request, api: Api): Promise<Response> {
+  if (req.method !== "GET") throw new Fail("method_not_allowed", 405, "GET or POST");
+  const t = await signed<{ typ: typeof TICKET; def: string; id: string; t: string }>(api, new URL(req.url).searchParams.get("ticket") ?? "", TICKET);
+  const cookie = { name: `oc-${randomId(6)}`, value: randomId() };
+  const reply = await api.call(instanceOf(t.def, t.id), "session.authorize", { ticket: t.t, cookie });
+  if ("error" in reply) throw new Fail(reply.error.code, reply.error.status, reply.error.message);
+  const r = reply.ok as { target: Target; url?: string | null; error?: Fault };
+  if (r.error) return complete(api.settings, r.target, { status: "error", code: r.error.code, message: r.error.message });
+  if (!r.url) return complete(api.settings, r.target, { status: "connected" });
+  return new Response(null, { status: 303, headers: { ...NO_STORE, location: r.url, "set-cookie": cookieHeader(api.settings, cookie, COOKIE_MAX_AGE) } });
 }
 
 function strings(v: unknown): Record<string, string> {
@@ -197,10 +201,12 @@ async function state(api: Api, instance: string) {
   return { state: s.state, ...(s.reason ? { reason: s.reason } : {}) };
 }
 
+const body = async (req: Request) => ((await req.json().catch(() => null)) ?? {}) as Record<string, unknown>;
+
 const session: Route = {
   public: true,
   async fetch(req, api, [action, ...rest]) {
-    if (action === "authorize" && !rest.length) return authorize(req, api);
+    if (action === "authorize" && !rest.length && req.method !== "POST" && req.method !== "OPTIONS") return navigate(req, api);
     const origin = req.headers.get("origin");
     const ok = allowed(api.settings, origin);
     const headers: Record<string, string> = ok ? { vary: "Origin", "access-control-allow-origin": origin, "access-control-expose-headers": ERROR_HEADER } : { vary: "Origin" };
@@ -218,16 +224,35 @@ const session: Route = {
       const def = api.definitions[c.def]!;
       const instance = instanceOf(c.def, c.id);
       const flow = def.auth.callback ? "redirect" : "form";
-      if (!action && !rest.length) {
+      const post = () => {
+        if (req.method !== "POST") throw new Fail("method_not_allowed", 405, "POST only");
+      };
+      if (rest.length) throw new Fail("not_found", 404, "no such route");
+      if (!action) {
         if (req.method !== "GET") throw new Fail("method_not_allowed", 405, "GET only");
         const info: SessionInfo = { definition: c.def, id: c.id, flow, fields: def.auth.fields ?? [], ...(await state(api, instance)), expiresAt: c.exp };
         return Response.json(info, { headers });
       }
-      if (action === "connect" && !rest.length) {
-        if (req.method !== "POST") throw new Fail("method_not_allowed", 405, "POST only");
-        if (flow !== "form") throw bad(`${c.def} authorizes at the provider: submit a form to /session/authorize`);
-        const body = (await req.json().catch(() => null)) as { fields?: unknown } | null;
-        unwrap(await api.call(instance, "connect", strings(body?.fields)));
+      if (action === "connect") {
+        post();
+        if (flow !== "form") throw bad(`${c.def} authorizes at the provider: use /session/authorize`);
+        unwrap(await api.call(instance, "connect", strings((await body(req)).fields)));
+        return Response.json(await state(api, instance), { headers });
+      }
+      if (action === "authorize") {
+        // A fetch, not a form: the browser always sends the real Origin on it, whatever the page's
+        // Referrer-Policy (a form POST from a `no-referrer` page says `Origin: null`).
+        const { mode = "popup", nonce = "" } = await body(req);
+        if (mode !== "popup" && mode !== "redirect") throw bad("mode must be popup or redirect");
+        if (typeof nonce !== "string" || !/^[\w-]{0,64}$/.test(nonce)) throw bad("bad nonce");
+        if (mode === "redirect" && !c.returnUrl) throw bad("redirect mode needs a returnUrl in the session");
+        if (flow !== "redirect") throw bad(`${c.def} takes fields: POST /session/connect`);
+        const target = { mode, nonce, origin: c.origin, ...(c.returnUrl ? { returnUrl: c.returnUrl } : {}) };
+        return Response.json(unwrap(await api.call(instance, "session.ticket", target)), { headers });
+      }
+      if (action === "complete") {
+        post();
+        unwrap(await api.call(instance, "session.complete", { completion: (await body(req)).completion as Json }));
         return Response.json(await state(api, instance), { headers });
       }
       throw new Fail("not_found", 404, "no such route");
@@ -238,24 +263,58 @@ const session: Route = {
   },
 };
 
-function target(a: Json): Target {
-  const t = a as Partial<Target> | null;
-  if (!t || (t.mode !== "popup" && t.mode !== "redirect") || typeof t.origin !== "string" || typeof t.cookie?.value !== "string") throw bad("bad target");
-  return t as Target;
+const str = (a: Json, k: string) => {
+  const v = (a as Record<string, Json> | null)?.[k];
+  if (typeof v !== "string") throw bad(`${k} must be a string`);
+  return v;
+};
+
+/** The instance's part: tickets and completions are stored in the connection's own instance, so they can't cross to another. */
+function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
+  const key = (t: string) => `session.ticket:${t}`;
+  return {
+    session: (a) => issue(h, a),
+
+    /** Mint a single-use ticket for this connection; the route checked the token and the Origin. */
+    "session.ticket": async (a) => {
+      const s = h.settings.sessions;
+      if (!s) throw off();
+      const t = randomId();
+      const target = { mode: str(a, "mode"), nonce: str(a, "nonce"), origin: str(a, "origin"), ...((a as { returnUrl?: Json }).returnUrl ? { returnUrl: str(a, "returnUrl") } : {}) };
+      await h.d.store.put(key(t), target, { ttlMs: TICKET_TTL_MS });
+      return { ticket: await sign(JSON.stringify({ typ: TICKET, def: h.def.id, id: h.id, t }), s.key) };
+    },
+
+    /** Take the ticket and open the handshake. Failures after the take come back with the target, so the browser is sent back. */
+    "session.authorize": async (a) => {
+      const stored = (await h.d.store.take(key(str(a, "ticket")))) as Omit<Target, "cookie" | "definition" | "id"> | null;
+      if (!stored) throw new Fail("bad_ticket", 401, "unknown, used or expired ticket");
+      const cookie = (a as { cookie: Target["cookie"] }).cookie;
+      const target: Target = { ...stored, cookie: { name: String(cookie?.name), value: String(cookie?.value) }, definition: h.def.id, id: h.id };
+      try {
+        return { target, url: await h.bound.connect({}, target as unknown as Json) } as unknown as Json;
+      } catch (e) {
+        return { target, error: fault(e, h.instance) } as unknown as Json;
+      }
+    },
+
+    /** The app's page confirms what the callback exchanged: check (metadata) and activate. */
+    "session.complete": async (a) => {
+      const sealed = await h.d.store.take(`${DONE}${str(a, "completion")}`);
+      if (typeof sealed !== "string") throw new Fail("bad_completion", 400, "unknown, used or expired completion");
+      await h.bound.finish(JSON.parse(await decrypt(sealed, h.settings.keys)));
+      return null;
+    },
+  };
 }
 
 /**
  * Frontend connect sessions (#29): `extensions: [sessions()]`, on when `settings.sessions` is set.
  * Adds the `/session` routes, the `session` connection method (token issue, API key) and the
- * internal `session.authorize` (only the route calls it, after checking the token and origin).
+ * internal methods only those routes call.
  */
 export const sessions = (): Extension => ({
   routes: { session },
-  internal: ["session.authorize"],
-  connection: (h) => ({
-    methods: {
-      session: (a) => issue(h, a),
-      "session.authorize": async (a) => ({ url: await h.bound.connect({}, { ...target(a), definition: h.def.id, id: h.id } as unknown as Json) }),
-    },
-  }),
+  internal: ["session.ticket", "session.authorize", "session.complete"],
+  connection: (h) => ({ methods: methods(h) }),
 });

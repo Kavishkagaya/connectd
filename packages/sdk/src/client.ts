@@ -151,7 +151,14 @@ export function openconnect(o: Options) {
       def,
       id,
       status: () => request<Status>("GET", `/connections/${at}`),
-      /** Start (or redo) authorization. `url` is where to send the user; null if it finished inline (API keys: pass the fields as `args`). */
+      /**
+       * Start (or redo) authorization. `url` is where to send the user; null if it finished inline
+       * (API keys: pass the fields as `args`). For a user in a browser, prefer `session()` and
+       * `@openconnect/connect`: this URL isn't tied to the browser that opens it, so anyone who
+       * gets it (a user of your app sending it to someone else) can have another person's provider
+       * account land on this connection (login CSRF). Sessions bind the flow to the browser and the
+       * result to your page.
+       */
       connect: (args: Record<string, string> = {}) => call<{ url: string | null }>("connect", args),
       /** A current credential, refreshed if due. Prefer `fetch`, which never hands the token out. */
       token: () => call<Credential>("token"),
