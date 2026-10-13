@@ -180,6 +180,8 @@ export function connection(d: Driver, instance: string, opts: Options) {
 
   return {
     read,
+    /** The record's store version (null = no record), without decrypting anything. Changes on every write. */
+    version: async (): Promise<number | null> => (await d.store.get("record"))?.v ?? null,
     write,
     update,
     once,

@@ -11,8 +11,12 @@ const keyed = defineConnection({
   id: "keyed",
   auth: apiKey(["key", "team"]),
   metadata: async (_ctx, cred) => ({ team: cred.kind === "static" ? (cred.fields.team ?? "") : "" }),
-  external: (m) => ({ team: m.team }),
+  external: (m) => {
+    if (externalFails) throw new Error("external blew up");
+    return { team: m.team };
+  },
 });
+let externalFails = false;
 const plain = defineConnection({ id: "plain", auth: apiKey(["key"]) });
 
 async function setup(index: Index = memoryIndex()) {
@@ -126,4 +130,38 @@ test("a failed index write is retried on the next call; index.sync repairs a los
   expect((await req("GET", "/connections")).body.connections).toEqual([]);
   expect((await req("POST", "/connections/keyed/a1/index.sync")).body).toBeNull();
   expect((await req("GET", "/connections?external=team:T1")).body.connections).toMatchObject([{ id: "a1", state: "active" }]);
+});
+
+test("a throwing external hook falls back to the last known ids; the row keeps tracking state", async () => {
+  const { index, req } = await setup();
+  await req("POST", "/connections/keyed/a1/connect", { key: "k", team: "T1" });
+  externalFails = true;
+  try {
+    await req("POST", "/connections/keyed/a2/connect", { key: "k", team: "T2" }); // never had ids: {}
+    expect((await req("POST", "/connections/keyed/a1/revoke")).body.state).toBe("revoked");
+  } finally {
+    externalFails = false;
+  }
+  expect((await index.list({})).connections).toMatchObject([
+    { id: "a1", state: "revoked", external: { team: "T1" } },
+    { id: "a2", state: "active", external: {} },
+  ]);
+});
+
+test("writes only when what the index shows changes", async () => {
+  const rows = memoryIndex();
+  const writes: string[] = [];
+  const { req } = await setup({ upsert: async (r) => (writes.push(`${r.id}:${r.state}`), rows.upsert(r)), list: (q) => rows.list(q) });
+  await req("POST", "/connections/keyed/a1/connect", { key: "k", team: "T1" });
+  await req("POST", "/connections/keyed/a1/token");
+  await req("GET", "/connections/keyed/a1");
+  // Re-auth with the same team: new record and metadata versions, the same row.
+  await req("POST", "/connections/keyed/a1/connect", { key: "k2", team: "T1" });
+  expect(writes).toEqual(["a1:active"]);
+  // A new team is a change; so is revoke. Forced syncs always write.
+  await req("POST", "/connections/keyed/a1/connect", { key: "k2", team: "T9" });
+  await req("POST", "/connections/keyed/a1/revoke");
+  await req("POST", "/connections/keyed/a1/index.sync");
+  expect(writes).toEqual(["a1:active", "a1:active", "a1:revoked", "a1:revoked"]);
+  expect((await rows.list({})).connections).toMatchObject([{ state: "revoked", external: { team: "T9" } }]);
 });
