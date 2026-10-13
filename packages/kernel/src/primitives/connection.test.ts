@@ -53,6 +53,20 @@ test("lifecycle: legal transitions, events, revoked is terminal", async () => {
   expect(await c.events.seq()).toBe(3); // acks don't move it
 });
 
+test("version: null without a record, changes on every write, matches read", async () => {
+  const { get } = await setup();
+  const c = await get();
+  expect(await c.version()).toBe(null);
+  await c.write(null, "pending", null);
+  const v1 = await c.version();
+  expect(v1).toBe((await c.read())!.v);
+  await c.activate({ kind: "static", fields: { apiKey: "sk" } });
+  const v2 = await c.version();
+  expect(v2).toBeGreaterThan(v1!);
+  await c.token(); // reads change nothing
+  expect(await c.version()).toBe(v2);
+});
+
 test("handshake: signed state routes, take is once, other instance and forgery rejected", async () => {
   const { get, opts } = await setup();
   const c1 = await get("c1");

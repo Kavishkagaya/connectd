@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { apiKey, defineConnection } from "@openconnect/connections";
 import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
-import { directory, findByExternal, type Index, memoryIndex, runtime } from "./index.ts";
+import { directory, type Extension, findByExternal, type Index, memoryIndex, runtime } from "./index.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 
@@ -11,11 +11,15 @@ const keyed = defineConnection({
   id: "keyed",
   auth: apiKey(["key", "team"]),
   metadata: async (_ctx, cred) => ({ team: cred.kind === "static" ? (cred.fields.team ?? "") : "" }),
-  external: (m) => ({ team: m.team }),
+  external: (m) => {
+    if (externalFails) throw new Error("external blew up");
+    return { team: m.team };
+  },
 });
+let externalFails = false;
 const plain = defineConnection({ id: "plain", auth: apiKey(["key"]) });
 
-async function setup(index: Index = memoryIndex()) {
+async function setup(index: Index = memoryIndex(), extra: Extension[] = []) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
@@ -23,7 +27,7 @@ async function setup(index: Index = memoryIndex()) {
     redirectUri: "https://oc.test/callback",
     config: { keyed: null, plain: null },
   };
-  const rt = runtime({ definitions: { keyed, plain }, settings: async () => settings, extensions: [directory(index)] });
+  const rt = runtime({ definitions: { keyed, plain }, settings: async () => settings, extensions: [directory(index), ...extra] });
   const w = memory(rt.program);
   const req = async (method: string, path: string, body?: Json, auth = "Bearer secret") => {
     const res = await rt.fetch(
@@ -126,4 +130,67 @@ test("a failed index write is retried on the next call; index.sync repairs a los
   expect((await req("GET", "/connections")).body.connections).toEqual([]);
   expect((await req("POST", "/connections/keyed/a1/index.sync")).body).toBeNull();
   expect((await req("GET", "/connections?external=team:T1")).body.connections).toMatchObject([{ id: "a1", state: "active" }]);
+});
+
+test("a throwing external hook falls back to the last known ids; the row keeps tracking state", async () => {
+  const { index, req } = await setup();
+  await req("POST", "/connections/keyed/a1/connect", { key: "k", team: "T1" });
+  externalFails = true;
+  try {
+    await req("POST", "/connections/keyed/a2/connect", { key: "k", team: "T2" }); // never had ids: {}
+    expect((await req("POST", "/connections/keyed/a1/revoke")).body.state).toBe("revoked");
+  } finally {
+    externalFails = false;
+  }
+  expect((await index.list({})).connections).toMatchObject([
+    { id: "a1", state: "revoked", external: { team: "T1" } },
+    { id: "a2", state: "active", external: {} },
+  ]);
+});
+
+test("writes only when what the index shows changes", async () => {
+  const rows = memoryIndex();
+  const writes: string[] = [];
+  const { req } = await setup({ upsert: async (r) => (writes.push(`${r.id}:${r.state}`), rows.upsert(r)), list: (q) => rows.list(q) });
+  await req("POST", "/connections/keyed/a1/connect", { key: "k", team: "T1" });
+  await req("POST", "/connections/keyed/a1/token");
+  await req("GET", "/connections/keyed/a1");
+  // Re-auth with the same team: new record and metadata versions, the same row.
+  await req("POST", "/connections/keyed/a1/connect", { key: "k2", team: "T1" });
+  expect(writes).toEqual(["a1:active"]);
+  // A new team is a change; so is revoke. Forced syncs always write.
+  await req("POST", "/connections/keyed/a1/connect", { key: "k2", team: "T9" });
+  await req("POST", "/connections/keyed/a1/revoke");
+  await req("POST", "/connections/keyed/a1/index.sync");
+  expect(writes).toEqual(["a1:active", "a1:active", "a1:revoked", "a1:revoked"]);
+  expect((await rows.list({})).connections).toMatchObject([{ state: "revoked", external: { team: "T9" } }]);
+});
+
+test("an upsert that committed but threw doesn't let the next change be skipped", async () => {
+  const rows = memoryIndex();
+  let lose = false; // commit, then lose the response
+  const index: Index = {
+    upsert: async (r) => {
+      await rows.upsert(r);
+      if (lose) throw new Error("response lost");
+    },
+    list: (q) => rows.list(q),
+  };
+  // Stands in for a failed refresh: active -> reauth_required.
+  const reauth: Extension = {
+    connection: ({ bound }) => ({
+      methods: {
+        reauth: async () => (await bound.conn.update((s) => (s?.state === "active" ? { to: "reauth_required", credential: null, reason: "x" } : null)), null),
+      },
+    }),
+  };
+  const { req } = await setup(index, [reauth]);
+  await req("POST", "/connections/keyed/a1/connect", { key: "k", team: "T1" });
+  lose = true;
+  await req("POST", "/connections/keyed/a1/reauth");
+  lose = false;
+  expect((await rows.list({})).connections).toMatchObject([{ state: "reauth_required" }]);
+  // Back to what this instance last wrote successfully; D1 still shows reauth_required.
+  await req("POST", "/connections/keyed/a1/connect", { key: "k", team: "T1" });
+  expect((await req("GET", "/connections")).body.connections).toMatchObject([{ id: "a1", state: "active", reason: null }]);
 });
