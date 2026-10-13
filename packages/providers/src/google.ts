@@ -22,6 +22,8 @@ export const google = defineConnection({
     return { sub: claims.sub, email: claims.email ?? null };
   },
   external: (m) => ({ sub: m.sub }),
+  // ponytail: one host; APIs only on their own host (gmail.googleapis.com, sheets.googleapis.com) need a host-per-request proxy.
+  proxy: { baseUrl: "https://www.googleapis.com" },
   // Quotas are per API and per project; only follow what Google says.
   rate: { observe: (res, now) => rateHeaders(res, now) },
 });

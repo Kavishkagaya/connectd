@@ -35,6 +35,7 @@ packages/runtime/
   src/host.ts         the Program every connection instance runs: registry lookup, bind, methods, faults
   src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
+  src/proxy.ts        proxy() extension: /proxy/:def/:id/<path>, token + rate permits in one DO call
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
 ```
