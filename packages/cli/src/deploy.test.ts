@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "./cli.ts";
 import { deploy, type DeployOptions, NO_WRANGLER } from "./deploy.ts";
@@ -35,6 +36,7 @@ if (c1 === "secret" && c2 === "list") {
 else if (c1 === "d1" && c2 === "create") { a.dbs.push({ uuid: "db-" + a.dbs.length, name: argv[2] }); save(); console.log("Created"); }
 else if (c1 === "d1" && c2 === "migrations") console.log("Migrations applied");
 else if (c1 === "deploy") {
+  if (process.env.FAKE_SLEEP && argv.includes("--secrets-file")) await Bun.sleep(30000);
   const cfg = JSON.parse(readFileSync(opt("--config"), "utf8"));
   // Like wrangler without keep_vars: the config's vars replace the deployed ones; secrets are additive.
   a.workers[cfg.name] ??= { secrets: {} }; a.workers[cfg.name].vars = cfg.vars;
@@ -297,4 +299,23 @@ test("generated entry: the runtime the project resolves", async () => {
   const r = await s.run({ dryRun: true });
   // In this repo the project and the CLI resolve the same packages/runtime; the project's is asked first.
   expect(readFileSync(r.generated.entry, "utf8")).toMatch(/runtime\/src\/index\.ts"/);
+});
+
+test("a signal during wrangler deploy removes the secrets file, stops wrangler, exits non-zero", async () => {
+  const s = setup();
+  const tmp = mkdtempSync(join(TMP, "tmpdir-"));
+  const p = spawn(join(import.meta.dir, "bin.ts"), ["deploy", "--env-file", ".prod.vars"], {
+    cwd: s.dir,
+    env: { ...s.env, OPENCONNECT_WRANGLER: join(s.dir, "wrangler-fake"), FAKE_SLEEP: "1", TMPDIR: tmp },
+    stdio: "ignore",
+  });
+  const secrets = () => readdirSync(tmp).flatMap((d) => (existsSync(join(tmp, d, "secrets.json")) ? [d] : []));
+  for (let i = 0; !secrets().length; i++) {
+    if (i > 250) throw new Error("no secrets file appeared");
+    await Bun.sleep(20);
+  }
+  const code = new Promise((r) => p.on("exit", (c) => r(c)));
+  p.kill("SIGTERM");
+  expect(await code).toBe(143);
+  expect(readdirSync(tmp)).toEqual([]);
 });

@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve as resolvePath } from "node:path";
@@ -148,6 +148,15 @@ export async function deploy(o: DeployOptions) {
   // Secrets go up with the version (`--secrets-file`), so new code never runs without them. Wrangler
   // reads them from a file only: a 0600 file in a fresh temp dir, removed right after. Never argv.
   const tmp = mkdtempSync(join(tmpdir(), "openconnect-"));
+  let child: ChildProcess | undefined;
+  // A signal skips `finally`: remove the secrets first, stop wrangler, and exit non-zero.
+  const abort = (sig: NodeJS.Signals) => {
+    rmSync(tmp, { recursive: true, force: true });
+    child?.kill(sig);
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  };
+  process.once("SIGINT", abort);
+  process.once("SIGTERM", abort);
   let out: string;
   try {
     const args = ["deploy", "--config", g.wrangler];
@@ -155,13 +164,15 @@ export async function deploy(o: DeployOptions) {
       writeFileSync(join(tmp, "secrets.json"), JSON.stringify(push), { mode: 0o600 });
       args.push("--secrets-file", join(tmp, "secrets.json"));
     }
-    out = await w(args);
+    out = await wrangler(bin, args, o.dir, env, log, (p) => (child = p));
   } catch (e) {
     const hint = newApiKey
       ? `\nThe new API key was not shown. If the deploy went through anyway (wrangler secret list --name ${name} shows ${ENV.apiKey}), re-run with --rotate api-key to get one you can see.`
       : "";
     throw new Error(`${(e as Error).message}${hint}`);
   } finally {
+    process.off("SIGINT", abort);
+    process.off("SIGTERM", abort);
     rmSync(tmp, { recursive: true, force: true });
   }
   if (!url) {
@@ -190,9 +201,10 @@ export async function deploy(o: DeployOptions) {
 }
 
 /** Run wrangler; resolves to its stdout, rejects with stdout + stderr on a non-zero exit. Output is echoed except listings (it never holds a secret: those only go in through a file). */
-function wrangler(bin: string, args: string[], cwd: string, env: Env, log: (s: string) => void): Promise<string> {
+function wrangler(bin: string, args: string[], cwd: string, env: Env, log: (s: string) => void, spawned?: (p: ChildProcess) => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const p = spawn(bin, args, { cwd, env: env as NodeJS.ProcessEnv, stdio: ["ignore", "pipe", "pipe"] });
+    spawned?.(p);
     let out = "";
     let all = "";
     p.stdout?.on("data", (b: Buffer) => ((out += b.toString()), (all += b.toString())));
