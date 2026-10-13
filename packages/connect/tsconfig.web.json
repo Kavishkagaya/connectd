@@ -1,0 +1,7 @@
+{
+  // The browser package with only the web platform (DOM, no Bun or Node types): proves it runs in a browser as is.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": [], "lib": ["ES2022", "DOM", "DOM.Iterable"] },
+  "include": ["src/index.ts"],
+  "exclude": []
+}

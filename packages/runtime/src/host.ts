@@ -1,4 +1,4 @@
-import { bind, type Definition, InputError } from "@openconnect/connections";
+import { bind, type Definition, InputError, safeEqual } from "@openconnect/connections";
 import { type Driver, handleRate, IllegalTransition, type Json, type Keys, NotActive, OAuthError, type Program, RATE } from "@openconnect/kernel";
 
 /**
@@ -29,7 +29,35 @@ export type Settings = {
   events?: { url: string; secret: string };
   /** Public base URL of the `/webhooks` route, and the HMAC key each connection's webhook secret derives from (#25). */
   webhooks?: { url: string; key: CryptoKey };
+  /**
+   * Frontend connect sessions (#29): the HMAC key session tokens are signed with, and the exact
+   * origins (`https://app.example.com`) a browser may call from and be sent back to.
+   */
+  sessions?: { key: CryptoKey; origins: string[] };
 };
+
+/**
+ * Where a frontend session's authorization ends (#29): stored with the handshake, handed back by
+ * `callback`. `cookie` is set in the browser that started it and checked at the callback.
+ */
+export type Target = {
+  mode: "popup" | "redirect";
+  origin: string;
+  returnUrl?: string;
+  nonce: string;
+  cookie: { name: string; value: string };
+  definition: string;
+  id: string;
+};
+
+/** The callback route passes the request's Cookie header to `callback` under this key (never taken from the query). */
+export const COOKIES = "openconnect.cookies";
+
+const cookie = (header: string, name: string) =>
+  header
+    .split(";")
+    .map((c) => c.trim().split("="))
+    .find(([k]) => k === name)?.[1];
 
 export type Fault = { code: string; status: number; message: string; state?: string; reason?: string };
 /** Every connection method replies with this; error classes don't survive a DO RPC, so faults are data. */
@@ -93,8 +121,24 @@ async function status(b: Bound): Promise<Json> {
 const builtins = (b: Bound, hooks: Hooks[], instance: string): Record<string, Method> => ({
   connect: async (a) => ({ url: await b.connect(input(a)) }),
   callback: async (a) => {
-    await b.callback(input(a));
-    return status(b);
+    const { [COOKIES]: cookies = "", ...params } = input(a);
+    const hs = await b.handshake(params);
+    const target = hs.extra as Target | undefined;
+    if (!target) {
+      await b.callback(params, hs);
+      return status(b);
+    }
+    // A session's handshake finishes only in the browser that started it, so a victim can't be sent
+    // to the provider with someone else's flow (login CSRF). Errors go back to the target as data.
+    try {
+      if (!(await safeEqual(cookie(cookies, target.cookie.name) ?? "", target.cookie.value)))
+        throw new Fail("session_mismatch", 403, "this browser did not start the authorization");
+      await b.callback(params, hs);
+      const s = (await status(b)) as { state: string };
+      return { target, state: s.state };
+    } catch (e) {
+      return { target, error: fault(e, instance) } as unknown as Json;
+    }
   },
   token: async () => await b.token(),
   status: () => status(b),

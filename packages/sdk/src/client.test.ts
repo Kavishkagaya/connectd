@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { OpenConnectError, openconnect } from "./index.ts";
-import { API, setup } from "./testing.ts";
+import { API, setup, T0 } from "./testing.ts";
 
 const rejects = async (p: Promise<unknown>) => {
   try {
@@ -37,6 +37,15 @@ test("api key: connect finishes inline; call reaches extension methods", async (
   expect(await k.status()).toEqual({ state: "active", metadata: null });
   expect(await k.token()).toEqual({ kind: "static", fields: { key: "sk" } });
   expect(await k.call("index.sync")).toBeNull();
+});
+
+test("session: a browser token for one connection, from an allowlisted origin", async () => {
+  const t = await setup();
+  const s = await t.oc.connection("keyed", "k1").session({ origin: "https://app.test", ttlMs: 60_000 });
+  expect(s.expiresAt).toBe(T0 + 60_000);
+  const info = await t.rt.fetch(new Request("https://oc.test/session", { headers: { origin: "https://app.test", authorization: `Bearer ${s.token}` } }), t.w.call);
+  expect(await info.json()).toMatchObject({ definition: "keyed", id: "k1", flow: "form", fields: ["key"] });
+  expect(await rejects(t.oc.connection("keyed", "k1").session({ origin: "https://evil.test" }))).toMatchObject({ code: "forbidden", status: 403 });
 });
 
 test("errors are OpenConnectError with the runtime's code and status", async () => {

@@ -89,6 +89,7 @@ export function oauth2<C extends OAuth2Config>(spec: OAuth2Spec<C>): Auth<C> {
 
 /** Static credential from user input: API keys, basic auth. Check it against the provider in `metadata`. */
 export const apiKey = <C = unknown>(fields: string[]): Auth<C> => ({
+  fields,
   async start(_ctx, input) {
     const missing = fields.filter((f) => !input[f]);
     if (missing.length) throw new InputError(`missing ${missing.join(", ")}`);

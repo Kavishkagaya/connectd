@@ -1,5 +1,5 @@
 import type { Credential, Json, State } from "@openconnect/kernel";
-import type { Fault, Page, Query, Row } from "@openconnect/runtime";
+import type { Fault, Page, Query, Row, SessionArgs } from "@openconnect/runtime";
 import { events, type EventsOptions } from "./events.ts";
 
 // ponytail: depends on @openconnect/runtime only for types (erased) and signature.ts (no imports);
@@ -156,6 +156,12 @@ export function openconnect(o: Options) {
       /** A current credential, refreshed if due. Prefer `fetch`, which never hands the token out. */
       token: () => call<Credential>("token"),
       revoke: (reason?: string) => call<Status>("revoke", reason === undefined ? null : { reason }),
+      /**
+       * A short-lived token for the browser (#29, `@openconnect/connect`): it can start this
+       * connection's authorization from `origin` (or `returnUrl`'s), and nothing else. Both must be in
+       * the runtime's `settings.sessions.origins`; `returnUrl` is where a redirect-mode flow ends.
+       */
+      session: (o: SessionArgs) => call<{ token: string; expiresAt: number }>("session", o),
       /** Any other connection method (extensions': `index.sync`, `webhooks.endpoint`, ...). */
       call,
       fetch: proxied,
