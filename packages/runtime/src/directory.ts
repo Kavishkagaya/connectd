@@ -177,6 +177,10 @@ export function directory(index: Index): Extension {
         try {
           // ponytail: awaited inside the call, so D1 latency lands on the caller; move to waitUntil if it shows.
           await index.upsert({ def: def.id, id, ...row, updatedAt: d.now(), version });
+        } catch (e) {
+          // It may have committed with the response lost: what's stored is unknown, so the next sync writes.
+          written = null;
+          throw e;
         } finally {
           inflight--;
         }
