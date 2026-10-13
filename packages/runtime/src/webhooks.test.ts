@@ -320,3 +320,22 @@ test("auto-registration: an external hook that throws is an unknown account, not
   expect(fake.n).toBe(1);
   expect(fake.unregistered).toEqual([]);
 });
+
+test("webhooks.status: the registration and the ingress URL, never the secret", async () => {
+  const t = await setup();
+  fake.ttl = 7 * 86_400_000;
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  const armed = (await t.api("/connections/hooked/c1/webhooks.status")).body;
+  expect(armed).toEqual({ supported: true, registers: true, url: "https://oc.test/webhooks/hooked/c1", registration: null, pending: true });
+  await t.w.advance(0);
+  const s = (await t.api("/connections/hooked/c1/webhooks.status")).body;
+  expect(s).toEqual({
+    supported: true,
+    registers: true,
+    url: "https://oc.test/webhooks/hooked/c1",
+    registration: { hook: "h1", renewAt: T0 + fake.ttl - 3_600_000, account: JSON.stringify({ team: "T1" }) },
+    pending: false,
+  });
+  expect(JSON.stringify(s)).not.toContain((await t.secretOf("c1")).secret);
+  expect((await t.api("/connections/plain/p1/webhooks.status")).body).toEqual({ supported: false, registers: false, url: null, registration: null, pending: false });
+});

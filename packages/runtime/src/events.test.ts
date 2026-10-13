@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { apiKey, defineConnection } from "@openconnect/connections";
 import { type Driver, importHmacKey, importKeys, type Json, type Program } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
-import { type ConnectionEvent, directory, emit, events, type Extension, memoryIndex, proxy, runtime } from "./index.ts";
+import { type ConnectionEvent, directory, emit, events, type EventsStatus, type Extension, KEPT, memoryIndex, proxy, runtime } from "./index.ts";
 import { sign, verify } from "./signature.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -187,20 +187,20 @@ test("a 3xx is a failed delivery: retried, never followed", async () => {
   expect(t.types()).toEqual(["connection.active"]);
 });
 
-test("a large backlog: oldest dropped past 1000, the rest delivered in order, keys freed", async () => {
+test("a large backlog: oldest dropped past 1000, the rest delivered in order, keys freed past the KEPT newest", async () => {
   const t = await setup();
   t.set(503);
   await t.call("connect", { key: "sk" }); // seq 1
   await t.w.advance(0);
   for (let n = 0; n < 1200; n++) await t.call("hook", { n }); // seq 2..1201
-  expect(t.live.size).toBe(1000);
+  expect(t.live.size).toBe(1000 + KEPT); // the dropped ones are done: the newest KEPT of them stay
   t.set(200);
   await t.w.advance(3_600_000);
   const seqs = t.bodies().map((e) => e.seq);
   expect(seqs.length).toBe(1000);
   expect(seqs).toEqual(Array.from({ length: 1000 }, (_, i) => 202 + i));
   expect(t.bodies()[0]!.data as unknown).toEqual({ n: 200 });
-  expect(t.live.size).toBe(0);
+  expect([...t.live].sort()).toEqual(Array.from({ length: KEPT }, (_, i) => `events.e:${1202 - KEPT + i}`).sort());
 });
 
 test("large payloads: each event is its own stored value, so a backlog past 2 MB still drains", async () => {
@@ -216,7 +216,7 @@ test("large payloads: each event is its own stored value, so a backlog past 2 MB
     "connection.active",
     ...Array.from({ length: 20 }, (_, i) => i),
   ]);
-  expect(t.live.size).toBe(0);
+  expect(t.live.size).toBe(KEPT);
 });
 
 test("after() skips the outbox when no state changed: one record read, no decrypt", async () => {
@@ -261,5 +261,79 @@ test("alongside proxy() and directory(): proxied calls send nothing, state chang
   await w.advance(0);
   expect(sent).toEqual(["connection.active", "connection.revoked"]);
   expect((await index.list({})).connections.map((r) => [r.id, r.state])).toEqual([["k1", "revoked"]]);
-  expect(c.live.size).toBe(0);
+  expect(c.live.size).toBe(2); // kept for the dashboard (events.status, events.redeliver)
+});
+
+test("events.status: pending, the parked head's attempt, retry time and error; recent done events", async () => {
+  const t = await setup();
+  const status = async () => ((await t.call("events.status")) as { ok: EventsStatus }).ok;
+  expect(await status()).toEqual({ enabled: true, pending: 0, attempt: 0, retryAt: null, error: null, queued: [], recent: [] });
+  t.set(500);
+  await t.call("connect", { key: "sk" });
+  await t.call("hook", { topic: "push", delivery: "d1", payload: { secret: "not shown" } });
+  await t.w.advance(0);
+  const parked = await status();
+  expect(parked).toMatchObject({ pending: 2, attempt: 1, error: "HTTP 500", recent: [] });
+  expect(parked.retryAt).toBeGreaterThan(t.w.now());
+  expect(parked.queued).toEqual([
+    { slot: 1, id: "conn:keyed:k1:1", seq: 1, type: "connection.active", at: t.w.now(), data: { from: null, to: "active" } },
+    // Webhook payloads aren't listed: topic and delivery only.
+    { slot: 2, id: "conn:keyed:k1:2", seq: 2, type: "webhook", at: t.w.now(), data: { topic: "push", delivery: "d1" } },
+  ]);
+  t.set(200, true);
+  await t.w.advance(parked.retryAt! - t.w.now());
+  expect((await status()).error).toBe("timeout");
+
+  // Flush: delivered now, not at the next backoff; the error clears.
+  t.set(200);
+  const flushed = ((await t.call("events.flush")) as { ok: EventsStatus }).ok;
+  expect(flushed.retryAt).toBeNull();
+  await t.w.advance(0);
+  expect(t.types()).toEqual(["connection.active", "webhook"]);
+  const done = await status();
+  expect(done).toMatchObject({ pending: 0, attempt: 0, retryAt: null, error: null, queued: [] });
+  expect(done.recent.map((e) => e.slot)).toEqual([2, 1]);
+});
+
+test("events.redeliver: a done event goes out again with the same id and body, after what's queued", async () => {
+  const t = await setup();
+  await t.call("connect", { key: "sk" });
+  await t.w.advance(0);
+  const [first] = t.delivered();
+  expect(await t.call("events.redeliver", { slot: 1 })).toEqual({ ok: { slot: 2 } });
+  await t.w.advance(0);
+  const again = t.delivered()[1]!;
+  expect(again.body).toBe(first!.body);
+  expect(again.headers.get("webhook-id")).toBe("conn:keyed:k1:1");
+  expect(await verify(SECRET, again.headers, again.body, { now: t.w.now() })).toBe(true);
+  // The copy is listed in its own slot, with the original's id.
+  const s = ((await t.call("events.status")) as { ok: EventsStatus }).ok;
+  expect(s.recent.map((e) => [e.slot, e.id])).toEqual([
+    [2, "conn:keyed:k1:1"],
+    [1, "conn:keyed:k1:1"],
+  ]);
+
+  // Not yet delivered, not kept, not a slot, or events off.
+  t.set(500);
+  await t.call("revoke");
+  expect(await t.call("events.redeliver", { slot: 3 })).toMatchObject({ error: { code: "pending", status: 409 } });
+  expect(await t.call("events.redeliver", { slot: 0 })).toMatchObject({ error: { code: "not_found", status: 404 } });
+  expect(await t.call("events.redeliver", { slot: "1" })).toMatchObject({ error: { code: "bad_request" } });
+  const off = await setup({ configured: false });
+  expect(await off.call("events.redeliver", { slot: 1 })).toMatchObject({ error: { code: "not_configured", status: 503 } });
+  expect(await off.call("events.flush")).toMatchObject({ error: { code: "not_configured" } });
+  expect(await off.call("events.status")).toMatchObject({ ok: { enabled: false, pending: 0 } });
+});
+
+test("only the KEPT newest done events stay redeliverable", async () => {
+  const t = await setup();
+  await t.call("connect", { key: "sk" });
+  for (let n = 0; n < KEPT + 5; n++) await t.call("hook", { n });
+  await t.w.advance(0);
+  const s = ((await t.call("events.status")) as { ok: EventsStatus }).ok;
+  expect(s.recent.length).toBe(KEPT);
+  expect(s.recent[0]!.slot).toBe(KEPT + 6);
+  expect(t.live.size).toBe(KEPT);
+  expect(await t.call("events.redeliver", { slot: 6 })).toMatchObject({ error: { code: "not_found" } });
+  expect(await t.call("events.redeliver", { slot: 7 })).toEqual({ ok: { slot: KEPT + 7 } });
 });

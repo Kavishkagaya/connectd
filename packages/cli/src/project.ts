@@ -1,3 +1,4 @@
+import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
 import {
@@ -32,8 +33,10 @@ export type Project = {
   events?: { url: string };
   /** Exact origins the frontend connect UI runs on (#29). */
   sessions?: { origins: string[] };
-  /** Extra extensions, after the built-in ones (proxy, events, webhooks, sessions, index). */
+  /** Extra extensions, after the built-in ones (proxy, events, webhooks, sessions, index, dashboard). */
   extensions?: Extension[];
+  /** The dashboard at `/dashboard` (#32), signed in with the API key. Default true; false leaves it out. */
+  dashboard?: boolean;
   /**
    * `openconnect deploy` (#31): the Worker's name (default: the project directory's), and its public
    * URL when it isn't the workers.dev one (a custom domain, served at its root). Flags override both.
@@ -93,7 +96,8 @@ export async function settings(p: Project, env: Env): Promise<Settings> {
 
 /**
  * Everything `runtime()` takes, for a config and an environment. The index is the host's: memory in
- * dev, D1 deployed (`d1Index`). Each built-in extension is a no-op until its settings are set.
+ * dev, D1 deployed (`d1Index`). Each built-in extension is a no-op until its settings are set; the
+ * dashboard is on unless `dashboard: false`.
  */
 export function options(config: Config, env: Env, index: Index): RuntimeOptions & { project: Project } {
   const project = resolve(config, env);
@@ -102,6 +106,6 @@ export function options(config: Config, env: Env, index: Index): RuntimeOptions 
     project,
     definitions: project.registry,
     settings: () => (loaded ??= settings(project, env)),
-    extensions: [proxy(), events(), webhooks(), sessions(), directory(index), ...(project.extensions ?? [])],
+    extensions: [proxy(), events(), webhooks(), sessions(), directory(index), ...(project.dashboard === false ? [] : [dashboard()]), ...(project.extensions ?? [])],
   };
 }

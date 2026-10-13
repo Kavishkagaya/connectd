@@ -1,5 +1,5 @@
 import { backoff, type Driver, type Json, type State } from "@openconnect/kernel";
-import type { Hosted } from "./host.ts";
+import { Fail, type Hosted } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 import { sign } from "./signature.ts";
 import type { WebhookData } from "./webhooks.ts";
@@ -21,14 +21,23 @@ export type WebhookEvent = Base & { type: "webhook"; data: WebhookData };
 /** The POST body. `id` = `<instance>:<seq>`, the same on every retry: dedupe on it. */
 export type ConnectionEvent = LifecycleEvent | WebhookEvent;
 
-/** `seq` = last event written, `done` = last delivered or dropped, `kseq` = last kernel event copied in, `retryAt` set while parked. */
-type Head = { seq: number; done: number; kseq: number; attempt: number; retryAt: number | null };
-type New = { type: ConnectionEvent["type"]; at: number; data: Json };
+/**
+ * `seq` = last event written, `done` = last delivered or dropped, `kseq` = last kernel event copied in,
+ * `retryAt` set while parked, `error` = why the head's last attempt failed (cleared by a 2xx).
+ */
+type Head = { seq: number; done: number; kseq: number; attempt: number; retryAt: number | null; error?: string | null };
+/** A new event, or (redelivery) a stored one copied as is: it keeps its own `id` and `seq`, so the body is the same. */
+type New = { type: ConnectionEvent["type"]; at: number; data: Json; id?: string; seq?: number };
 
 const HEAD = "events.head";
 const TIMER = "events.retry";
 const ekey = (seq: number) => `events.e:${seq}`;
 const MAX = 1000;
+/** Done events (delivered, or dropped past MAX) kept for the dashboard and `events.redeliver`: the newest KEPT. */
+// ponytail: a count, not bytes (20 webhook payloads of up to 1 MB each); a dropped event in the window isn't marked dropped. Bound by size if storage bites.
+export const KEPT = 20;
+/** Queued events `events.status` lists, head first. */
+const QUEUED = 20;
 const TIMEOUT_MS = 10_000;
 const BACKOFF = { baseMs: 10_000, maxMs: 3_600_000 };
 
@@ -64,7 +73,7 @@ async function append(h: Hosted, add: (head: Head) => { items: New[]; kseq: numb
   for (const [i, e] of a.items.entries()) {
     const s = head.seq + i + 1;
     // One event must fit one stored value (2 MB on DOs); webhooks.ts drops payloads past MAX_PAYLOAD.
-    await d.store.put(ekey(s), { ...e, seq: s, id: `${h.instance}:${s}`, connection: { definition: h.def.id, id: h.id } } as unknown as Json);
+    await d.store.put(ekey(s), { seq: s, id: `${h.instance}:${s}`, ...e, connection: { definition: h.def.id, id: h.id } } as unknown as Json);
   }
   const seq = head.seq + a.items.length;
   const r = await change(d, (cur) => {
@@ -72,9 +81,17 @@ async function append(h: Hosted, add: (head: Head) => { items: New[]; kseq: numb
     if (cur.seq !== head.seq) throw new Error("events: concurrent append");
     return { ...cur, seq, kseq: a.kseq, done: Math.max(cur.done, seq - MAX) };
   });
-  // Dropped past MAX: free their keys. A crash here leaves garbage below `done`, never read again.
-  for (let s = r.was.done + 1; s <= r.now.done; s++) await d.store.delete(ekey(s));
+  // Dropped past MAX: they're done now, and those past the KEPT newest done are freed.
+  await retire(d, r.was.done, r.now.done);
   return r.now;
+}
+
+/**
+ * `done` moved from `from` to `to`: free the keys that fell out of the KEPT newest done events.
+ * A crash here leaves garbage below `done - KEPT`, never read again.
+ */
+async function retire(d: Driver, from: number, to: number) {
+  for (let s = Math.max(0, from - KEPT) + 1; s <= to - KEPT; s++) await d.store.delete(ekey(s));
 }
 
 /** Copy new kernel transitions in, then ack them in the kernel. `kseq` commits with the head, so a crash anywhere repeats nothing and skips nothing. */
@@ -110,7 +127,8 @@ export async function emit(h: Hosted, data: Json) {
   await arm(h.d);
 }
 
-async function post(h: Hosted, cfg: { url: string; secret: string }, e: ConnectionEvent) {
+/** null on a 2xx, else why it failed (for the dashboard: no URL, header or body in it). */
+async function post(h: Hosted, cfg: { url: string; secret: string }, e: ConnectionEvent): Promise<string | null> {
   const body = JSON.stringify(e);
   const ts = Math.floor(h.d.now() / 1000);
   try {
@@ -122,10 +140,10 @@ async function post(h: Hosted, cfg: { url: string; secret: string }, e: Connecti
       redirect: "manual",
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
-    return res.status >= 200 && res.status < 300;
+    return res.status >= 200 && res.status < 300 ? null : `HTTP ${res.status}`;
   } catch (err) {
     console.error("event delivery failed", e.id, String(err));
-    return false;
+    return err instanceof Error && err.name === "TimeoutError" ? "timeout" : `network error: ${err instanceof Error ? err.message : String(err)}`;
   }
 }
 
@@ -142,18 +160,77 @@ async function drain(h: Hosted, cfg: { url: string; secret: string }) {
     const e = r?.value as unknown as ConnectionEvent | undefined;
     // Missing only if an append dropped it past MAX since we read the head; re-read.
     if (!e) continue;
-    if (await post(h, cfg, e)) {
-      await change(d, (cur) => ({ ...cur, done: Math.max(cur.done, next), attempt: 0, retryAt: null }));
-      await d.store.delete(ekey(next));
+    const error = await post(h, cfg, e);
+    if (error === null) {
+      const r = await change(d, (cur) => ({ ...cur, done: Math.max(cur.done, next), attempt: 0, retryAt: null, error: null }));
+      await retire(d, r.was.done, r.now.done);
       continue;
     }
-    // ponytail: retries forever at up to 1h apart; no dead-letter or replay API until the dashboard (L4).
+    // ponytail: retries forever at up to 1h apart; no dead-letter. The dashboard shows the parked head and can flush it (#32).
     const at = d.now() + backoff(head.attempt, BACKOFF);
-    await change(d, (cur) => ({ ...cur, attempt: cur.attempt + 1, retryAt: at }));
+    await change(d, (cur) => ({ ...cur, attempt: cur.attempt + 1, retryAt: at, error }));
     // Not atomic with the cas: if this is lost, the instance's next first after() arms from `retryAt`.
     return d.timer.set(TIMER, at);
   }
 }
+
+/** One event as `events.status` lists it: no webhook payload, only what names it. */
+export type EventSummary = {
+  /** Its place in this outbox; what `events.redeliver` takes. A redelivered copy has a new slot, and the original's `id` and `seq`. */
+  slot: number;
+  id: string;
+  seq: number;
+  type: ConnectionEvent["type"];
+  at: number;
+  /** Lifecycle: `{ from, to, reason? }`. Webhook: `{ topic, delivery, truncated? }`. */
+  data: Json;
+};
+
+/** `events.status`: the outbox of one connection, for the dashboard (#32). */
+export type EventsStatus = {
+  /** `settings.events` is set. */
+  enabled: boolean;
+  /** Events waiting, head first; the head is the one in flight or parked. */
+  pending: number;
+  attempt: number;
+  /** When a parked head is tried again; null while not parked. */
+  retryAt: number | null;
+  /** Why the head's last attempt failed: `HTTP 500`, `timeout`, `network error: ...`. */
+  error: string | null;
+  /** The first QUEUED pending events, head first. */
+  queued: EventSummary[];
+  /** The KEPT newest done events (delivered, or dropped past the 1000 cap), newest first. */
+  recent: EventSummary[];
+};
+
+function summary(slot: number, e: ConnectionEvent): EventSummary {
+  const d = e.type === "webhook" ? { topic: e.data.topic, delivery: e.data.delivery, ...(e.data.truncated ? { truncated: e.data.truncated } : {}) } : e.data;
+  return { slot, id: e.id, seq: e.seq, type: e.type, at: e.at, data: d as Json };
+}
+
+async function status(h: Hosted): Promise<EventsStatus> {
+  const { d } = h;
+  const { now: head } = await change(d, () => null);
+  const read = async (from: number, to: number) => {
+    const out: EventSummary[] = [];
+    for (let s = from; s <= to; s++) {
+      const e = (await d.store.get(ekey(s)))?.value as unknown as ConnectionEvent | undefined;
+      if (e) out.push(summary(s, e));
+    }
+    return out;
+  };
+  return {
+    enabled: !!h.settings.events,
+    pending: head.seq - head.done,
+    attempt: head.attempt,
+    retryAt: head.retryAt,
+    error: head.error ?? null,
+    queued: await read(head.done + 1, Math.min(head.seq, head.done + QUEUED)),
+    recent: (await read(Math.max(1, head.done - KEPT + 1), head.done)).reverse(),
+  };
+}
+
+const off = () => new Fail("not_configured", 503, "settings.events is not set");
 
 /**
  * Delivers `ConnectionEvent`s to `settings.events.url`; without `settings.events`, does nothing.
@@ -166,6 +243,36 @@ export function events(): Extension {
       // Kernel event seq last copied, this isolate. -1: copy and arm once after a restart (covers a lost timer).
       let seen = -1;
       return {
+        methods: {
+          "events.status": async () => (await status(h)) as unknown as Json,
+          /** Skip a parked head's backoff: the drain runs now, from the timer (one delivery in flight, in order). */
+          "events.flush": async () => {
+            if (!h.settings.events) throw off();
+            await change(h.d, (cur) => (cur.retryAt === null ? null : { ...cur, retryAt: null }));
+            await arm(h.d);
+            return (await status(h)) as unknown as Json;
+          },
+          /**
+           * Send a done event again (`{ slot }`, one of `recent`): a copy goes to the back of the outbox,
+           * the same body and `webhook-id`, as an at-least-once duplicate would. A receiver deduping on
+           * `webhook-id` skips it; clear the id there to have it processed again.
+           */
+          "events.redeliver": async (a) => {
+            if (!h.settings.events) throw off();
+            const slot = (a as { slot?: Json } | null)?.slot;
+            if (typeof slot !== "number" || !Number.isInteger(slot)) throw new Fail("bad_request", 400, "slot must be an integer");
+            const head = await locked(h.d, async () => {
+              const { now: cur } = await change(h.d, () => null);
+              if (slot > cur.done) throw new Fail("pending", 409, "that event hasn't been delivered yet");
+              const e = slot > cur.done - KEPT ? ((await h.d.store.get(ekey(slot)))?.value as unknown as ConnectionEvent | undefined) : undefined;
+              if (!e) throw new Fail("not_found", 404, `only the ${KEPT} newest done events are kept`);
+              const { connection: _, ...copy } = e;
+              return append(h, (cur) => ({ items: [copy as unknown as New], kseq: cur.kseq }));
+            });
+            await arm(h.d);
+            return { slot: head.seq };
+          },
+        },
         async onTimer(name) {
           if (name !== TIMER) return false;
           if (h.settings.events) {

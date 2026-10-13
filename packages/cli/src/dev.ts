@@ -220,6 +220,7 @@ export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" |
     rows.push(["webhooks", `${pub}/webhooks/:def[/:id]`]);
     rows.push(["events", l.project.events ? `${l.project.events.url}   (verify with ${ENV.events} from .openconnect/dev.vars)` : "off (set events: { url } in the config)"]);
     rows.push(["sessions", l.project.sessions ? l.project.sessions.origins.join(", ") || "no origins" : "off (set sessions: { origins } in the config)"]);
+    rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (sign in with the API key)`]);
     rows.push(["definitions", l.project.definitions.map((x) => x.id).join(", ") || "none"]);
     if (l.unconfigured.length) rows.push(["no config", `${l.unconfigured.join(", ")}   (answer not_configured until config: { <id>: ... } is set)`]);
   }

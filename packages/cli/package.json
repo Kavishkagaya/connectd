@@ -12,6 +12,9 @@
   "scripts": {
     "test": "bun test src && vitest run"
   },
+  "dependencies": {
+    "@openconnect/dashboard": "workspace:*"
+  },
   "devDependencies": {
     "@openconnect/connections": "workspace:*",
     "@openconnect/kernel": "workspace:*",

@@ -193,6 +193,7 @@ export async function deploy(o: DeployOptions) {
       `  URL           ${url}`,
       `  callback URL  ${url}/callback   (register this redirect URI with each OAuth provider)`,
       `  webhooks      ${url}/webhooks/:def[/:id]`,
+      ...(project.dashboard === false ? [] : [`  dashboard     ${url}/dashboard   (sign in with the API key)`]),
       `  secrets set   ${Object.keys(push).sort().join(", ") || "none (all present)"}`,
       ...(newApiKey ? [`  API key       ${newApiKey}`, "                shown once: store it now (your app's OPENCONNECT_API_KEY). It can't be read back; --rotate api-key makes a new one."] : []),
     ].join("\n"),

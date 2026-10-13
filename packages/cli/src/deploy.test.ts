@@ -128,6 +128,7 @@ test("first deploy: D1 created, migrations, deploy with the secrets, again for t
     else expect(out).not.toContain(v);
   }
   expect(r.apiKey).toBe(w.secrets.OPENCONNECT_API_KEY!);
+  expect(out).toContain(`${r.url}/dashboard`);
 
   const cfg = JSON.parse(readFileSync(r.generated.wrangler, "utf8"));
   expect(cfg).toMatchObject({

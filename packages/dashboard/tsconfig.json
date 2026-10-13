@@ -1,0 +1,7 @@
+{
+  // Tests (bun:test, a fake DOM), the build script and the e2e script see Bun and DOM types; the root pass skips this package.
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "lib": ["ES2022", "DOM", "DOM.Iterable"] },
+  "include": ["src", "e2e", "build.ts"],
+  "exclude": []
+}
