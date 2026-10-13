@@ -6,7 +6,7 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
 
 ```
  L4  DevX        SDK · CLI · dashboard                         (not started)
- L3  Runtime     proxy · webhook ingress · event delivery      (not started)
+ L3  Runtime     ConnectionDO · proxy · webhooks · events      (in progress)
  L2  Connections defineConnection(), providers                 (in progress)
  L1  Kernel      connection · tokens · rate · secrets · schedule · oauth   (done)
  L0  Drivers     Durable Objects · in-memory · server (deferred)           (done)
@@ -30,14 +30,20 @@ packages/connections/
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
 packages/providers/   one defineConnection per provider (github, slack, google); tests against fakes
+
+packages/runtime/
+  src/host.ts         the Program every connection instance runs: registry lookup, bind, methods, faults
+  src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
+  src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
+  src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
 ```
 
-Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`.
+Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`.
 
 ## Commands
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
-- `bun run typecheck`: root tsc, plus a Workers-types pass for `drivers/do.ts` and `test/`
+- `bun run typecheck`: root tsc, plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`
 - One kernel file: `cd packages/kernel && bun test src/primitives/rate.test.ts`
 
 ## Patterns

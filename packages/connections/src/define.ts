@@ -5,6 +5,7 @@ import {
   type Json,
   type Keys,
   type Limit,
+  NotActive,
   type OAuth2,
   type Observed,
   type TokenResponse,
@@ -55,6 +56,9 @@ export function rateHeaders(res: Response, now: number, names?: { remaining: str
   return o;
 }
 
+/** Bad input from the caller (missing fields, unknown state), as opposed to a provider or definition failure. */
+export class InputError extends Error {}
+
 export const defineConnection = <C, M extends Json = null>(def: Definition<C, M>) => def;
 
 export type BindOptions<C> = Omit<Ctx<C>, "now"> & { keys: Keys; stateKey: CryptoKey };
@@ -82,7 +86,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
     /** Begin an authorization (first connect or re-auth). The URL to send the user to, or null if it finished inline. */
     async connect(input: Record<string, string> = {}): Promise<string | null> {
       const s = await conn.read();
-      if (s?.state === "revoked") throw new Error("connection is revoked; reconnect with a new one");
+      if (s?.state === "revoked") throw new NotActive("revoked", s.reason);
       const step = await def.auth.start(ctx, input);
       if ("credential" in step) {
         await finish(step.credential);
@@ -96,7 +100,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
     /** The provider redirected back. `params` is the callback query, `state` included. */
     async callback(params: Record<string, string>) {
       const hs = (await conn.handshake.take(params.state ?? "")) as { data: Json } | null;
-      if (!hs) throw new Error("unknown or expired state");
+      if (!hs) throw new InputError("unknown or expired state");
       if (!def.auth.callback) throw new Error(`${def.id}: no callback step`);
       await finish(await def.auth.callback(ctx, params, hs.data));
     },
