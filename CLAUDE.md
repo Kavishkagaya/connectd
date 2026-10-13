@@ -54,15 +54,25 @@ packages/connect/     browser package (#29), zero dependencies, DOM only (tsconf
   src/ui.ts           mount(el, opts): prebuilt button, or a form for API-key definitions; returns unmount
   src/fake.ts         fake window/DOM in front of the real runtime, for the tests
   e2e/chromium.ts     one real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
+
+packages/cli/         `openconnect` bin (#30, Bun only); `@openconnect/cli` exports project.ts
+  src/project.ts      the project shape: defineConfig, Project, ENV names, generateKeys, settings(), options() = runtime() input from config + env + index. Workers-safe: deploy (#31) reuses it
+  src/env.ts          .env / .dev.vars parsing; dev keys generated once into .openconnect/dev.vars (dir gitignores itself)
+  src/dev.ts          `openconnect dev`: memory driver on a real clock behind Bun.serve, snapshot in .openconnect/state.json, config bundled with Bun.build and swapped in place on save
+  src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
+  src/cli.ts, args.ts commands (dev, help, deploy slot) and a declared-flags parser; src/bin.ts the entry
+
+examples/basic/       a user project (workspace): openconnect.config.ts with the providers and one local definition
 ```
 
-Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`.
+Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`.
 
 ## Commands
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
-- `bun run typecheck`: root tsc, plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect`
+- `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts` and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect`
 - One kernel file: `cd packages/kernel && bun test src/primitives/rate.test.ts`
+- Dev server on the example: `cd examples/basic && bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `openconnect --help`)
 
 ## Patterns
 
@@ -71,7 +81,7 @@ Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runt
 - **Program composition:** a `Program` is `(driver, instance) => { onCall, onTimer }`. Primitives expose handlers to route into: `connection().onTimer`, `handleRate` for the `RATE` method. Create primitives once per Program instance (single-flight is in memory).
 - **Cross-instance:** a scope (app, workspace) is just another instance key reached with `d.call`. Args and results must be `Json`.
 - **Durability:** state and its events change in one `cas` (connection record holds state + sealed credential + event outbox). Timers aren't atomic with `cas`; there's always an on-demand fallback.
-- **Time:** always `d.now()`, never `Date.now()`, so the fake clock works. Memory `advance(ms)` jumps once; step it to drive retries.
+- **Time:** always `d.now()`, never `Date.now()`, so the fake clock works. Memory `advance(ms)` jumps once; step it to drive retries. `memory(p, { clock: Date.now })` is the real-clock mode (dev): timers fire on their own, `advance` still skews; `dump()`/`snapshot` restore state.
 - **Secrets:** AES-GCM with a key-version byte; values sealed under old keys are re-sealed on read.
 - **Tests:** primitives are tested on the memory driver with `bun:test`. Drivers prove equivalence through `parity.ts` (memory under bun, DO under vitest in workerd). New driver behaviour goes into parity, not one driver's tests.
 - **Style:** small, minimal code; no abstraction without a second use. Deliberate shortcuts carry a `// ponytail:` comment naming the ceiling and the upgrade path. Strict TS with `noUncheckedIndexedAccess`; `.ts` extensions in imports.

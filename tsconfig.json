@@ -17,7 +17,8 @@
     "noEmit": true
   },
   "include": [
-    "packages/*/src"
+    "packages/*/src",
+    "examples/*/*.ts"
   ],
   "exclude": [
     "packages/kernel/src/drivers/do.ts",

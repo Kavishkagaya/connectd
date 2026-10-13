@@ -1,0 +1,10 @@
+# Copy to .dev.vars (gitignored). openconnect dev reads it, and so does wrangler.
+GITHUB_CLIENT_ID=
+GITHUB_CLIENT_SECRET=
+SLACK_CLIENT_ID=
+SLACK_CLIENT_SECRET=
+SLACK_SIGNING_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+EVENTS_URL=http://localhost:3000/api/openconnect
+APP_ORIGIN=http://localhost:3000

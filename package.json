@@ -2,7 +2,8 @@
   "name": "openconnect",
   "private": true,
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "examples/*"
   ],
   "scripts": {
     "test": "bun run --filter '*' test",

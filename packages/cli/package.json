@@ -1,0 +1,23 @@
+{
+  "name": "@openconnect/cli",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "bin": {
+    "openconnect": "./src/bin.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "@openconnect/connections": "workspace:*",
+    "@openconnect/kernel": "workspace:*",
+    "@openconnect/runtime": "workspace:*"
+  },
+  "devDependencies": {
+    "@openconnect/sdk": "workspace:*"
+  }
+}
