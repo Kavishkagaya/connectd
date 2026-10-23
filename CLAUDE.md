@@ -22,7 +22,10 @@ packages/kernel/
   src/driver.ts       L0 contract: Json, Driver, Handler, Program
   src/drivers/        memory.ts, do.ts, parity.ts (shared driver suite)
   src/primitives/     connection, oauth, rate, schedule, secrets; tests next to each
-  test/               DO driver tests in workerd (vitest)
+  src/v2/             kernel v2 (#53), mechanism only, next to the primitives until the runtime moves over:
+                      kernel.ts (kernel(): name claims, seal, serve), cell.ts (+ outbox, `loop`), sync.ts (flight, mutex),
+                      timer.ts, queue.ts, ticket.ts, limiter.ts; testkit.ts (memory-driver harness for the tests)
+  test/               DO driver tests in workerd (vitest); v2.ts + v2.test.ts run kernel v2 on the DO driver
 
 packages/connections/
   src/define.ts       defineConnection, Definition (incl. webhooks: verify/parse/register), hmacHex/safeEqual, bind (runs a definition on one instance)
@@ -78,7 +81,7 @@ packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli`
 examples/basic/       a user project (workspace): openconnect.config.ts with the providers and one local definition
 ```
 
-Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.
+Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`, `/v2`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.
 
 ## Commands
 
@@ -93,6 +96,7 @@ Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runt
 
 - **Driver = infrastructure only, per instance**: `store` (get/put/cas/take/delete, optional TTL), named durable `timer`s, `call` to another instance, `now()`. Everything else is kernel code on top.
 - **Concurrency:** handlers interleave at every await (like DOs); the memory driver doesn't serialize either, on purpose. Anything that races goes through `cas` (versioned, no ABA) or `take` (single consumer). Use read-decide-cas loops (`update` in connection.ts and rate.ts).
+- **Kernel v2 (#53):** new code uses `@openconnect/kernel/v2`: `const k = kernel(driver, { instance, keys, stateKey })` once per Program call, every tool declared once as a typed handle (stored names: letters, digits, `_ . -`), `k.serve(methods)` as the Handler. Mechanism only: nothing about connections, tokens or providers goes in it.
 - **Program composition:** a `Program` is `(driver, instance) => { onCall, onTimer }`. Primitives expose handlers to route into: `connection().onTimer`, `handleRate` for the `RATE` method. Create primitives once per Program instance (single-flight is in memory).
 - **Cross-instance:** a scope (app, workspace) is just another instance key reached with `d.call`. Args and results must be `Json`.
 - **Durability:** state and its events change in one `cas` (connection record holds state + sealed credential + event outbox). Timers aren't atomic with `cas`; there's always an on-demand fallback.
