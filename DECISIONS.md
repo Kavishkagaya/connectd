@@ -648,6 +648,13 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
 - The two Bun APIs the CLI used are gone. The config is bundled with esbuild (a dependency of `@connectd/cli`) into `.connectd/build/config-N.mjs`: `.mjs`, so a CommonJS project imports it as a module, with packages still external (one copy). `connectd dev` serves on node:http, which Bun has too, with each `Set-Cookie` kept separate.
 - Declarations needed two names: `Built` is exported from `@connectd/connections` (the providers' types name it), and `durableObject()` returns a named `ProgramDO` type (its base class has protected members, which an anonymous class can't emit). Its timer runner is a private field (`#fire`).
 - Hints name `npm i -D` instead of `bun add -d`.
+- After review (what Node does differently from Bun):
+  - The dev server streams responses (the proxy streams the provider's: SSE, downloads) and keeps `statusText`.
+  - Hop-by-hop request headers (`connection`, `keep-alive`, `transfer-encoding`, `te`, `upgrade`) are dropped by the dev adapter, and by the proxy before it forwards. Node's fetch refuses a request that carries `transfer-encoding`, so a chunked upload through the proxy was a 502.
+  - The watcher is armed again after each change. On Linux, Node's recursive `fs.watch` loses a file that an editor saved by renaming a new one over it (vim, `sed -i`), and then never reports it again.
+  - `importAesKey` and `importHmacKey` return `Promise<CryptoKey>`, so the declarations don't name `node:crypto`. The dashboard declares the kernel as a peer dependency, since its types import it.
+  - A test runs the adapter (streaming, a chunked upload, each `Set-Cookie`, HEAD), on Bun's node:http. The same checks were run by hand on Node against the packed CLI, through the proxy to a local upstream, along with three rename-saves that each reloaded.
+  - ponytail: the declarations of `@connectd/kernel/do` and `@connectd/runtime/cloudflare` need `@cloudflare/workers-types`, which a Worker project has anyway; no package declares it.
 - Checked by hand on Node 22 with no Bun on the PATH, in a project made from examples/basic that installs the tarballs: `--help`, `types`, `dev` (API, dashboard, reload on save and on a new folder), `add` and `diff`, `deploy --dry-run`, then `wrangler deploy --dry-run` bundling the generated Worker from the packed JavaScript, and a strict tsc of an app's `lib/oc.ts` against the packed declarations (an unknown connection id is a type error). ponytail: no automated test for the pack (it runs tsc three times); a CI job that packs and runs that check once there is CI.
 - ponytail: tarballs only; `npm publish` of each package, in dependency order, comes with the first release.
 

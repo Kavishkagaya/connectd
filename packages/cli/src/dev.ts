@@ -1,5 +1,7 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import type { AddressInfo } from "node:net";
 import { join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@connectd/kernel";
@@ -68,22 +70,30 @@ export function swappable() {
  * A `(Request) => Response` handler on node:http (Node and Bun both have it), on localhost. `port` 0
  * picks a free one.
  */
-async function serve(port: number, handle: (req: Request) => Promise<Response>) {
+const HOP = ["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-connection"];
+
+export async function serve(port: number, handle: (req: Request) => Promise<Response>) {
   const run = async (req: IncomingMessage, res: ServerResponse) => {
     const chunks: Uint8Array[] = [];
     for await (const c of req) chunks.push(c as Uint8Array);
     const headers = new Headers();
-    for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+    // Hop-by-hop headers describe the connection to this server, not the request (Node's fetch refuses some).
+    for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && !HOP.includes(k)) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
     const method = req.method ?? "GET";
     const body = method === "GET" || method === "HEAD" ? undefined : Buffer.concat(chunks);
-    // The URL as the browser asked for it (the dashboard and sessions compare origins); localhost only.
+    // The runtime reads only the path and query; its public URL comes from settings.
     const out = await handle(new Request(new URL(req.url ?? "/", `http://localhost:${bound}`).href, { method, headers, ...(body ? { body } : {}) }));
     const head: Record<string, string | string[]> = {};
     out.headers.forEach((v, k) => void (k === "set-cookie" ? 0 : (head[k] = v)));
     const cookies = out.headers.getSetCookie();
     if (cookies.length) head["set-cookie"] = cookies;
-    res.writeHead(out.status, head);
-    res.end(Buffer.from(await out.arrayBuffer()));
+    if (out.statusText) res.writeHead(out.status, out.statusText, head);
+    else res.writeHead(out.status, head);
+    if (!out.body || method === "HEAD") return void res.end();
+    // Streamed, as the proxy streams the provider's response (SSE, downloads).
+    const stream = Readable.fromWeb(out.body as NodeReadableStream);
+    res.once("close", () => stream.destroy());
+    await new Promise<void>((ok) => stream.once("end", ok).once("error", ok).once("close", ok).pipe(res));
   };
   const server = createServer((req, res) =>
     run(req, res).catch((e) => {
@@ -208,12 +218,26 @@ export async function dev(o: DevOptions) {
   if (o.watch !== false) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let running = Promise.resolve();
-    watcher = watch(dir, { recursive: true }, (_, f) => {
-      const p = String(f ?? "");
-      if (/(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/.test(p)) return;
-      clearTimeout(timer);
-      timer = setTimeout(() => (running = running.then(async () => void (await reload()))), 50);
-    });
+    // Armed again after each change: on Linux, Node's recursive watcher loses a file that an editor
+    // saved by renaming a new one over it (vim, sed -i), and then never reports it again.
+    const arm = () => {
+      watcher = watch(dir, { recursive: true }, (_, f) => {
+        const p = String(f ?? "");
+        if (/(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/.test(p)) return;
+        clearTimeout(timer);
+        timer = setTimeout(
+          () =>
+            (running = running.then(async () => {
+              if (stopping) return;
+              watcher?.close();
+              arm();
+              await reload();
+            })),
+          50,
+        );
+      });
+    };
+    arm();
   }
 
   let stopping: Promise<void> | undefined;

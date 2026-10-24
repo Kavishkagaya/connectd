@@ -39,7 +39,8 @@ function target(def: AnyDefinition, req: Request): URL {
 }
 
 // Our API key and the client's host must not reach the provider; the injected credential replaces them.
-const STRIP = ["authorization", "host", "content-length"];
+// Hop-by-hop headers too: they describe this hop, and fetch refuses some (transfer-encoding on Node).
+const STRIP = ["authorization", "host", "content-length", "connection", "keep-alive", "transfer-encoding", "te", "upgrade"];
 
 export function proxy(o: { timeoutMs?: number } = {}): Extension {
   const timeoutMs = o.timeoutMs ?? 30_000;
