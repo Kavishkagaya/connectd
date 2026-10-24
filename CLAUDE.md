@@ -52,7 +52,7 @@ packages/runtime/
   src/signature.ts    Standard Webhooks sign/verify, no imports (`/signature` export, for the SDK)
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
-  src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection; webhooks.status
+  src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection, or explicit subscriptions (subscribe/list/unsubscribe) when the definition has a `subscription` schema; webhooks.status
   src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)

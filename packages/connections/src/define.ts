@@ -1,4 +1,5 @@
 import type { Json, Kernel, Limit, Observed } from "@openconnect/kernel";
+import type { StandardSchemaV1 } from "./action.ts";
 import { type Credential, lifecycle, NotActive, type OAuth2 } from "./lifecycle.ts";
 import { OAuthError, type TokenResponse } from "./oauth.ts";
 
@@ -48,7 +49,7 @@ export type Definition<C, M extends Json> = {
   // ponytail: one fixed base URL; make it a function of the credential when a provider needs a per-connection host (Salesforce instance_url).
   proxy?: { baseUrl: string; inject?: Inject };
   /** Incoming provider webhooks (#25): how to check and read them, and optionally how to register one per connection. */
-  webhooks?: Webhooks<C>;
+  webhooks?: Webhooks<C, any>;
 };
 
 /** A webhook as the provider sent it. `body` is raw: verify before parsing. */
@@ -61,7 +62,8 @@ export type Webhook = { headers: Headers; body: string };
  */
 export type Incoming = { reply: Json } | { topic: string; delivery?: string; payload: Json; external?: { key: string; value: string } };
 
-export type Webhooks<C> = {
+/** `S`: what one subscription takes (`{ repo, events }`), when the definition has `subscription`. */
+export type Webhooks<C, S = null> = {
   /**
    * True if the provider sent it. `secret` is this connection's own webhook secret on
    * `/webhooks/:def/:id` (the one `register` handed the provider), null on the app-level route;
@@ -71,11 +73,18 @@ export type Webhooks<C> = {
   /** Read a verified webhook. A throw is a 400. */
   parse(req: Webhook): Incoming;
   /**
+   * Explicit subscriptions (#54): the app creates any number per connection with
+   * `webhooks.subscribe` (a GitHub repo hook each), passing what this schema checks; `register`
+   * gets it as `input`. Without it, `register` runs once per connection on its own when it goes active.
+   */
+  subscription?: StandardSchemaV1<unknown, S>;
+  /**
    * Create the provider-side subscription for an active connection, pointed at `endpoint`.
    * Returns what `unregister` needs, and when it lapses (Google channels) so it gets renewed. Null: nothing to register.
    * `hook` is stored unsealed and shown in the dashboard: ids only, no secrets.
    */
-  register?(ctx: Ctx<C>, cred: Credential, endpoint: { url: string; secret: string }): Promise<{ hook: Json; expiresAt?: number } | null>;
+  // NoInfer: `S` comes from `subscription` only, so without one `input` is null (what the runtime passes).
+  register?(ctx: Ctx<C>, cred: Credential, endpoint: { url: string; secret: string }, input: NoInfer<S>): Promise<{ hook: Json; expiresAt?: number } | null>;
   /** Remove what `register` created. Best effort: runs before revoke, and after a renewal for the old one. */
   unregister?(ctx: Ctx<C>, cred: Credential, hook: Json): Promise<void>;
 };

@@ -160,7 +160,29 @@ test("github webhooks: X-Hub-Signature-256 with the connection's secret, ping is
   expect(await w.verify(ctx, { ...ok, body: `${body} ` }, "s3cret")).toBe(false);
   expect(w.parse(ok)).toEqual({ topic: "pull_request", delivery: "d-1", payload: { action: "opened", number: 1 } });
   expect(w.parse(hook({ "x-github-event": "ping" }, "{}"))).toEqual({ reply: null });
-  expect(definitionOf(github).webhooks!.register).toBeUndefined();
+  // Repo hooks are explicit subscriptions: the schema checks the input, register/unregister call the API.
+  const sub = definitionOf(github).webhooks!;
+  const v = sub.subscription!["~standard"];
+  for (const repo of ["nope", "../x", "o/..", "./r", "o/r/x", 1]) expect(await v.validate({ repo })).toMatchObject({ issues: [{ path: ["repo"] }] });
+  expect(await v.validate({ repo: "o/r", events: [] })).toMatchObject({ issues: [{ path: ["events"] }] });
+  expect(await v.validate({ repo: "o/r" })).toEqual({ value: { repo: "o/r" } });
+  const calls: { url: string; method: string; body: unknown; auth: string | null }[] = [];
+  const fetch = (async (url: string, init?: RequestInit) => {
+    calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null, auth: new Headers(init?.headers).get("authorization") });
+    return init?.method === "POST" ? Response.json({ id: 9 }, { status: 201 }) : new Response(null, { status: 204 });
+  }) as typeof globalThis.fetch;
+  const hctx = { config: { clientId: "c" }, fetch, redirectUri: "", now: () => 0 };
+  const cred = { kind: "oauth2", accessToken: "gho_1", raw: {} } as const;
+  const r = await sub.register!(hctx, cred, { url: "https://oc.test/webhooks/github/u1", secret: "s3cret" }, { repo: "o/r" });
+  expect(r).toEqual({ hook: { repo: "o/r", id: 9 } });
+  expect(calls[0]).toEqual({
+    url: "https://api.github.com/repos/o/r/hooks",
+    method: "POST",
+    auth: "Bearer gho_1",
+    body: { name: "web", active: true, events: ["push"], config: { url: "https://oc.test/webhooks/github/u1", secret: "s3cret", content_type: "json" } },
+  });
+  await sub.unregister!(hctx, cred, r!.hook);
+  expect(calls[1]).toMatchObject({ url: "https://api.github.com/repos/o/r/hooks/9", method: "DELETE" });
 });
 
 test("slack webhooks: v0 signing secret with a 5 min window, url_verification, routed by team", async () => {
@@ -199,13 +221,13 @@ test("google webhooks: calendar channel registered with the secret as token, sto
   await callback(p.approve((await c.connect())!));
   const w = definitionOf(google).webhooks!;
   const cred = await c.token();
-  const r = await w.register!(c.ctx, cred, { url: "https://oc.test/webhooks/google/g1", secret: "tok" });
+  const r = await w.register!(c.ctx, cred, { url: "https://oc.test/webhooks/google/g1", secret: "tok" }, null);
   expect(r).toEqual({ hook: { id: "ch1", resourceId: "res1" }, expiresAt: NOW + 7 * 86_400_000 });
   expect(calls[0]).toMatchObject({ url: "https://www.googleapis.com/calendar/v3/calendars/primary/events/watch", auth: "Bearer ya29.1" });
   expect(calls[0]!.body).toMatchObject({ type: "web_hook", address: "https://oc.test/webhooks/google/g1", token: "tok" });
   await w.unregister!(c.ctx, cred, r!.hook);
   expect(calls[1]).toEqual({ url: "https://www.googleapis.com/calendar/v3/channels/stop", body: { id: "ch1", resourceId: "res1" }, auth: "Bearer ya29.1" });
-  expect(await w.register!({ ...c.ctx, config: { clientId: "x" } }, cred, { url: "u", secret: "s" })).toBeNull(); // not opted in
+  expect(await w.register!({ ...c.ctx, config: { clientId: "x" } }, cred, { url: "u", secret: "s" }, null)).toBeNull(); // not opted in
 
   const n = hook({ "x-goog-channel-token": "tok", "x-goog-channel-id": "ch1", "x-goog-resource-state": "exists", "x-goog-resource-id": "res1", "x-goog-message-number": "2" });
   expect(await w.verify({ config: { clientId: "x" }, ...at }, n, "tok")).toBe(true);

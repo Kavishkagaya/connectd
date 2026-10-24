@@ -78,8 +78,11 @@ export function apiFor(ctx: Pick<Ctx<unknown>, "fetch">, proxy: NonNullable<Defi
 }
 
 interface Built<Id extends string, C, M extends Json, A extends boolean = false> extends Connection<Id, C, M, A> {
-  /** Incoming provider webhooks (#25): how to verify and read them, and optionally register one per connection. */
-  webhooks(webhooks: Webhooks<C>): this;
+  /**
+   * Incoming provider webhooks (#25): how to verify and read them, and optionally register one per
+   * connection, or many with a `subscription` schema (#54). `S` types `webhooks.subscribe`.
+   */
+  webhooks<S = null>(webhooks: Webhooks<C, S>): this & { readonly "~subscription"?: S };
 }
 
 /** `external` straight after auth, when the flow brings its own identity (OIDC claims). */
@@ -114,7 +117,7 @@ function make(def: Definition<any, any>): any {
   return {
     id: def.id,
     [DEF]: def,
-    webhooks: (webhooks: Webhooks<unknown>) => next({ webhooks }),
+    webhooks: (webhooks: Webhooks<unknown, unknown>) => next({ webhooks }),
     api: (s: ApiSpec) => {
       const headers = Object.entries(s.headers ?? {});
       const key = s.key ?? BEARER;

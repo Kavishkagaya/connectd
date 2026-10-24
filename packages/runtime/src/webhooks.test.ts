@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection, hmacHex, safeEqual } from "@openconnect/connections";
+import { apiKey, defineConnection, hmacHex, type StandardSchemaV1, safeEqual } from "@openconnect/connections";
 import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { type ConnectionEvent, directory, events, MAX_PAYLOAD, memoryIndex, runtime, type WebhookEvent, webhooks } from "./index.ts";
@@ -55,22 +55,61 @@ const hooked = defineConnection({
 });
 const plain = defineConnection({ id: "plain", auth: apiKey(["key"]) });
 
+/** `{ repo: string }`, as a Standard Schema. */
+const repoSchema: StandardSchemaV1<{ repo: string }> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate: (v) =>
+      typeof (v as { repo?: unknown } | null)?.repo === "string" ? { value: { repo: (v as { repo: string }).repo } } : { issues: [{ message: "Expected string", path: ["repo"] }] },
+  },
+};
+const subs = {
+  registered: [] as { repo: string; key: string; url: string }[],
+  unregistered: [] as Json[],
+  ttl: null as number | null,
+  /** Awaited inside register (to race it). */
+  gate: null as Promise<void> | null,
+  /** Repos whose register throws. */
+  failing: new Set<string>(),
+};
+/** Like `hooked`, with explicit subscriptions: one hook per repo. */
+const subbed = defineConnection({
+  ...hooked,
+  id: "subbed",
+  webhooks: {
+    ...hooked.webhooks!,
+    subscription: repoSchema,
+    async register(ctx, cred, endpoint, input: { repo: string }) {
+      const key = cred.kind === "static" ? (cred.fields.key ?? "") : "";
+      if (subs.gate) await subs.gate;
+      if (subs.failing.has(input.repo)) throw new Error(`no access to ${input.repo}`);
+      subs.registered.push({ repo: input.repo, key, url: endpoint.url });
+      return { hook: `${input.repo}#${subs.registered.length}`, ...(subs.ttl ? { expiresAt: ctx.now() + subs.ttl } : {}) };
+    },
+    async unregister(_ctx, _cred, hook) {
+      subs.unregistered.push(hook);
+    },
+  },
+});
+
 async function setup(o: { events?: boolean; down?: string } = {}) {
   Object.assign(fake, { fail: 0, ttl: null, n: 0, registered: [], unregistered: [], during: null, externalThrows: false });
+  Object.assign(subs, { registered: [], unregistered: [], ttl: null, gate: null, failing: new Set() });
   const got: ConnectionEvent[] = [];
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
-    config: { hooked: { appSecret: "app" }, plain: null },
+    config: { hooked: { appSecret: "app" }, subbed: { appSecret: "app" }, plain: null },
     fetch: (async (_url: string, init?: RequestInit) => (got.push(JSON.parse(init?.body as string)), new Response(null, { status: 200 }))) as typeof fetch,
     webhooks: { url: "https://oc.test/webhooks/", key: await importHmacKey(key(5)) },
     ...(o.events === false ? {} : { events: { url: "https://app.test/events", secret: `whsec_${key(7)}` } }),
   };
   let w: ReturnType<typeof memory> | undefined;
   const rt = runtime({
-    definitions: { hooked, plain },
+    definitions: { hooked, subbed, plain },
     settings: async () => settings,
     extensions: [events(), directory(memoryIndex()), webhooks()],
     now: () => w!.now(),
@@ -326,7 +365,7 @@ test("webhooks.status: the registration and the ingress URL, never the secret", 
   fake.ttl = 7 * 86_400_000;
   await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
   const armed = (await t.api("/connections/hooked/c1/webhooks.status")).body;
-  expect(armed).toEqual({ supported: true, registers: true, url: "https://oc.test/webhooks/hooked/c1", registration: null, pending: true });
+  expect(armed).toEqual({ supported: true, registers: true, url: "https://oc.test/webhooks/hooked/c1", registration: null, pending: true, subscriptions: null });
   await t.w.advance(0);
   const s = (await t.api("/connections/hooked/c1/webhooks.status")).body;
   expect(s).toEqual({
@@ -335,7 +374,94 @@ test("webhooks.status: the registration and the ingress URL, never the secret", 
     url: "https://oc.test/webhooks/hooked/c1",
     registration: { hook: "h1", renewAt: T0 + fake.ttl - 3_600_000, account: JSON.stringify({ team: "T1" }) },
     pending: false,
+    subscriptions: null,
   });
   expect(JSON.stringify(s)).not.toContain((await t.secretOf("c1")).secret);
-  expect((await t.api("/connections/plain/p1/webhooks.status")).body).toEqual({ supported: false, registers: false, url: null, registration: null, pending: false });
+  expect((await t.api("/connections/plain/p1/webhooks.status")).body).toEqual({ supported: false, registers: false, url: null, registration: null, pending: false, subscriptions: null });
+});
+
+test("subscriptions: many per connection, input checked, renewed, moved on re-auth to another account, all removed on revoke", async () => {
+  const t = await setup();
+  const base = "/connections/subbed/c1";
+  expect((await t.api(`${base}/webhooks.subscribe`, { repo: "o/a" })).body.error).toMatchObject({ code: "not_active", status: 409 });
+  await t.api(`${base}/connect`, { key: "k", team: "T1" });
+  await t.w.advance(0);
+  expect(subs.registered).toEqual([]); // nothing on its own
+
+  const bad = await t.api(`${base}/webhooks.subscribe`, { repo: 1 });
+  expect(bad.status).toBe(400);
+  expect(bad.body.error).toMatchObject({ code: "bad_request", issues: [{ message: "Expected string", path: ["repo"] }] });
+
+  subs.ttl = 86_400_000;
+  const a = (await t.api(`${base}/webhooks.subscribe`, { repo: "o/a" })).body;
+  subs.ttl = null;
+  const b = (await t.api(`${base}/webhooks.subscribe`, { repo: "o/b" })).body;
+  expect(a).toMatchObject({ input: { repo: "o/a" }, hook: "o/a#1", account: '{"team":"T1"}', renewAt: T0 + 86_400_000 - 3_600_000 });
+  expect(b).toMatchObject({ input: { repo: "o/b" }, hook: "o/b#2", renewAt: null });
+  expect(subs.registered.map((r) => r.url)).toEqual(["https://oc.test/webhooks/subbed/c1", "https://oc.test/webhooks/subbed/c1"]);
+  expect(((await t.api(`${base}/webhooks.list`)).body as { id: string }[]).map((s) => s.id).sort()).toEqual([a.id, b.id].sort());
+  expect((await t.api(`${base}/webhooks.status`)).body).toMatchObject({ registers: false, subscriptions: 2 });
+
+  // Webhooks arrive on the connection's route, as before.
+  expect((await t.hook("/webhooks/subbed/c1", { type: "push", id: "d1" }, (await t.api(`${base}/webhooks.endpoint`)).body.secret)).status).toBe(200);
+
+  // Only the lapsing one is renewed: new hook first, then the old one stopped.
+  await t.w.advance(86_400_000 - 3_600_000);
+  expect(subs.registered.map((r) => r.repo)).toEqual(["o/a", "o/b", "o/a"]);
+  expect(subs.unregistered).toEqual(["o/a#1"]);
+
+  // Unsubscribe: gone here and at the provider; twice is a 404.
+  expect((await t.api(`${base}/webhooks.unsubscribe`, { id: b.id })).status).toBe(200);
+  expect(subs.unregistered).toEqual(["o/a#1", "o/b#2"]);
+  expect((await t.api(`${base}/webhooks.unsubscribe`, { id: b.id })).status).toBe(404);
+
+  // Re-auth to another workspace: re-registered with the new credential, the old hook stopped.
+  await t.api(`${base}/connect`, { key: "k2", team: "T2" });
+  await t.w.advance(0);
+  expect(subs.registered.at(-1)).toMatchObject({ repo: "o/a", key: "k2" });
+  expect(subs.unregistered).toEqual(["o/a#1", "o/b#2", "o/a#3"]);
+  expect((await t.api(`${base}/webhooks.list`)).body).toMatchObject([{ id: a.id, account: '{"team":"T2"}' }]);
+
+  // Revoke removes the rest.
+  await t.api(`${base}/revoke`);
+  expect(subs.unregistered).toEqual(["o/a#1", "o/b#2", "o/a#3", "o/a#4"]);
+  expect((await t.api(`${base}/webhooks.list`)).body).toEqual([]);
+
+  // A definition without a subscription schema takes none.
+  await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
+  expect((await t.api("/connections/hooked/c1/webhooks.subscribe", { repo: "o/a" })).status).toBe(400);
+});
+
+test("subscriptions: a subscribe still registering when revoke runs undoes its own hook", async () => {
+  const t = await setup();
+  const base = "/connections/subbed/c1";
+  await t.api(`${base}/connect`, { key: "k", team: "T1" });
+  let open = () => {};
+  subs.gate = new Promise<void>((r) => (open = r));
+  const pending = t.api(`${base}/webhooks.subscribe`, { repo: "o/a" });
+  await new Promise((r) => setTimeout(r, 5));
+  await t.api(`${base}/revoke`);
+  open();
+  const r = await pending;
+  expect(r.body.error).toMatchObject({ code: "not_active", state: "revoked" });
+  expect(subs.registered.map((x) => x.repo)).toEqual(["o/a"]);
+  expect(subs.unregistered).toEqual(["o/a#1"]);
+  expect((await t.api(`${base}/webhooks.list`)).body).toEqual([]);
+});
+
+test("subscriptions: one failing renewal doesn't hold up the others", async () => {
+  const t = await setup();
+  const base = "/connections/subbed/c1";
+  await t.api(`${base}/connect`, { key: "k", team: "T1" });
+  subs.ttl = 86_400_000;
+  await t.api(`${base}/webhooks.subscribe`, { repo: "o/a" });
+  await t.api(`${base}/webhooks.subscribe`, { repo: "o/b" });
+  subs.failing.add("o/a");
+  await t.w.advance(86_400_000 - 3_600_000);
+  // o/b renewed although o/a (first) failed; o/a is retried.
+  expect(subs.registered.map((x) => x.repo)).toEqual(["o/a", "o/b", "o/b"]);
+  subs.failing.clear();
+  await t.w.advance(60_000);
+  expect(subs.registered.map((x) => x.repo)).toEqual(["o/a", "o/b", "o/b", "o/a"]);
+  expect(subs.unregistered.sort()).toEqual(["o/a#1", "o/b#2"]);
 });
