@@ -50,7 +50,13 @@ cp .env.production.example .env.production
 bun run deploy            # connectd deploy: prints the secrets it sends (names only), then your app's env:
                           #   CONNECTD_URL=https://basic.<you>.workers.dev
                           #   CONNECTD_API_KEY=oc_...   (shown once)
+                          #   CONNECTD_EVENTS_SECRET=whsec_...   (shown once, when events are on)
 ```
+
+Each environment is its own deployment with its own keys: `connectd deploy --env staging` reads
+`.env.staging` (that environment's provider credentials, e.g. a GitHub OAuth app with the staging
+callback URL), deploys the `basic-staging` Worker and database, and prints staging's app env.
+`cloudflare({ environments: { staging: { name, url } } })` names its Worker or URL otherwise.
 
 ## Deploy from CI (GitHub Actions)
 

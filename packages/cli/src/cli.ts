@@ -33,10 +33,12 @@ connectd add <provider>
   Writes <dir>/<id>/connection.ts and an empty events.ts, and adds its env names to .env.
 
 connectd deploy
-  --env-file <f>   the production env (default .env.production; in CI, CI=true, the shell's); only names the project reads are pushed
+  --env <name>     the environment (default production): reads .env.<name>, deploys its own Worker and
+                   database (<name>-staging), generates its own keys; your provider credentials per env
+  --env-file <f>   the env file instead (default .env.<env>; in CI, CI=true, the shell's); only names the project reads are pushed
   --name <name>    Worker name (default: the target's name, cloudflare({ name }), else the directory's name)
   --url <url>      public https origin on a custom domain (default: the workers.dev URL)
-  --rotate <list>  comma-separated: key (adds CONNECTD_KEY_V<n+1>), api-key, state, sessions
+  --rotate <list>  comma-separated: key (adds CONNECTD_KEY_V<n+1>), api-key, events, state, sessions
   --new-keys       generate fresh runtime keys although the index database exists without its Worker
   --dry-run        write .connectd/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
   --config <file>  config file (default ${CONFIG_FILES[0]})
@@ -53,6 +55,7 @@ const SPEC = {
   url: "string",
   reset: "boolean",
   "env-file": "string",
+  env: "string",
   name: "string",
   rotate: "string",
   "dry-run": "boolean",
@@ -103,12 +106,14 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
         const name = str("name");
         const url = str("url");
         const envFile = str("env-file");
+        const environment = str("env");
         await deploy({
           dir,
           load: (env) => loadProject(dir, config, join(workdir(dir), "build"), Date.now(), env),
           ...(name ? { name } : {}),
           ...(url ? { url } : {}),
           ...(envFile ? { envFile } : {}),
+          ...(environment ? { environment } : {}),
           rotate: (str("rotate") ?? "").split(",").map((r) => r.trim()),
           dryRun: !!a.flags["dry-run"],
           newKeys: !!a.flags["new-keys"],

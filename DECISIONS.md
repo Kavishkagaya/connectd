@@ -693,3 +693,12 @@ The first run of a real app (examples/nextjs) against real GitHub, done locally,
 - **The app's origin is written once**, as `APP_URL` in `.env`: the example's config builds `sessions.origins` and `events.url` from it.
 - **The watcher skips** hidden folders (`.next`, `.git`, `.connectd`, `.turbo`), `node_modules`, `dist`, `build`, `out`, and `*.d.ts`/`*.tsbuildinfo`/`*.log`: one Next page load was 16 reloads.
 - **Next wants `typescript` and `@types/node` in the app's own package** (else it tries to install them and fails on `workspace:*`); the example has them, `@types/node` at the root's major so the root typecheck keeps one copy.
+
+## #54 Deploy environments: `connectd deploy --env <name>` — decided
+
+Each environment's keys come from one explicit step (see the Next.js entry): `init` for dev, `deploy --env <name>` for the others. An environment is a whole deployment of its own, so staging can never read production's connections or keys.
+
+- **One env file per environment.** `--env staging` reads `.env.staging` (`--env-file` still overrides; in CI the shell's): that environment's provider credentials (usually its own OAuth app, since the callback URL differs). The same checks as production: only names the project reads are sent, dev values and generated keys refused. `development`, `dev` and `local` are dev's and refused. Default `production`, unchanged: `.env.production`, the plain Worker name, `state.json`.
+- **Its own deployment.** The Cloudflare adapter deploys `<name>-<env>` with its own D1 (`<name>-<env>-index`) and `.connectd/deploy/state.<env>.json`. `cloudflare({ environments: { staging: { name, url } } })` names an environment's Worker or URL; `cloudflare({ url })` is production's only.
+- **Its own keys.** Runtime keys are generated on an environment's first deploy and live only in its Worker's secrets. The app's two values are generated too unless the env file sets them: the API key (as before) and now the events secret, each printed once under "your app's env for <env>". `--rotate events` makes a new events secret. CI never generates either: both come from CI secrets (`connectd keys`).
+- Env files are the one source for now; pulling an environment's values from elsewhere (Vercel, a secrets manager) can come later as a contribution.
