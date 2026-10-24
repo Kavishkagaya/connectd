@@ -1,4 +1,5 @@
-import { type AnyConnection, definitionOf } from "@openconnect/connections";
+import { type AnyAction, type AnyConnection, actionOf, definitionOf } from "@openconnect/connections";
+import { actions } from "./actions.ts";
 import type { Index } from "./directory.ts";
 import { type AnyDefinition, type Hooks, type Hosted, host, type Settings } from "./host.ts";
 import { http, type Route, routes } from "./http.ts";
@@ -17,6 +18,8 @@ export type RuntimeOptions = {
   /** Bundled definitions by id (self-host): `connection(...)` builders or plain definitions. Managed loads user code differently (#34). */
   definitions: Record<string, AnyDefinition | AnyConnection>;
   settings: () => Promise<Settings>;
+  /** What the app does with connections (#54): `action(id, connection)` builders, each on a connection in `definitions`. */
+  actions?: AnyAction[];
   extensions?: Extension[];
   /** The Worker's clock (`api.now`); connection instances use their driver's. Default `Date.now`. */
   now?: () => number;
@@ -29,9 +32,13 @@ export type RuntimeOptions = {
 export function runtime(o: RuntimeOptions) {
   let loaded: Promise<Settings> | undefined;
   const settings = () => (loaded ??= o.settings());
-  const exts = o.extensions ?? [];
-  const index = exts.find((e) => e.index)?.index;
   const definitions = Object.fromEntries(Object.entries(o.definitions).map(([id, d]) => [id, definitionOf(d)]));
+  for (const a of o.actions ?? []) {
+    const s = actionOf(a);
+    if (!Object.hasOwn(definitions, s.connection)) throw new Error(`action ${s.id}: no connection ${s.connection} in definitions`);
+  }
+  const exts = [...(o.actions?.length ? [actions(o.actions)] : []), ...(o.extensions ?? [])];
+  const index = exts.find((e) => e.index)?.index;
   return {
     program: host({ definitions, settings, connection: exts.flatMap((e) => (e.connection ? [e.connection] : [])) }),
     // Built-in routes win on a name clash, like built-in methods.

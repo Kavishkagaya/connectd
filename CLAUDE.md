@@ -34,6 +34,7 @@ packages/connections/
   src/oauth.ts        OAuth protocol atoms (PKCE, authorize URL, code exchange, refresh, device flow, DCR, revoke), OAuthError
   src/define.ts       defineConnection, Definition (incl. webhooks: verify/parse/register), hmacHex/safeEqual, bind (a definition on one instance's kernel)
   src/builder.ts      connection(id).config<C>().auth(f => …).api(…).limit().observe().identity().external().webhooks() (#54): compiles to a Definition, read with definitionOf
+  src/action.ts       action(id, connection).input(schema) | .every(ms) / .on(state) .run(fn) (#54): standalone actions, Standard Schema types, ActionCtx (api, store, token)
   src/flows.ts        the flows `.auth()` hands its callback (#56): oauth2, oidc (discovery, id_token checked, claims as identity), clientCredentials, jwtBearer, device, apiKey, flow
   src/jwt.ts          RS256 signing (PKCS#8 and PKCS#1 keys), id_token verification (RS256, ES256)
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
@@ -45,6 +46,7 @@ packages/runtime/
   src/host.ts         the Program every connection instance runs: one kernel per instance, registry lookup, bind, extensions' hooks (Hosted.k), methods, faults
   src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
+  src/actions.ts      actions on the connection's instance (added by runtime({ actions })): actions.<id> methods + /actions/:id route, input validation, .every timers while active, .on per state entry, action.completed/failed events
   src/proxy.ts        proxy() extension: /proxy/:def/:id/<path>, token + rate permits in one DO call
   src/events.ts       events extension: what an event is and how it's signed and POSTed, on the kernel's queue (relays the record's outbox); emit(); events.status/flush/redeliver
   src/signature.ts    Standard Webhooks sign/verify, no imports (`/signature` export, for the SDK)
@@ -85,7 +87,7 @@ packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli`
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/cli.ts, args.ts commands (dev, deploy, help) and a declared-flags parser; src/bin.ts the entry
 
-examples/basic/       a user project (workspace): openconnect.config.ts with the providers and one local definition
+examples/basic/       a user project (workspace): openconnect.config.ts with the providers, one local definition and one action
 ```
 
 Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@openconnect/connections`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.

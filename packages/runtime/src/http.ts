@@ -45,9 +45,11 @@ export const routes: Record<string, Route> = {
    * GET  /connections?def=&state=&q=&external=key:value&cursor=&limit=   list from the index
    * GET  /connections/:def/:id          status + metadata
    * POST /connections/:def/:id/:method  connect | token | revoke | any extension method; JSON body = args
+   * POST /connections/:def/:id/actions/:action   an action (#54): the method `actions.<action>`
    */
   connections: {
-    async fetch(req, api, [def, id, method, ...rest]) {
+    async fetch(req, api, [def, id, m, ...more]) {
+      const [method, rest] = m === "actions" && more.length === 1 ? [`actions.${more[0]}`, []] : [m, more];
       if (!def && api.index) return listing(req, api.index);
       if (!def || !id || rest.length) throw new Fail("not_found", 404, "no such route");
       if (!Object.hasOwn(api.definitions, def)) throw new Fail("not_found", 404, `unknown definition ${def}`);

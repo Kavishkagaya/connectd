@@ -19,8 +19,12 @@ type Base = { id: string; seq: number; at: number; connection: { definition: str
 export type LifecycleEvent = Base & { type: `connection.${State}`; data: { from: State | null; to: State; reason?: string } };
 /** A provider webhook routed to this connection (#25), shaped by the webhooks extension. */
 export type WebhookEvent = Base & { type: "webhook"; data: WebhookData };
+/** A scheduled or `.on(state)` action run (#54): its output, or why it failed. App calls get their result directly instead. */
+export type ActionEvent =
+  | (Base & { type: "action.completed"; data: { action: string; trigger: "every" | "on"; output: Json } })
+  | (Base & { type: "action.failed"; data: { action: string; trigger: "every" | "on"; error: string; attempt: number } });
 /** The POST body. `id` = `<instance>:<seq>`, the same on every retry: dedupe on it. */
-export type ConnectionEvent = LifecycleEvent | WebhookEvent;
+export type ConnectionEvent = LifecycleEvent | WebhookEvent | ActionEvent;
 
 /** What the queue holds: the body without what the queue and the connection add (`id`, `seq`, `connection`). */
 type Msg = { type: ConnectionEvent["type"]; at: number; data: Json };
@@ -78,14 +82,14 @@ export type EventsStatus = {
 const queues = new WeakMap<Kernel, { q: Queue<Msg>; relay(): Promise<void> }>();
 
 /**
- * Queue a non-lifecycle event on this connection; the webhook extension (#25) calls this. Ordered
+ * Queue a non-lifecycle event on this connection: webhooks (#25) and action runs (#54). Ordered
  * after every transition so far. No-op without `settings.events` or the events extension.
  */
-export async function emit(h: Hosted, data: Json) {
+export async function emit(h: Hosted, data: Json, type: Exclude<ConnectionEvent["type"], LifecycleEvent["type"]> = "webhook") {
   const e = queues.get(h.k);
   if (!h.settings.events || !e) return;
   await e.relay();
-  await e.q.push([{ type: "webhook", at: h.k.now(), data }]);
+  await e.q.push([{ type, at: h.k.now(), data }]);
 }
 
 /** What status lists for a stored event: webhook payloads left out. */

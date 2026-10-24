@@ -17,15 +17,23 @@ import type { Credential } from "./lifecycle.ts";
  * builder is the definition, and the runtime reads it with `definitionOf`. Each step sees the types
  * of the ones before it, and the types allow only this order.
  */
-// ponytail: compiles to #17's `Definition`, so the runtime is unchanged; capabilities (`.use()`) replace that shape with the host's move off extensions.
+// ponytail: compiles to #17's `Definition`, so the runtime is unchanged. What a connection does lives outside it, in actions (action.ts).
 
 // `Symbol.for`: a config bundled with its own copy of this package (`openconnect dev`) still matches.
 const DEF = Symbol.for("openconnect.definition");
 
-/** A built connection: its id (a literal type, for the typed client) and what the runtime runs. */
-export type Connection<Id extends string = string, C = any, M extends Json = any> = { readonly id: Id; readonly [DEF]: Definition<C, M> };
+/**
+ * A built connection: its id (a literal type, for the typed client) and what the runtime runs.
+ * `A`: it has `.api()`, so actions on it get an authenticated `api` (#54).
+ */
+export type Connection<Id extends string = string, C = any, M extends Json = any, A extends boolean = boolean> = {
+  readonly id: Id;
+  readonly [DEF]: Definition<C, M>;
+  /** Types only: whether `.api()` was called. */
+  readonly "~api"?: A;
+};
 
-export type AnyConnection = Connection<string, any, any>;
+export type AnyConnection = Connection<string, any, any, boolean>;
 
 /** The definition a builder holds; a plain `Definition` as is. */
 export function definitionOf<C, M extends Json>(d: Definition<C, M> | Connection<string, C, M>): Definition<C, M> {
@@ -48,12 +56,15 @@ export type ApiSpec = {
   key?: Inject;
 };
 
-// ponytail: calls here take no limiter permit (identity makes one per login); route them through the proxy's limiters when capabilities call the API often.
-function api(ctx: Ctx<unknown>, proxy: NonNullable<Definition<unknown, Json>["proxy"]>, cred: Credential): Api {
-  const call = (path: string, init: RequestInit = {}) => {
+/**
+ * The definition's API for one credential (or a getter: actions take the current token per call).
+ * ponytail: calls here take no limiter permit; route them through the proxy's limiters when actions call the API often.
+ */
+export function apiFor(ctx: Pick<Ctx<unknown>, "fetch">, proxy: NonNullable<Definition<unknown, Json>["proxy"]>, cred: Credential | (() => Promise<Credential>)): Api {
+  const call = async (path: string, init: RequestInit = {}) => {
     const url = new URL(`${proxy.baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`);
     const headers = new Headers(init.headers);
-    inject(proxy.inject ?? BEARER, url, headers, cred);
+    inject(proxy.inject ?? BEARER, url, headers, typeof cred === "function" ? await cred() : cred);
     return ctx.fetch(url.toString(), { ...init, headers });
   };
   return {
@@ -66,35 +77,35 @@ function api(ctx: Ctx<unknown>, proxy: NonNullable<Definition<unknown, Json>["pr
   };
 }
 
-interface Built<Id extends string, C, M extends Json> extends Connection<Id, C, M> {
+interface Built<Id extends string, C, M extends Json, A extends boolean = false> extends Connection<Id, C, M, A> {
   /** Incoming provider webhooks (#25): how to verify and read them, and optionally register one per connection. */
   webhooks(webhooks: Webhooks<C>): this;
 }
 
 /** `external` straight after auth, when the flow brings its own identity (OIDC claims). */
-type External<Id extends string, C, M extends Json> = {
-  external(external: null extends M ? "needs .identity() first" : (identity: M) => Record<string, string>): Built<Id, C, M>;
+type External<Id extends string, C, M extends Json, A extends boolean> = {
+  external(external: null extends M ? "needs .identity() first" : (identity: M) => Record<string, string>): Built<Id, C, M, A>;
 };
 
 /** `M`: the identity the flow brings by itself (OIDC claims), null for none. */
-export interface Authed<Id extends string, C, M extends Json = null> extends Built<Id, C, M>, External<Id, C, M> {
+export interface Authed<Id extends string, C, M extends Json = null> extends Built<Id, C, M>, External<Id, C, M, false> {
   /** The provider's API: base URL and how the credential goes on. Backs the proxy (#23) and `identity`'s `api`. */
   api(spec: ApiSpec): WithApi<Id, C, M>;
   /** Who the credential belongs to. Runs before activation: a throw rejects the credential. Replaces a flow's own identity. */
-  identity<N extends Json>(identify: (ctx: Ctx<C>, cred: Credential) => Promise<N>): Identified<Id, C, N>;
+  identity<N extends Json>(identify: (ctx: Ctx<C>, cred: Credential) => Promise<N>): Identified<Id, C, N, false>;
 }
 
-export interface WithApi<Id extends string, C, M extends Json = null> extends Built<Id, C, M>, External<Id, C, M> {
+export interface WithApi<Id extends string, C, M extends Json = null> extends Built<Id, C, M, true>, External<Id, C, M, true> {
   /** Permits per connection and per app (`app:<id>`), taken on every proxied call. */
   limit(limits: { connection?: Limit; app?: Limit }): this;
   /** Read the provider's rate headers; only tightens the limits (`rateHeaders`). */
   observe(observe: (res: Response, now: number) => Observed): this;
-  identity<N extends Json>(identify: (ctx: Ctx<C> & { api: Api }, cred: Credential) => Promise<N>): Identified<Id, C, N>;
+  identity<N extends Json>(identify: (ctx: Ctx<C> & { api: Api }, cred: Credential) => Promise<N>): Identified<Id, C, N, true>;
 }
 
-export interface Identified<Id extends string, C, M extends Json> extends Built<Id, C, M> {
+export interface Identified<Id extends string, C, M extends Json, A extends boolean> extends Built<Id, C, M, A> {
   /** The provider's ids in the identity (Slack `teamId`), indexed for lookup (#26) and webhook routing (#25). */
-  external(external: (identity: M) => Record<string, string>): Built<Id, C, M>;
+  external(external: (identity: M) => Record<string, string>): Built<Id, C, M, A>;
 }
 
 // One object with every method; the stage types decide which are callable.
@@ -116,7 +127,7 @@ function make(def: Definition<any, any>): any {
     limit: (l: { connection?: Limit; app?: Limit }) => next({ rate: { ...def.rate, ...l } }),
     observe: (observe: (res: Response, now: number) => Observed) => next({ rate: { ...def.rate, observe } }),
     identity: (identify: (ctx: Ctx<unknown> & { api?: Api }, cred: Credential) => Promise<Json>) =>
-      next({ metadata: (ctx, cred) => identify(def.proxy ? { ...ctx, api: api(ctx, def.proxy, cred) } : ctx, cred) }),
+      next({ metadata: (ctx, cred) => identify(def.proxy ? { ...ctx, api: apiFor(ctx, def.proxy, cred) } : ctx, cred) }),
     external: (external: (m: Json) => Record<string, string>) => next({ external }),
   };
 }
