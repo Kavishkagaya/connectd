@@ -1,6 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
 import { dirOf, type Found, foldersIn, oldLayout, writeDiscovered } from "./discover.ts";
 import type { Config, Env } from "./project.ts";
 
@@ -16,11 +17,19 @@ export function findConfig(dir: string, file?: string) {
   return join(dir, f);
 }
 
-/** Bundle the config with its local imports into one file and import that, so every load sees fresh code. Packages stay external (one copy, so `instanceof` holds). */
+/**
+ * Bundle the config with its local imports into one file and import that, so every load sees fresh
+ * code. Packages stay external (one copy, so `instanceof` holds). esbuild, so Node runs it too; `.mjs`,
+ * so a CommonJS project imports it as a module.
+ */
 export async function importConfig(entry: string, out: string, n: number | string): Promise<Config> {
-  const r = await Bun.build({ entrypoints: [entry], target: "bun", packages: "external", outdir: out, naming: `config-${n}.js`, throw: false });
-  if (!r.success) throw new Error(r.logs.map(String).join("\n") || "build failed");
-  const file = r.outputs[0]?.path as string;
+  const file = join(out, `config-${n}.mjs`);
+  try {
+    await build({ entryPoints: [entry], bundle: true, platform: "node", format: "esm", packages: "external", outfile: file, logLevel: "silent" });
+  } catch (e) {
+    const errors = (e as { errors?: { text: string; location?: { file: string; line: number; column: number } | null }[] }).errors;
+    throw new Error(errors?.map((x) => (x.location ? `${x.location.file}:${x.location.line}:${x.location.column}: ${x.text}` : x.text)).join("\n") || String(e));
+  }
   try {
     const m = (await import(pathToFileURL(file).href)) as { default?: Config };
     if (!m.default) throw new Error(`${entry} has no default export (export default defineConfig({ ... }))`);

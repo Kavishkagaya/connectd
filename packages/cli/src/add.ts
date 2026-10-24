@@ -121,7 +121,7 @@ export async function add(o: AddOptions & { provider: string; id?: string; force
       `added ${o.provider}@${e.version} as ${id}: ${wrote.join(", ")}`,
       `  from ${registryOf(o)}: it's code your app runs; read it before you deploy`,
       e.env.length ? `  set ${e.env.join(", ")} in .env` : "",
-      "  connection.ts imports @connectd/connections, events.ts @connectd/sdk (bun add them if they're missing)",
+      "  connection.ts imports @connectd/connections, events.ts @connectd/sdk (install them if they're missing)",
     ]
       .filter(Boolean)
       .join("\n"),

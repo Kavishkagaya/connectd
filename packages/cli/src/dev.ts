@@ -1,4 +1,6 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@connectd/kernel";
 import { memory, type Snapshot } from "@connectd/kernel/memory";
@@ -63,7 +65,46 @@ export function swappable() {
 }
 
 /**
- * `connectd dev`: the runtime on the memory driver with a real clock, served by Bun. State
+ * A `(Request) => Response` handler on node:http (Node and Bun both have it), on localhost. `port` 0
+ * picks a free one.
+ */
+async function serve(port: number, handle: (req: Request) => Promise<Response>) {
+  const run = async (req: IncomingMessage, res: ServerResponse) => {
+    const chunks: Uint8Array[] = [];
+    for await (const c of req) chunks.push(c as Uint8Array);
+    const headers = new Headers();
+    for (const [k, v] of Object.entries(req.headers)) if (v !== undefined) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+    const method = req.method ?? "GET";
+    const body = method === "GET" || method === "HEAD" ? undefined : Buffer.concat(chunks);
+    // The URL as the browser asked for it (the dashboard and sessions compare origins); localhost only.
+    const out = await handle(new Request(new URL(req.url ?? "/", `http://localhost:${bound}`).href, { method, headers, ...(body ? { body } : {}) }));
+    const head: Record<string, string | string[]> = {};
+    out.headers.forEach((v, k) => void (k === "set-cookie" ? 0 : (head[k] = v)));
+    const cookies = out.headers.getSetCookie();
+    if (cookies.length) head["set-cookie"] = cookies;
+    res.writeHead(out.status, head);
+    res.end(Buffer.from(await out.arrayBuffer()));
+  };
+  const server = createServer((req, res) =>
+    run(req, res).catch((e) => {
+      console.error("connectd dev:", e);
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    }),
+  );
+  await new Promise<void>((ok, fail) => server.once("error", fail).listen(port, "localhost", ok));
+  const bound = (server.address() as AddressInfo).port;
+  return {
+    port: bound,
+    stop: () => {
+      server.closeAllConnections();
+      return new Promise<void>((ok) => server.close(() => ok()));
+    },
+  };
+}
+
+/**
+ * `connectd dev`: the runtime on the memory driver with a real clock, on node:http. State
  * (connections, handshakes, outboxes, timers) is snapshotted to `.connectd/state.json`, so it
  * survives restarts; a change to the config or anything it imports reloads the definitions in
  * place, keeping state, as a deploy would.
@@ -90,11 +131,7 @@ export async function dev(o: DevOptions) {
   const index = memoryIndex();
   let w: ReturnType<typeof memory> | undefined;
 
-  const server = Bun.serve({
-    port: o.port ?? PORT,
-    hostname: "localhost",
-    idleTimeout: 120,
-    async fetch(req) {
+  const server = await serve(o.port ?? PORT, async (req) => {
       const t = performance.now();
       const res =
         rt && w
@@ -103,14 +140,13 @@ export async function dev(o: DevOptions) {
       // The path only: queries carry codes and states.
       log(`${req.method} ${new URL(req.url).pathname} ${res.status} ${Math.round(performance.now() - t)}ms`);
       return res;
-    },
   });
   const local = `http://localhost:${server.port}`;
   let tun: { url: string; stop(): void } | undefined;
   try {
-    if (o.tunnel) tun = await tunnel(server.port as number, typeof o.tunnel === "object" ? o.tunnel : {});
+    if (o.tunnel) tun = await tunnel(server.port, typeof o.tunnel === "object" ? o.tunnel : {});
   } catch (e) {
-    server.stop(true);
+    server.stop();
     throw e;
   }
 
@@ -183,7 +219,7 @@ export async function dev(o: DevOptions) {
   let stopping: Promise<void> | undefined;
   const info = {
     url: local,
-    port: server.port as number,
+    port: server.port,
     apiKey: loadEnv(dir, keys.keys, o.env)[ENV.apiKey] as string,
     created: keys.created,
     statePath,
@@ -197,7 +233,7 @@ export async function dev(o: DevOptions) {
       (stopping ??= (async () => {
         watcher?.close();
         clearInterval(saver);
-        await server.stop(true);
+        await server.stop();
         await w?.stop();
         save();
         tun?.stop();

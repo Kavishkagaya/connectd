@@ -15,7 +15,8 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@connectd/dashboard": "workspace:*"
+    "@connectd/dashboard": "workspace:*",
+    "esbuild": "^0.28.2"
   },
   "devDependencies": {
     "@connectd/cloudflare": "workspace:*",

@@ -643,8 +643,15 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
 - ponytail: device-code flows aren't shown by the page yet.
 - Tests: refusals (the own origin for non-hosted sessions, `next`, `confirm`), the page's headers, the redirect flow end to end through `/connect`, a used link refused, `next` dropped after the list narrows, the form flow (a bad submit doesn't use the link up), confirm (the hosted token can't complete; the app's session does), and the app route for `keyed` (another user's confirm refused). The page's script ran in real Chromium by hand: the form flow, a reused link, and the confirm hand-off.
 
+**Built (step 14): a Node build of the CLI.** As agreed, `connectd` runs without Bun once installed from a package:
+- The workspace keeps running TypeScript sources on Bun. A published package carries JavaScript: `bun run pack` (scripts/pack.ts) builds every package with tsc (`rewriteRelativeImportExtensions`, declarations) in the three type environments the typecheck uses (Node/Bun, Workers for the DO driver and `runtime/cloudflare`, DOM for connect and the dashboard). It stages each package with `exports` and `bin` pointing at `dist/` (`types` + `default`), pins its `workspace:*` versions, and `npm pack`s it into `.pack/`. Tests, test harnesses and dev scripts aren't shipped (kernel's `/parity` export neither). The Cloudflare Worker template ships as source, since deploy fills it in. The published bin starts with `#!/usr/bin/env node`; Bun runs it too.
+- The two Bun APIs the CLI used are gone. The config is bundled with esbuild (a dependency of `@connectd/cli`) into `.connectd/build/config-N.mjs`: `.mjs`, so a CommonJS project imports it as a module, with packages still external (one copy). `connectd dev` serves on node:http, which Bun has too, with each `Set-Cookie` kept separate.
+- Declarations needed two names: `Built` is exported from `@connectd/connections` (the providers' types name it), and `durableObject()` returns a named `ProgramDO` type (its base class has protected members, which an anonymous class can't emit). Its timer runner is a private field (`#fire`).
+- Hints name `npm i -D` instead of `bun add -d`.
+- Checked by hand on Node 22 with no Bun on the PATH, in a project made from examples/basic that installs the tarballs: `--help`, `types`, `dev` (API, dashboard, reload on save and on a new folder), `add` and `diff`, `deploy --dry-run`, then `wrangler deploy --dry-run` bundling the generated Worker from the packed JavaScript, and a strict tsc of an app's `lib/oc.ts` against the packed declarations (an unknown connection id is a type error). ponytail: no automated test for the pack (it runs tsc three times); a CI job that packs and runs that check once there is CI.
+- ponytail: tarballs only; `npm publish` of each package, in dependency order, comes with the first release.
+
 **Agreed, not built yet** (the same discussion; each lands in its own PR and updates this entry):
-- A Node build of the CLI (today it runs on Bun only).
 - Several accounts per user: different connection ids (`"u1:work"`, `"u1:personal"`); no new feature.
 - v1 is self-host only: one app per deployment.
 - provisional: package names (`openconnect/core`, `openconnect/providers`, ...) are still being settled; the packages are renamed in one PR once they are.
