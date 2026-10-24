@@ -61,7 +61,8 @@ const cookie = (header: string, name: string) =>
     .map((c) => c.trim().split("="))
     .find(([k]) => k === name)?.[1];
 
-export type Fault = { code: string; status: number; message: string; state?: string; reason?: string };
+/** `issues`: what an action's input schema rejected (#54). */
+export type Fault = { code: string; status: number; message: string; state?: string; reason?: string; issues?: Json };
 /** Every connection method replies with this; error classes don't survive a DO RPC, so faults are data. */
 export type Reply = { ok: Json } | { error: Fault };
 export type Method = (args: Json) => Promise<Json>;
@@ -89,6 +90,7 @@ export class Fail extends Error {
     readonly code: string,
     readonly status: number,
     message: string,
+    readonly issues?: Json,
   ) {
     super(message);
   }
@@ -98,7 +100,7 @@ export class Fail extends Error {
 export const instanceOf = (def: string, id: string) => `conn:${def}:${id}`;
 
 export function fault(e: unknown, instance: string): Fault {
-  if (e instanceof Fail) return { code: e.code, status: e.status, message: e.message };
+  if (e instanceof Fail) return { code: e.code, status: e.status, message: e.message, ...(e.issues === undefined ? {} : { issues: e.issues }) };
   if (e instanceof InputError) return { code: "bad_request", status: 400, message: e.message };
   if (e instanceof NotActive)
     return { code: "not_active", status: 409, message: e.message, state: e.state ?? "missing", ...(e.reason ? { reason: e.reason } : {}) };

@@ -1,4 +1,4 @@
-import { type AnyConnection, definitionOf } from "@openconnect/connections";
+import { type AnyAction, type AnyConnection, definitionOf } from "@openconnect/connections";
 import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
@@ -21,6 +21,7 @@ import {
  *
  *   export default defineConfig((env) => ({
  *     definitions: [github],
+ *     actions: [starRepo, syncIssues],
  *     config: { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } },
  *     events: { url: "http://localhost:3000/api/openconnect" },
  *     sessions: { origins: ["http://localhost:3000"] },
@@ -29,6 +30,8 @@ import {
 export type Project = {
   /** `connection(...)` builders, or plain definitions. */
   definitions: (AnyConnection | AnyDefinition)[];
+  /** `action(id, connection)` builders (#54), each on one of `definitions`. */
+  actions?: AnyAction[];
   /** Connector config by definition id (client id/secret). Definitions with no callback step (`apiKey`) default to null. */
   config?: Record<string, unknown>;
   /** Where lifecycle and webhook events are POSTed (#24); signed with `OPENCONNECT_EVENTS_SECRET`. */
@@ -107,6 +110,7 @@ export function options(config: Config, env: Env, index: Index): RuntimeOptions 
   return {
     project,
     definitions: project.registry,
+    ...(project.actions ? { actions: project.actions } : {}),
     settings: () => (loaded ??= settings(project, env)),
     extensions: [proxy(), events(), webhooks(), sessions(), directory(index), ...(project.dashboard === false ? [] : [dashboard()]), ...(project.extensions ?? [])],
   };
