@@ -177,10 +177,12 @@ async function failures(api: Api, def: string | null): Promise<Failures> {
       const ev = await api.call(instanceOf(r.def, r.id), "events.status", null);
       if (!("ok" in ev)) return;
       const s = ev.ok as unknown as EventsStatus;
+      // Only this definition's actions: a webhook topic can end in `.failed` too (Stripe's `webhook.charge.failed`).
+      const names = new Set((api.actions[r.def] ?? []).map((a) => `${a.id}.failed`));
       for (const e of [...s.queued, ...s.recent])
-        if (e.type.endsWith(".failed") && !e.copy) {
+        if (names.has(e.type) && !e.copy) {
           const x = e.data as { action?: string; trigger?: string; error?: string; attempt?: number };
-          out.push({ def: r.def, id: r.id, action: x.action ?? e.type.slice(0, -".failed".length), trigger: x.trigger ?? "", error: x.error ?? "", attempt: x.attempt ?? 0, at: e.at });
+          out.push({ def: r.def, id: r.id, action: e.type.slice(0, -".failed".length), trigger: x.trigger ?? "", error: x.error ?? "", attempt: x.attempt ?? 0, at: e.at });
         }
     }),
   );

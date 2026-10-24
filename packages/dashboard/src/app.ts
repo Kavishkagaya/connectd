@@ -348,13 +348,15 @@ export function start(win: Win) {
   }
 
   /** The latest kept `<action>.completed` / `.failed` of each action, from the connection's events. */
-  function lastRuns(events: Detail["events"]) {
+  function lastRuns(d: DefinitionInfo, events: Detail["events"]) {
     const out = new Map<string, EventSummary>();
     if (!("ok" in events)) return out;
     const ev = events.ok as unknown as EventsStatus;
+    // Matched against the action names: a webhook topic can end in `.failed` too (`webhook.charge.failed`).
+    const ids = new Set(d.actions.map((a) => a.id));
     for (const e of [...ev.queued, ...ev.recent]) {
       const m = /^(.+)\.(completed|failed)$/.exec(e.type);
-      if (!m || e.copy) continue;
+      if (!m || e.copy || !ids.has(m[1] as string)) continue;
       const prev = out.get(m[1] as string);
       if (!prev || e.at > prev.at) out.set(m[1] as string, e);
     }
@@ -365,7 +367,7 @@ export function start(win: Win) {
   function actionsPanel(d: DefinitionInfo, id: string, x: Detail): Child[] {
     const status = x.actions && "ok" in x.actions ? (x.actions.ok as { id: string; next: number | null }[]) : [];
     const next = new Map(status.map((a) => [a.id, a.next]));
-    const last = lastRuns(x.events);
+    const last = lastRuns(d, x.events);
     const result = (a: ActionInfo) => {
       const e = last.get(a.id);
       if (!e) return a.every !== null || a.on !== null ? "none kept" : "—";

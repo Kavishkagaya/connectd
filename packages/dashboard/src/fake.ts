@@ -61,7 +61,7 @@ const keyed = defineConnection({
   proxy: { baseUrl: "https://api.keyed.test" },
   webhooks: {
     verify: async (_ctx, req, secret) => safeEqual(req.headers.get("x-sig") ?? "", await hmacHex(secret ?? "app", req.body)),
-    parse: (req) => ({ topic: "push", payload: JSON.parse(req.body) as Json }),
+    parse: (req) => ({ topic: (JSON.parse(req.body) as { topic?: string }).topic ?? "push", payload: JSON.parse(req.body) as Json }),
     subscription: subInput,
     register: async (_ctx, _cred, _endpoint, input) => ({ hook: { repo: input.repo } }),
     unregister: async () => {},

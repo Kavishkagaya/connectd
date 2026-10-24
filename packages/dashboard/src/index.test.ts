@@ -156,6 +156,10 @@ test("without the events and webhooks extensions, their parts say so; the rest s
 test("failures: failed scheduled runs across connections, newest first, from their kept events", async () => {
   const t = await setup();
   for (const id of ["k1", "k2"]) await t.api(`/connections/keyed/${id}/connect`, { apiKey: `sk_${id}` });
+  // A webhook whose topic ends in .failed is not an action failure.
+  const { url, secret } = (await t.api("/connections/keyed/k1/webhooks.endpoint", null)).body;
+  const hook = JSON.stringify({ topic: "tick.failed" });
+  expect((await t.fetch(url, { method: "POST", body: hook, headers: { "x-sig": await hmacHex(secret, hook) } })).status).toBe(200);
   tickFailures.left = 1;
   await t.w.advance(10 * 60_000); // one tick fails (k1 or k2, whichever ran first), the other succeeds
   await t.w.advance(1);
