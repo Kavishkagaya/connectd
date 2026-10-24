@@ -1,6 +1,7 @@
 import { parse } from "./args.ts";
 import { dev, PORT } from "./dev.ts";
 import { join } from "node:path";
+import { add, diff, list } from "./add.ts";
 import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
 import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
@@ -13,6 +14,8 @@ Commands
   dev       run the runtime locally: in memory, real clock, state kept in .connectd/, reloads on save
   deploy    deploy to your Cloudflare account (through wrangler)
   types     write .connectd/registry.d.ts (the typed client's registry; dev and deploy write it too)
+  add       copy a provider into the project: connectd add github (no name: the catalog)
+  diff      what changed upstream in a copied provider: connectd diff github
   keys      print a new CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET (for CI secrets and your app's host)
   help      this text
 
@@ -22,6 +25,12 @@ connectd dev
   --tunnel         expose it on a public https URL with a cloudflared quick tunnel (Slack needs https)
   --url <url>      public URL of a tunnel you run yourself (callback and webhook URLs use it)
   --reset          start from empty state
+
+connectd add <provider>
+  --id <id>        the folder (the connection's id; default the provider's name)
+  --force          overwrite an existing connection.ts (diff first)
+  --registry <src> the catalog: a base URL or a folder (default CONNECTD_REGISTRY, else the connectd repo at this version)
+  Writes <dir>/<id>/connection.ts and an empty events.ts, and adds its env names to .env.
 
 connectd deploy
   --env-file <f>   the production env (default .env.production; in CI, CI=true, the shell's); only names the project reads are pushed
@@ -49,6 +58,9 @@ const SPEC = {
   "dry-run": "boolean",
   "new-keys": "boolean",
   managed: "boolean",
+  id: "string",
+  force: "boolean",
+  registry: "string",
 } as const;
 
 /** Runs a command; resolves to an exit code, or to a running dev server's stop function. */
@@ -102,6 +114,25 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           newKeys: !!a.flags["new-keys"],
           log,
         });
+        return 0;
+      } catch (e) {
+        log((e as Error).message);
+        return 1;
+      }
+    }
+    case "add":
+    case "diff": {
+      const dir = o.dir ?? process.cwd();
+      const str = (k: string) => (typeof a.flags[k] === "string" ? (a.flags[k] as string) : undefined);
+      const base = { dir, env: { ...process.env }, log, ...(str("config") ? { config: str("config") } : {}), ...(str("registry") ? { registry: str("registry") } : {}) };
+      const [name, ...extra] = a.rest;
+      if (extra.length) return log(`${a.command} takes one name`), 2;
+      try {
+        if (a.command === "diff") {
+          if (!name) return log("connectd diff <id>: the connection folder to compare"), 2;
+          await diff({ ...base, id: name });
+        } else if (!name) await list(base);
+        else await add({ ...base, provider: name, ...(str("id") ? { id: str("id") } : {}), force: !!a.flags.force });
         return 0;
       } catch (e) {
         log((e as Error).message);

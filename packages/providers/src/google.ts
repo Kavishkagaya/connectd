@@ -1,5 +1,4 @@
-import { connection, type Credential, type OAuth2, type OAuth2Config, rateHeaders, safeEqual } from "@connectd/connections";
-import { fromBase64url } from "@connectd/kernel";
+import { connection, type Credential, fromBase64url, type OAuth2, type OAuth2Config, rateHeaders, safeEqual } from "@connectd/connections";
 
 /**
  * `watchCalendar` registers a push channel on each connection's primary calendar (#25); the app
