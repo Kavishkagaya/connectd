@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { KEY, start, type Win } from "./app.ts";
-import { API_KEY, browser, type El, setup } from "./fake.ts";
+import { every, fields, KEY, start, type Win } from "./app.ts";
+import { API_KEY, browser, type El, setup, tickFailures } from "./fake.ts";
 
 /** The UI on a fake browser in front of the real runtime + dashboard() on the memory driver. */
 async function ui(o: { signedIn?: boolean; hash?: string } = {}) {
@@ -194,4 +194,86 @@ test("the router refuses `.`, `..` and empty definition or id: nothing is fetche
   // A real id still works.
   await u.go("#/c/keyed/k1");
   expect(u.text()).toContain("Stateactive");
+});
+
+test("actions: trigger, next run and last result per connection; run one from a schema form or a JSON box", async () => {
+  const u = await ui();
+  await u.api("/connections/keyed/k1/connect", { apiKey: "acct_1" });
+  tickFailures.left = 1;
+  await u.w.advance(10 * 60_000); // the scheduled tick fails once
+  await u.w.advance(1);
+  await u.go("#/c/keyed/k1");
+  expect(u.text()).toContain("Actions");
+  expect(u.text()).toContain("tickevery 10 min");
+  expect(u.text()).toContain("failed");
+  expect(u.text()).toContain("provider down (attempt 1)");
+  expect(u.text()).toContain("starcalled by the app");
+
+  // A form from the input's JSON Schema; the number field is sent as a number.
+  u.root.get("input", "repo").value = "o/r";
+  u.root.get("input", "stars").value = "5";
+  await u.click("button", "Run star now");
+  expect(u.text()).toContain("star returned:");
+  expect(u.text()).toContain('"starred": "o/r"');
+  expect(u.text()).toContain('"stars": 5');
+
+  // No JSON Schema: a JSON text box; bad JSON is refused before anything is sent.
+  const box = u.root.get("textarea", "echo input (JSON)");
+  box.value = "{nope";
+  await u.click("button", "Run echo now");
+  expect(u.text()).toContain("The input is not valid JSON.");
+  u.root.get("textarea", "echo input (JSON)").value = '{"a":[1]}';
+  await u.click("button", "Run echo now");
+  expect(u.text()).toContain('"echo"');
+  // The runtime still checks the input: a schema form left empty answers its 400.
+  await u.click("button", "Run star now");
+  expect(u.text()).toContain("invalid input for star");
+});
+
+test("webhook subscriptions: listed per connection, unsubscribe after a confirm", async () => {
+  const u = await ui();
+  await u.api("/connections/keyed/k1/connect", { apiKey: "acct_1" });
+  expect((await u.api("/connections/keyed/k1/webhooks.subscribe", { repo: "o/r" })).status).toBe(200);
+  await u.go("#/c/keyed/k1");
+  expect(u.text()).toContain("Subscriptions");
+  expect(u.text()).toContain('"repo": "o/r"');
+  u.win.confirmAnswer = false;
+  await u.click("button", "Unsubscribe");
+  expect((await u.api("/connections/keyed/k1/webhooks.list", null)).body.length).toBe(1);
+  u.win.confirmAnswer = true;
+  await u.click("button", "Unsubscribe");
+  expect(u.text()).toContain("Unsubscribed.");
+  expect(u.text()).toContain("None. The app adds them with webhooks.subscribe().");
+});
+
+test("actions view: every action of the deployment and recent failures across connections", async () => {
+  const u = await ui();
+  for (const id of ["k1", "k2"]) await u.api(`/connections/keyed/${id}/connect`, { apiKey: `acct_${id}` });
+  tickFailures.left = 1;
+  await u.w.advance(10 * 60_000);
+  await u.w.advance(1);
+  await u.go("#/actions");
+  expect(u.text()).toContain("keyedstarcalled by the appschema");
+  expect(u.text()).toContain("keyedechocalled by the appyes");
+  expect(u.text()).toContain("keyedtickevery 10 minnone");
+  expect(u.text()).toContain("Recent failures");
+  expect(u.text()).toContain("provider down");
+  expect(u.text()).toContain("Looked at 2 connections");
+  u.root.get("select", "definition").value = "keyed";
+  await u.click("button", "Filter");
+  expect(u.win.location.hash).toBe("#/actions?def=keyed");
+});
+
+test("form fields: a flat object schema becomes inputs; anything else is a JSON box", () => {
+  expect(fields({ type: "object", properties: { a: { type: "string" }, b: { type: "boolean" }, c: { enum: ["x", "y"] } }, required: ["a"] })).toEqual([
+    { name: "a", kind: "string", options: [], required: true, description: "" },
+    { name: "b", kind: "boolean", options: [], required: false, description: "" },
+    { name: "c", kind: "enum", options: ["x", "y"], required: false, description: "" },
+  ]);
+  expect(fields({ type: "object", properties: { a: { type: "array" } } })).toBeNull();
+  expect(fields({ type: "string" })).toBeNull();
+  expect(fields(null)).toBeNull();
+  expect(every(600_000)).toBe("10 min");
+  expect(every(3_600_000)).toBe("1 h");
+  expect(every(1500)).toBe("1500 ms");
 });

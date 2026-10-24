@@ -213,5 +213,6 @@ test("events and names (#54): .events() needs schemas and dotless names; actions
   expect(() => base.events({ synced: {} as StandardSchemaV1<unknown, null> })).toThrow("event synced needs a schema");
   expect(badActionName("connection")).toBe("reserved");
   expect(badActionName("webhook")).toBe("reserved");
+  expect(badActionName("status")).toBe("reserved");
   expect(badEventName("synced")).toBeNull();
 });
