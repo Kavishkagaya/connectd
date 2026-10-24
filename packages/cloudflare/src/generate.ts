@@ -17,7 +17,7 @@ const own = createRequire(import.meta.url);
 
 /**
  * The package the user's project resolves (the copy its config's definitions are bundled with), else
- * this package's. The runtime, kernel, connections and CLI are peer dependencies, so they're one copy
+ * this package's. The runtime and the CLI are peer dependencies (they bring the kernel and connections), so they're one copy
  * in an installed project and `instanceof` holds across the bundle.
  */
 function fromProject(dir: string, id: string) {

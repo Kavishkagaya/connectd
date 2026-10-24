@@ -128,17 +128,16 @@ export async function deploy(o: DeployOptions): Promise<Deployed> {
   return r;
 }
 
-/** The target's adapter module, resolved from the project (where it's installed), else from the CLI. */
+/** The target's adapter module, resolved from the project, where it's installed. */
 async function load(dir: string, id: string): Promise<Adapter> {
   let path: string;
   try {
     path = createRequire(join(dir, "package.json")).resolve(id);
-  } catch {
-    try {
-      path = createRequire(import.meta.url).resolve(id);
-    } catch {
-      throw new Error(`the deploy target's adapter ${id} isn't installed: bun add -d ${id.split("/").slice(0, 2).join("/")}`);
-    }
+  } catch (e) {
+    const code = (e as { code?: string }).code;
+    if (code !== "MODULE_NOT_FOUND" && code !== "ERR_MODULE_NOT_FOUND") throw e;
+    const pkg = id.split("/").slice(0, id.startsWith("@") ? 2 : 1).join("/");
+    throw new Error(`the deploy target's adapter ${id} isn't installed: bun add -d ${pkg}`);
   }
   const m = (await import(pathToFileURL(path).href)) as Partial<Adapter>;
   if (typeof m.deploy !== "function") throw new Error(`${id} has no deploy(): not a deploy adapter`);

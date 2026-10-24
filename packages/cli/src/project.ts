@@ -118,7 +118,9 @@ export function resolve(config: Config, env: Env): Resolved {
   const raw = typeof config === "function" ? config(seen) : config;
   if (!raw || typeof raw !== "object") throw new Error("the config must export defineConfig({ ... })");
   if (raw.definitions !== undefined && !Array.isArray(raw.definitions)) throw new Error("definitions must be a list");
-  if ("deploy" in raw) throw new Error("deploy: { name, url } is now the target's: target: cloudflare({ name, url }) from @openconnect/cloudflare");
+  if ("deploy" in raw) throw new Error("the config's deploy: { name, url } is gone: say where it deploys with target: cloudflare({ name, url }) from @openconnect/cloudflare");
+  if (raw.target !== undefined && (typeof raw.target !== "object" || raw.target === null || typeof raw.target.adapter !== "string"))
+    throw new Error("target must be a target: target: cloudflare({ name }) from @openconnect/cloudflare (did you forget the call?)");
   const p = { ...raw, definitions: raw.definitions ?? [] };
   const registry: Record<string, AnyDefinition> = {};
   const own: Record<string, unknown> = {};

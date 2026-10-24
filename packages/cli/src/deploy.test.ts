@@ -374,7 +374,9 @@ test("targets: deploy needs one; the options give the name and URL, flags win; d
   expect(r.url).toBe("https://oc.example.com");
   expect((await s.run({ dryRun: true, name: "from-flag" })).name).toBe("from-flag");
   const bad = setup({ target: '{ adapter: "@openconnect/nope/adapter", options: {} }' });
-  await expect(bad.run()).rejects.toThrow("adapter @openconnect/nope/adapter isn't installed");
+  await expect(bad.run()).rejects.toThrow("adapter @openconnect/nope/adapter isn't installed: bun add -d @openconnect/nope");
+  await expect(setup({ target: '{ adapter: "nope-adapter/deploy" }' }).run()).rejects.toThrow("isn't installed: bun add -d nope-adapter");
+  await expect(setup({ target: "cloudflare" }).run()).rejects.toThrow("did you forget the call?");
   const old = setup({ target: "cloudflare(), deploy: { name: 'x' }" });
-  await expect(old.run()).rejects.toThrow("deploy: { name, url } is now the target's");
+  await expect(old.run()).rejects.toThrow("the config's deploy: { name, url } is gone");
 });
