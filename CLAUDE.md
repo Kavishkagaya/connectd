@@ -88,7 +88,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bu
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save
+  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save (watcher skips build output, hidden dirs, generated types)
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) and `connectd diff <id>` (unified diff against the catalog)
   src/cli.ts, args.ts commands (dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
@@ -99,6 +99,8 @@ packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, ur
   src/generate.ts     deploy's files in .connectd/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
+
+examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` checks it): github (OAuth app), oc.routes, APP_URL in .env; `connectd dev` and `next dev` run side by side
 
 scripts/pack.ts       `bun run pack`: every package built to JavaScript (tsc in the Node, Workers and DOM type environments), staged with exports and bin on dist/, npm-packed into .pack/
 

@@ -67,6 +67,14 @@ export function swappable() {
   return { program, swap: (p: Program) => void ((current = p), gen++) };
 }
 
+/** Build output, dependencies, hidden folders (.next, .git, .connectd, .turbo), and generated types: saves there never reload. `.env*` does. */
+const SKIP = new Set(["node_modules", "dist", "build", "out"]);
+export function ignored(path: string) {
+  const s = path.split(/[/\\]/);
+  const file = s.pop() ?? "";
+  return s.some((x) => x.startsWith(".") || SKIP.has(x)) || SKIP.has(file) || (file.startsWith(".") && !file.startsWith(".env")) || /\.(d\.ts|tsbuildinfo|log)$/.test(file);
+}
+
 /**
  * A `(Request) => Response` handler on node:http (Node and Bun both have it), on localhost. `port` 0
  * picks a free one.
@@ -223,7 +231,7 @@ export async function dev(o: DevOptions) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let running = Promise.resolve();
     const changed = (_: unknown, f: string | Buffer | null) => {
-      if (IGNORED.test(String(f ?? ""))) return;
+      if (ignored(String(f ?? ""))) return;
       clearTimeout(timer);
       timer = setTimeout(
         () =>

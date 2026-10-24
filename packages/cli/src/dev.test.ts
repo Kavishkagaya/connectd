@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Overview } from "@connectd/dashboard";
 import { type ConnectionEvent, connectd } from "@connectd/sdk";
 import { main } from "./cli.ts";
-import { type Dev, dev, serve, swappable } from "./dev.ts";
+import { type Dev, dev, ignored, serve, swappable } from "./dev.ts";
 import type { Program } from "@connectd/kernel";
 import { memory } from "@connectd/kernel/memory";
 import { parseEnv } from "./env.ts";
@@ -425,4 +425,9 @@ test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-
   } finally {
     await s.stop();
   }
+});
+
+test("watcher: build output, dependencies and hidden folders never reload; .env and sources do", () => {
+  for (const p of [".next/server/app.js", "node_modules/x/i.js", ".connectd/state.json", ".git/index", "dist/a.js", "src/oc/x/.y.ts.swp", ".git", ".next", "next-env.d.ts", "tsconfig.tsbuildinfo"]) expect([p, ignored(p)]).toEqual([p, true]);
+  for (const p of [".env", ".env.local", "oc.config.ts", "src/oc/github/connection.ts", "app/page.tsx"]) expect([p, ignored(p)]).toEqual([p, false]);
 });
