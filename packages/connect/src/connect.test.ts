@@ -75,7 +75,7 @@ test("popup: messages from another origin, window or attempt are ignored; provid
   const popup = t.win.opened[0]!;
   const nonce = (t.requests.find((r) => r.path === "/session/authorize")!.body as { nonce: string }).nonce;
   expect(nonce).toMatch(/^[0-9a-f]{24}$/);
-  const ok = { type: "openconnect", nonce, status: "connected" };
+  const ok = { type: "connectd", nonce, status: "connected" };
   t.win.post(ok, "https://evil.test", popup);
   t.win.post(ok, OC, {});
   t.win.post({ ...ok, nonce: "other" }, OC, popup);
@@ -122,7 +122,7 @@ async function coop(t: Awaited<ReturnType<typeof setup>>, token: string) {
   }
   expect(s.r).toBeUndefined();
   const { returnUrl } = await t.finish({ noOpener: true });
-  expect(returnUrl).toMatch(/^https:\/\/app\.test\/back#openconnect=authorized&definition=example&id=u1&completion=[\w.-]+&nonce=[0-9a-f]{24}$/);
+  expect(returnUrl).toMatch(/^https:\/\/app\.test\/back#connectd=authorized&definition=example&id=u1&completion=[\w.-]+&nonce=[0-9a-f]{24}$/);
   // The app's page, loaded in the popup (same origin as the opener).
   const inPopup = Object.assign(Object.create(t.win), { name: "", close: () => {} }); // COOP cleared window.name
   t.win.location.href = returnUrl!;
@@ -175,7 +175,7 @@ test("popup blocked: falls back to a redirect when the session has a returnUrl, 
   expect(await connect({ url: OC, token, window: W(t.win) })).toEqual({ status: "redirecting" });
   expect(t.win.navigations[0]!.popup).toBeUndefined();
   const { location } = await t.finish();
-  expect(location).toStartWith(`${APP}/settings#openconnect=authorized&definition=example&id=u1&completion=`);
+  expect(location).toStartWith(`${APP}/settings#connectd=authorized&definition=example&id=u1&completion=`);
   expect(await t.status("example", "u1")).toBe("pending");
   t.win.location.href = location!;
   expect(await resume({ url: OC, token, window: W(t.win) })).toEqual({ status: "connected" });
@@ -250,8 +250,8 @@ test("COOP wait: a `connected` broadcast is checked against the state; a dead se
   await settle();
   // Another of the app's pages (or a script on the origin) says connected: the state says pending, so not believed.
   const nonce = (t.requests.find((r) => r.path === "/session/authorize")!.body as { nonce: string }).nonce;
-  const bc = new t.win.BroadcastChannel(`openconnect:${nonce}`);
-  bc.postMessage({ type: "openconnect", nonce, status: "connected" });
+  const bc = new t.win.BroadcastChannel(`connectd:${nonce}`);
+  bc.postMessage({ type: "connectd", nonce, status: "connected" });
   await settle();
   expect(s.r).toBeUndefined();
   bc.close();

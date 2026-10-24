@@ -1,4 +1,4 @@
-import { base64url, type Json, routeTicket } from "@openconnect/kernel";
+import { base64url, type Json, routeTicket } from "@connectd/kernel";
 import { type Index, listing } from "./directory.ts";
 import { type AnyDefinition, COOKIES, Fail, type Fault, fault, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { complete } from "./session.ts";
@@ -23,10 +23,10 @@ export type Api = {
 export type Route = { public?: boolean; fetch(req: Request, api: Api, path: string[]): Promise<Response> };
 
 /**
- * Errors the runtime itself answers carry `openconnect-error: <code>`, so a client can tell them from
+ * Errors the runtime itself answers carry `connectd-error: <code>`, so a client can tell them from
  * a provider's response on the proxy (the proxy strips the header from upstream responses).
  */
-export const ERROR_HEADER = "openconnect-error";
+export const ERROR_HEADER = "connectd-error";
 
 export const reply = (r: Reply) =>
   "ok" in r ? Response.json(r.ok) : Response.json({ error: r.error }, { status: r.error.status, headers: { [ERROR_HEADER]: r.error.code } });

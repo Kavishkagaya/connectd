@@ -1,4 +1,4 @@
-import { base64url, type Json, randomId } from "@openconnect/kernel";
+import { base64url, type Json, randomId } from "@connectd/kernel";
 
 /**
  * OAuth protocol atoms: RFC 6749 + PKCE (7636), device code (8628), DCR (7591), revocation (7009).

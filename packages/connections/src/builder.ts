@@ -1,4 +1,4 @@
-import type { Json, Limit, Observed } from "@openconnect/kernel";
+import type { Json, Limit, Observed } from "@connectd/kernel";
 import { BEARER, type ConfigFrom, type Ctx, type Definition, type Inject, inject, type Webhooks } from "./define.ts";
 import { type Flow, type Flows, flows, IDENTITY, STEPS } from "./flows.ts";
 import type { Credential } from "./lifecycle.ts";
@@ -22,8 +22,8 @@ import { badEventName, type StandardSchemaV1 } from "./action.ts";
 // `.identity()`) drops them, so call them last. Carry them as type parameters if that order bites.
 // ponytail: compiles to #17's `Definition`, so the runtime is unchanged. What a connection does lives outside it, in actions (action.ts).
 
-// `Symbol.for`: a config bundled with its own copy of this package (`openconnect dev`) still matches.
-const DEF = Symbol.for("openconnect.definition");
+// `Symbol.for`: a config bundled with its own copy of this package (`connectd dev`) still matches.
+const DEF = Symbol.for("connectd.definition");
 
 /**
  * A built connection: its id (a literal type, for the typed client) and what the runtime runs.

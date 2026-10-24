@@ -1,5 +1,5 @@
-import { bind, type Definition, IllegalTransition, InputError, NotActive, OAuthError, safeEqual } from "@openconnect/connections";
-import { type Driver, handleRate, type Json, type Kernel, type Keys, kernel, type Program, RATE, type Ticket } from "@openconnect/kernel";
+import { bind, type Definition, IllegalTransition, InputError, NotActive, OAuthError, safeEqual } from "@connectd/connections";
+import { type Driver, handleRate, type Json, type Kernel, type Keys, kernel, type Program, RATE, type Ticket } from "@connectd/kernel";
 
 /**
  * The connection host: one Program that runs any definition from a registry, one instance per
@@ -53,7 +53,7 @@ export type Target = {
 };
 
 /** The callback route passes the request's Cookie header to `callback` under this key (never taken from the query). */
-export const COOKIES = "openconnect.cookies";
+export const COOKIES = "connectd.cookies";
 
 const cookie = (header: string, name: string) =>
   header

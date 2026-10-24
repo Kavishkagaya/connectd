@@ -1,10 +1,10 @@
 {
-  "name": "@openconnect/cli",
+  "name": "@connectd/cli",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
-    "openconnect": "./src/bin.ts"
+    "connectd": "./src/bin.ts"
   },
   "exports": {
     ".": "./src/index.ts",
@@ -15,18 +15,18 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@openconnect/dashboard": "workspace:*"
+    "@connectd/dashboard": "workspace:*"
   },
   "devDependencies": {
-    "@openconnect/cloudflare": "workspace:*",
-    "@openconnect/connections": "workspace:*",
-    "@openconnect/kernel": "workspace:*",
-    "@openconnect/runtime": "workspace:*",
-    "@openconnect/sdk": "workspace:*"
+    "@connectd/cloudflare": "workspace:*",
+    "@connectd/connections": "workspace:*",
+    "@connectd/kernel": "workspace:*",
+    "@connectd/runtime": "workspace:*",
+    "@connectd/sdk": "workspace:*"
   },
   "peerDependencies": {
-    "@openconnect/connections": "workspace:*",
-    "@openconnect/kernel": "workspace:*",
-    "@openconnect/runtime": "workspace:*"
+    "@connectd/connections": "workspace:*",
+    "@connectd/kernel": "workspace:*",
+    "@connectd/runtime": "workspace:*"
   }
 }

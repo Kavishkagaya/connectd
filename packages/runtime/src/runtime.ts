@@ -1,4 +1,4 @@
-import { type AnyAction, type AnyConnection, definitionOf } from "@openconnect/connections";
+import { type AnyAction, type AnyConnection, definitionOf } from "@connectd/connections";
 import { actions } from "./actions.ts";
 import type { Index } from "./directory.ts";
 import { type AnyDefinition, type Hooks, type Hosted, host, type Settings } from "./host.ts";

@@ -1,4 +1,4 @@
-import { base64url, fromBase64url, type Json } from "@openconnect/kernel";
+import { base64url, fromBase64url, type Json } from "@connectd/kernel";
 
 /**
  * JWTs for the flows that need them (#56): RS256 signing for JWT-bearer grants and GitHub App

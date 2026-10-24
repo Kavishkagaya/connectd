@@ -1,9 +1,9 @@
-import { apiKey, defineConnection, type OAuth2, oauth2 } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
-import { directory, emit, events, type Extension, memoryIndex, proxy, runtime, sessions } from "@openconnect/runtime";
-import { openconnect } from "./client.ts";
+import { apiKey, defineConnection, type OAuth2, oauth2 } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
+import { directory, emit, events, type Extension, memoryIndex, proxy, runtime, sessions } from "@connectd/runtime";
+import { connectd } from "./client.ts";
 
 /** The real runtime on the memory driver, fake providers, and an SDK client pointed at its fetch. Tests only. */
 
@@ -69,7 +69,7 @@ export async function setup() {
   const w = memory(rt.program, { now: T0 });
   clock = w.now;
   const sleeps: number[] = [];
-  const oc = openconnect({
+  const oc = connectd({
     url: "https://oc.test/",
     apiKey: "secret",
     fetch: (input, init) => rt.fetch(new Request(input, init), w.call),

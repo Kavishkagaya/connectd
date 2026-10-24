@@ -1,4 +1,4 @@
-# openconnect
+# connectd
 
 An OAuth connection platform with an open-source self-host path and a low-cost managed service on Cloudflare. A full solution (SDK, CLI, events, webhooks), not just an HTTP API.
 

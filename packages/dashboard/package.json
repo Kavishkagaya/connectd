@@ -1,5 +1,5 @@
 {
-  "name": "@openconnect/dashboard",
+  "name": "@connectd/dashboard",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -14,11 +14,11 @@
     "test": "bun test src"
   },
   "devDependencies": {
-    "@openconnect/connections": "workspace:*",
-    "@openconnect/kernel": "workspace:*",
-    "@openconnect/runtime": "workspace:*"
+    "@connectd/connections": "workspace:*",
+    "@connectd/kernel": "workspace:*",
+    "@connectd/runtime": "workspace:*"
   },
   "peerDependencies": {
-    "@openconnect/runtime": "workspace:*"
+    "@connectd/runtime": "workspace:*"
   }
 }

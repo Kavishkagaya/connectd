@@ -1,4 +1,4 @@
-import type { Json } from "@openconnect/kernel";
+import type { Json } from "@connectd/kernel";
 import type { Api, Connection } from "./builder.ts";
 import type { Credential, State } from "./lifecycle.ts";
 
@@ -93,7 +93,7 @@ export type ActionBody = {
 /** What the runtime runs: the body plus its name and its connection's definition id (from the folders). */
 export type ActionSpec = ActionBody & { id: string; connection: string };
 
-const ACTION = Symbol.for("openconnect.action");
+const ACTION = Symbol.for("connectd.action");
 
 /** A written action. `I`/`O` are its input and output, for the typed client. */
 export type Action<I = unknown, O extends Json = Json> = {

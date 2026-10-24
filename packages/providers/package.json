@@ -1,5 +1,5 @@
 {
-  "name": "@openconnect/providers",
+  "name": "@connectd/providers",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@openconnect/connections": "workspace:*",
-    "@openconnect/kernel": "workspace:*"
+    "@connectd/connections": "workspace:*",
+    "@connectd/kernel": "workspace:*"
   }
 }

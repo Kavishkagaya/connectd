@@ -10,7 +10,7 @@ export const CONFIG_FILES = ["oc.config.ts", "oc.config.js", "oc.config.mjs"];
 export function findConfig(dir: string, file?: string) {
   const f = file ?? CONFIG_FILES.find((c) => existsSync(join(dir, c)));
   if (!f || !existsSync(join(dir, f))) {
-    const renamed = !file && existsSync(join(dir, "openconnect.config.ts")) ? " (openconnect.config.ts is now oc.config.ts: rename it)" : "";
+    const renamed = !file && existsSync(join(dir, "connectd.config.ts")) ? " (connectd.config.ts is now oc.config.ts: rename it)" : "";
     throw new Error(`no ${file ?? CONFIG_FILES[0]} in ${dir}${renamed}`);
   }
   return join(dir, f);
@@ -33,7 +33,7 @@ export async function importConfig(entry: string, out: string, n: number | strin
 
 /**
  * The config with its connection folders (#54): import it, scan its `dir`, write
- * `.openconnect/entry.ts` and `registry.d.ts`, and import the entry. `entry` is what a deploy
+ * `.connectd/entry.ts` and `registry.d.ts`, and import the entry. `entry` is what a deploy
  * bundles (the config itself when there are no folders).
  */
 export async function loadProject(dir: string, configPath: string, out: string, n: number, env: Env): Promise<{ config: Config; entry: string; found: Found[] }> {

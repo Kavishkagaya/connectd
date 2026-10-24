@@ -1,5 +1,5 @@
 import { applyD1Migrations, type D1Migration, reset, runInDurableObject } from "cloudflare:test";
-import { hmacHex } from "@openconnect/connections";
+import { hmacHex } from "@connectd/connections";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { findByExternal } from "../src/directory.ts";

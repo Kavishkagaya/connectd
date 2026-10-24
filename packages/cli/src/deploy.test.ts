@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "./cli.ts";
-import { type CloudflareDeployed, generate, NO_WRANGLER } from "@openconnect/cloudflare/adapter";
+import { type CloudflareDeployed, generate, NO_WRANGLER } from "@connectd/cloudflare/adapter";
 import { deploy, type DeployOptions } from "./deploy.ts";
 import { loadProject } from "./load.ts";
 
@@ -48,8 +48,8 @@ else if (c1 === "deploy") {
 } else { console.error("fake wrangler: unknown command"); process.exit(1); }
 `;
 
-const CONFIG = (events = false, target = "cloudflare()") => `import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
-import { cloudflare } from "@openconnect/cloudflare";
+const CONFIG = (events = false, target = "cloudflare()") => `import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
+import { cloudflare } from "@connectd/cloudflare";
 export default (env) => ({
   target: ${target},
   definitions: [
@@ -74,7 +74,7 @@ function setup(o: { events?: boolean; vars?: string; target?: string } = {}) {
   const run = (x: Partial<DeployOptions> = {}) =>
     (deploy as (o: DeployOptions) => Promise<CloudflareDeployed>)({
       dir,
-      load: (env) => loadProject(dir, join(dir, "oc.config.ts"), join(dir, ".openconnect", "build"), ++n, env),
+      load: (env) => loadProject(dir, join(dir, "oc.config.ts"), join(dir, ".connectd", "build"), ++n, env),
       envFile: ".prod.vars",
       wrangler: bin,
       env,
@@ -114,22 +114,22 @@ test("first deploy: D1 created, migrations, deploy with the secrets, again for t
   expect(existsSync(sent.argv[sent.argv.indexOf("--secrets-file") + 1]!)).toBe(false);
   expect(r.url).toBe(`https://${name}.acct.workers.dev`);
   const w = s.account().workers[name]!;
-  expect(w.vars).toEqual({ OPENCONNECT_PUBLIC_URL: r.url as string });
+  expect(w.vars).toEqual({ CONNECTD_PUBLIC_URL: r.url as string });
   expect(Object.keys(w.secrets).sort()).toEqual(
-    ["GH_ID", "GH_SECRET", "OPENCONNECT_API_KEY", "OPENCONNECT_KEY_V1", "OPENCONNECT_SESSIONS_KEY", "OPENCONNECT_STATE_KEY", "OPENCONNECT_WEBHOOKS_KEY"].sort(),
+    ["GH_ID", "GH_SECRET", "CONNECTD_API_KEY", "CONNECTD_KEY_V1", "CONNECTD_SESSIONS_KEY", "CONNECTD_STATE_KEY", "CONNECTD_WEBHOOKS_KEY"].sort(),
   );
   expect(w.secrets.GH_SECRET).toBe("prod-secret");
   // Secrets never in argv; generated files and output hold none of them, except the API key printed once.
   const values = Object.values(w.secrets);
   for (const c of s.calls()) for (const v of values) expect(c.argv.join(" ")).not.toContain(v);
-  const files = [r.generated.entry, r.generated.wrangler, join(s.dir, ".openconnect", "deploy", "state.json")].map((f) => readFileSync(f, "utf8")).join("\n");
+  const files = [r.generated.entry, r.generated.wrangler, join(s.dir, ".connectd", "deploy", "state.json")].map((f) => readFileSync(f, "utf8")).join("\n");
   const out = s.lines.join("\n");
   for (const [k, v] of Object.entries(w.secrets)) {
     expect(files).not.toContain(v);
-    if (k === "OPENCONNECT_API_KEY") expect(out.split(v).length - 1).toBe(1);
+    if (k === "CONNECTD_API_KEY") expect(out.split(v).length - 1).toBe(1);
     else expect(out).not.toContain(v);
   }
-  expect(r.apiKey).toBe(w.secrets.OPENCONNECT_API_KEY!);
+  expect(r.apiKey).toBe(w.secrets.CONNECTD_API_KEY!);
   expect(out).toContain(`${r.url}/dashboard`);
 
   const cfg = JSON.parse(readFileSync(r.generated.wrangler, "utf8"));
@@ -168,10 +168,10 @@ test("re-deploy: no new keys, one deploy, same database; --rotate key adds V2; -
   expect(s.calls().some((c) => c.secrets)).toBe(false);
 
   const rot = await s.run({ rotate: ["key"] });
-  expect(rot.pushed).toEqual(["GH_ID", "GH_SECRET", "OPENCONNECT_KEY_V2"]);
-  expect(s.account().workers[first.name]!.secrets.OPENCONNECT_KEY_V1).toBe(before.OPENCONNECT_KEY_V1!);
+  expect(rot.pushed).toEqual(["GH_ID", "GH_SECRET", "CONNECTD_KEY_V2"]);
+  expect(s.account().workers[first.name]!.secrets.CONNECTD_KEY_V1).toBe(before.CONNECTD_KEY_V1!);
   const rot2 = await s.run({ rotate: ["key", "state"] });
-  expect(rot2.pushed).toEqual(["GH_ID", "GH_SECRET", "OPENCONNECT_KEY_V3", "OPENCONNECT_STATE_KEY"]);
+  expect(rot2.pushed).toEqual(["GH_ID", "GH_SECRET", "CONNECTD_KEY_V3", "CONNECTD_STATE_KEY"]);
   const api = await s.run({ rotate: ["api-key"] });
   expect(api.apiKey).toBeDefined();
   expect(api.apiKey).not.toBe(first.apiKey);
@@ -185,7 +185,7 @@ test("custom domain: --url sets the var and a custom-domain route, deployed once
   expect(JSON.parse(readFileSync(r.generated.wrangler, "utf8"))).toMatchObject({
     workers_dev: false,
     routes: [{ pattern: "connect.example.com", custom_domain: true }],
-    vars: { OPENCONNECT_PUBLIC_URL: "https://connect.example.com" },
+    vars: { CONNECTD_PUBLIC_URL: "https://connect.example.com" },
   });
   await expect(s.run({ url: "https://example.com/oc" })).rejects.toThrow(/served at its root/);
   await expect(s.run({ url: "http://example.com" })).rejects.toThrow(/https/);
@@ -193,33 +193,33 @@ test("custom domain: --url sets the var and a custom-domain route, deployed once
 
 test("refused before anything changes: dev keys, generated keys in the env file, events without a secret, bad rotations", async () => {
   const s = setup({ events: true });
-  await expect(s.run()).rejects.toThrow(/events are on: set OPENCONNECT_EVENTS_SECRET/);
+  await expect(s.run()).rejects.toThrow(/events are on: set CONNECTD_EVENTS_SECRET/);
   expect(s.calls().map(cmd)).toEqual([expect.stringMatching(/^secret list/)]);
 
   for (const [vars, err] of [
-    ["OPENCONNECT_STATE_KEY=x\n", /generated by deploy/],
-    ["OPENCONNECT_KEY_V1=x\n", /generated by deploy/],
-    ["OPENCONNECT_PUBLIC_URL=https://x.test\n", /comes from --url/],
+    ["CONNECTD_STATE_KEY=x\n", /generated by deploy/],
+    ["CONNECTD_KEY_V1=x\n", /generated by deploy/],
+    ["CONNECTD_PUBLIC_URL=https://x.test\n", /comes from --url/],
   ] as const) {
     writeFileSync(join(s.dir, ".prod.vars"), vars);
     await expect(s.run()).rejects.toThrow(err);
   }
-  mkdirSync(join(s.dir, ".openconnect"), { recursive: true });
-  writeFileSync(join(s.dir, ".openconnect", "dev.vars"), "OPENCONNECT_API_KEY=oc_dev\n");
-  await expect(s.run({ envFile: ".openconnect/dev.vars" })).rejects.toThrow(/dev keys/);
-  writeFileSync(join(s.dir, ".prod.vars"), "OPENCONNECT_API_KEY=oc_dev\n");
+  mkdirSync(join(s.dir, ".connectd"), { recursive: true });
+  writeFileSync(join(s.dir, ".connectd", "dev.vars"), "CONNECTD_API_KEY=oc_dev\n");
+  await expect(s.run({ envFile: ".connectd/dev.vars" })).rejects.toThrow(/dev keys/);
+  writeFileSync(join(s.dir, ".prod.vars"), "CONNECTD_API_KEY=oc_dev\n");
   await expect(s.run()).rejects.toThrow(/is the dev value/);
-  writeFileSync(join(s.dir, ".prod.vars"), "OPENCONNECT_API_KEY=mine\n");
+  writeFileSync(join(s.dir, ".prod.vars"), "CONNECTD_API_KEY=mine\n");
   await expect(s.run({ rotate: ["api-key"] })).rejects.toThrow(/change it there/);
   await expect(s.run({ rotate: ["webhooks"] })).rejects.toThrow(/break every registered webhook/);
   await expect(s.run({ rotate: ["nope"] })).rejects.toThrow(/--rotate takes/);
   await expect(s.run({ envFile: "missing.vars" })).rejects.toThrow(/no env file/);
 
   // With the secret in the env file it goes through, and the given API key is used (never printed).
-  writeFileSync(join(s.dir, ".prod.vars"), `OPENCONNECT_API_KEY=mine\nOPENCONNECT_EVENTS_SECRET=whsec_${btoa("x".repeat(32))}\n`);
+  writeFileSync(join(s.dir, ".prod.vars"), `CONNECTD_API_KEY=mine\nCONNECTD_EVENTS_SECRET=whsec_${btoa("x".repeat(32))}\n`);
   const r = await s.run();
   expect(r.apiKey).toBeUndefined();
-  expect(s.account().workers[r.name]!.secrets.OPENCONNECT_API_KEY).toBe("mine");
+  expect(s.account().workers[r.name]!.secrets.CONNECTD_API_KEY).toBe("mine");
   expect(s.lines.join("\n")).not.toContain("whsec_");
 });
 
@@ -244,12 +244,12 @@ test("--dry-run: writes the entry, wrangler config and migrations, prints the pl
   const out = s.lines.join("\n");
   expect(out).toContain("dry run: nothing is sent to Cloudflare");
   expect(out).toContain("definitions  keyed, gh");
-  expect(out).toContain(".openconnect/deploy/worker.ts");
+  expect(out).toContain(".connectd/deploy/worker.ts");
   const entry = readFileSync(r.generated.entry, "utf8");
   expect(entry).toContain('from "../../oc.config.ts"');
-  expect(entry).not.toContain("openconnect:config");
+  expect(entry).not.toContain("connectd:config");
   expect(entry).toMatch(/from "\.\.\/.*runtime\/src\/cloudflare\.ts"/);
-  expect(readFileSync(join(s.dir, ".openconnect", ".gitignore"), "utf8")).toBe("*\n");
+  expect(readFileSync(join(s.dir, ".connectd", ".gitignore"), "utf8")).toBe("*\n");
 });
 
 test("cli: deploy flags, --managed deferred", async () => {
@@ -259,7 +259,7 @@ test("cli: deploy flags, --managed deferred", async () => {
   expect(out.at(-1)).toContain("#34");
   const s = setup();
   expect(await main(["deploy", "--dry-run", "--name", "cli-test", "--env-file", ".prod.vars"], { log, dir: s.dir })).toBe(0);
-  expect(out.join("\n")).toContain("openconnect deploy cli-test");
+  expect(out.join("\n")).toContain("connectd deploy cli-test");
   expect(await main(["deploy", "--dry-run", "--url", "nope"], { log, dir: s.dir })).toBe(1);
   // generate() alone, as the workerd test uses it.
   expect(generate({ dir: s.dir, config: join(s.dir, "oc.config.ts"), name: "x" }).wrangler).toEndWith("wrangler.json");
@@ -268,14 +268,14 @@ test("cli: deploy flags, --managed deferred", async () => {
 test("existing Worker without state.json (CI): refused until --url, its vars never dropped", async () => {
   const s = setup();
   const first = await s.run();
-  rmSync(join(s.dir, ".openconnect", "deploy", "state.json"));
+  rmSync(join(s.dir, ".connectd", "deploy", "state.json"));
   s.reset();
   await expect(s.run()).rejects.toThrow(/exists, but its public URL isn't known here/);
   expect(s.calls().map(cmd)).toEqual([`secret list --name ${first.name} --format json`]);
   const again = await s.run({ url: first.url! });
   expect(again.pushed).toEqual(["GH_ID", "GH_SECRET"]);
   // Every version after the new Worker's first pass carried the public URL.
-  expect(s.account().workers[first.name]!.history).toEqual([{}, { OPENCONNECT_PUBLIC_URL: first.url! }, { OPENCONNECT_PUBLIC_URL: first.url! }]);
+  expect(s.account().workers[first.name]!.history).toEqual([{}, { CONNECTD_PUBLIC_URL: first.url! }, { CONNECTD_PUBLIC_URL: first.url! }]);
 });
 
 test("new-Worker detection: only Cloudflare's 10007; an index without its Worker needs --new-keys", async () => {
@@ -295,7 +295,7 @@ test("new-Worker detection: only Cloudflare's 10007; an index without its Worker
   await expect(s.run()).rejects.toThrow(/exists but Worker .* doesn't[\s\S]*--new-keys/);
   expect(s.calls().some((c) => c.argv[0] === "deploy")).toBe(false);
   const again = await s.run({ newKeys: true });
-  expect(again.pushed).toContain("OPENCONNECT_KEY_V1");
+  expect(again.pushed).toContain("CONNECTD_KEY_V1");
 });
 
 test("generated entry: the runtime the project resolves", async () => {
@@ -310,7 +310,7 @@ test("a signal during wrangler deploy removes the secrets file, stops wrangler, 
   const tmp = mkdtempSync(join(TMP, "tmpdir-"));
   const p = spawn(join(import.meta.dir, "bin.ts"), ["deploy", "--env-file", ".prod.vars"], {
     cwd: s.dir,
-    env: { ...s.env, OPENCONNECT_WRANGLER: join(s.dir, "wrangler-fake"), FAKE_SLEEP: "1", TMPDIR: tmp },
+    env: { ...s.env, CONNECTD_WRANGLER: join(s.dir, "wrangler-fake"), FAKE_SLEEP: "1", TMPDIR: tmp },
     stdio: "ignore",
   });
   const secrets = () => readdirSync(tmp).flatMap((d) => (existsSync(join(tmp, d, "secrets.json")) ? [d] : []));
@@ -336,19 +336,19 @@ test("one env: .env.production by default, only the names the project reads are 
   expect(out).toContain("not sent     DATABASE_URL");
 
   // Manual deploy: the app's env lines, the new API key once.
-  expect(out).toContain(`OPENCONNECT_URL=${r.url}`);
-  expect(out).toContain(`OPENCONNECT_API_KEY=${r.apiKey}   (shown once`);
+  expect(out).toContain(`CONNECTD_URL=${r.url}`);
+  expect(out).toContain(`CONNECTD_API_KEY=${r.apiKey}   (shown once`);
 
   // No file outside CI: refused (a local shell holds dev's .env too).
   const t = setup({ vars: "" });
   await expect(t.run({ envFile: undefined })).rejects.toThrow("no .env.production");
   // CI: the shell's environment (CI secrets), still only the names read; the API key must come from it.
   const shell = { ...t.env, CI: "true", GH_ID: "shell-id", GH_SECRET: "shell-secret", DATABASE_URL: "postgres://prod" };
-  await expect(t.run({ envFile: undefined, env: shell })).rejects.toThrow("CI: set OPENCONNECT_API_KEY");
-  const r2 = await t.run({ envFile: undefined, env: { ...shell, OPENCONNECT_API_KEY: "oc_from_ci" } });
+  await expect(t.run({ envFile: undefined, env: shell })).rejects.toThrow("CI: set CONNECTD_API_KEY");
+  const r2 = await t.run({ envFile: undefined, env: { ...shell, CONNECTD_API_KEY: "oc_from_ci" } });
   const w2 = t.account().workers[r2.name]!;
   expect(w2.secrets.GH_ID).toBe("shell-id");
-  expect(w2.secrets.OPENCONNECT_API_KEY).toBe("oc_from_ci");
+  expect(w2.secrets.CONNECTD_API_KEY).toBe("oc_from_ci");
   expect(r2.apiKey).toBeUndefined();
   expect(Object.keys(w2.secrets)).not.toContain("DATABASE_URL");
   expect(Object.keys(w2.secrets)).not.toContain("PATH");
@@ -359,7 +359,7 @@ test("one env: .env.production by default, only the names the project reads are 
   // Dev's values never go out: .env as the file, or a value equal to .env's.
   writeFileSync(join(t.dir, ".env"), "GH_ID=dev-id\n");
   await expect(t.run({ envFile: ".env" })).rejects.toThrow(".env is dev's");
-  await expect(t.run({ envFile: undefined, env: { ...shell, GH_ID: "dev-id", OPENCONNECT_API_KEY: "oc_from_ci" } })).rejects.toThrow("GH_ID in the shell environment is the dev value from .env");
+  await expect(t.run({ envFile: undefined, env: { ...shell, GH_ID: "dev-id", CONNECTD_API_KEY: "oc_from_ci" } })).rejects.toThrow("GH_ID in the shell environment is the dev value from .env");
 });
 
 test("parseEnv: a double-quoted value may span lines (a PEM key)", () => {
@@ -373,8 +373,8 @@ test("targets: deploy needs one; the options give the name and URL, flags win; d
   expect(r.name).toBe("from-config");
   expect(r.url).toBe("https://oc.example.com");
   expect((await s.run({ dryRun: true, name: "from-flag" })).name).toBe("from-flag");
-  const bad = setup({ target: '{ adapter: "@openconnect/nope/adapter", options: {} }' });
-  await expect(bad.run()).rejects.toThrow("adapter @openconnect/nope/adapter isn't installed: bun add -d @openconnect/nope");
+  const bad = setup({ target: '{ adapter: "@connectd/nope/adapter", options: {} }' });
+  await expect(bad.run()).rejects.toThrow("adapter @connectd/nope/adapter isn't installed: bun add -d @connectd/nope");
   await expect(setup({ target: '{ adapter: "nope-adapter/deploy" }' }).run()).rejects.toThrow("isn't installed: bun add -d nope-adapter");
   await expect(setup({ target: "cloudflare" }).run()).rejects.toThrow("did you forget the call?");
   const old = setup({ target: "cloudflare(), deploy: { name: 'x' }" });

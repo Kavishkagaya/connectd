@@ -38,7 +38,7 @@ const base = (f: Flows<Config>) =>
 const example = connection("example")
   .config<Config>()
   .auth((f) => base(f).scopes("read"))
-  .api({ baseUrl: "https://api.example.test/v1/", headers: { "user-agent": "openconnect" } })
+  .api({ baseUrl: "https://api.example.test/v1/", headers: { "user-agent": "connectd" } })
   .limit({ connection: { count: 10, periodMs: 1000 } })
   .identity(async ({ api }) => api.get<{ id: string; auth: string; agent: string }>("/me"))
   .external((me) => ({ id: me.id }));
@@ -57,7 +57,7 @@ test("builder: oauth2 overrides call the standard step through next; api backs i
 
   await callback(p.approve(url.toString()));
   // identity's api: the base URL joined, the bearer token on, the default header added.
-  expect(await c.metadata()).toEqual({ id: "u1", auth: "Bearer a1", agent: "openconnect" });
+  expect(await c.metadata()).toEqual({ id: "u1", auth: "Bearer a1", agent: "connectd" });
   expect(((await c.token()) as OAuth2).accessToken).toBe("a1");
 
   await w.advance(H);

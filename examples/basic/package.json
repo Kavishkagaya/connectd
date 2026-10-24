@@ -1,18 +1,18 @@
 {
-  "name": "openconnect-example-basic",
+  "name": "connectd-example-basic",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "openconnect dev",
-    "deploy": "openconnect deploy"
+    "dev": "connectd dev",
+    "deploy": "connectd deploy"
   },
   "dependencies": {
-    "@openconnect/cli": "workspace:*",
-    "@openconnect/cloudflare": "workspace:*",
-    "@openconnect/connections": "workspace:*",
-    "@openconnect/kernel": "workspace:*",
-    "@openconnect/providers": "workspace:*",
-    "@openconnect/runtime": "workspace:*",
-    "@openconnect/sdk": "workspace:*"
+    "@connectd/cli": "workspace:*",
+    "@connectd/cloudflare": "workspace:*",
+    "@connectd/connections": "workspace:*",
+    "@connectd/kernel": "workspace:*",
+    "@connectd/providers": "workspace:*",
+    "@connectd/runtime": "workspace:*",
+    "@connectd/sdk": "workspace:*"
   }
 }

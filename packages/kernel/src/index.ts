@@ -1,4 +1,4 @@
-// The kernel (#53): the management layer of one instance. Mechanism only; connections live in @openconnect/connections.
+// The kernel (#53): the management layer of one instance. Mechanism only; connections live in @connectd/connections.
 export type { Driver, Handler, Json, Program } from "./driver.ts";
 export { type Cell, type Item, type Value } from "./cell.ts";
 export { type Kernel, type KernelOptions, kernel, type Method } from "./kernel.ts";

@@ -1,5 +1,5 @@
-import type { ConnectionEvent } from "@openconnect/runtime";
-import { verify } from "@openconnect/runtime/signature";
+import type { ConnectionEvent } from "@connectd/runtime";
+import { verify } from "@connectd/runtime/signature";
 import type { Connection } from "./client.ts";
 import type { EventFor, EventsOf, Registry } from "./registry.ts";
 
@@ -8,7 +8,7 @@ import type { EventFor, EventsOf, Registry } from "./registry.ts";
  * `ConnectionEvent`, run its handlers. Delivery is at least once and retried until a 2xx, so the
  * answer is the contract: 204 handled (or nothing to do), 401 bad signature, 500 a handler threw.
  *
- *   const ev = oc.events({ secret: process.env.OPENCONNECT_EVENTS_SECRET });
+ *   const ev = oc.events({ secret: process.env.CONNECTD_EVENTS_SECRET });
  *   ev.on("connection.reauth_required", async (e, conn) => notify(e.connection.id));
  *   ev.on("webhook.push", (e) => ...); ev.on("syncIssues.completed", (e) => e.data.output);
  *   export const POST = (req: Request) => ev.handle(req); // Next, Hono `c.req.raw`, Bun, Workers, Deno
@@ -66,7 +66,7 @@ export function events<R = Registry>(o: EventsOptions, connection: (def: string,
         for (const h of [...(handlers.get(e.type) ?? []), ...(handlers.get("*") ?? [])]) await h(e, conn);
       } catch (err) {
         // Not a 2xx, so the runtime keeps the event and retries it (same webhook-id), in order.
-        console.error("openconnect event handler failed", id, err);
+        console.error("connectd event handler failed", id, err);
         return answer(500, "handler failed");
       }
       await o.dedupe?.add(id);

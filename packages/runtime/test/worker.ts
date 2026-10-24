@@ -1,5 +1,5 @@
-import { apiKey, defineConnection, hmacHex, safeEqual } from "@openconnect/connections";
-import { importHmacKey, importKeys } from "@openconnect/kernel";
+import { apiKey, defineConnection, hmacHex, safeEqual } from "@connectd/connections";
+import { importHmacKey, importKeys } from "@connectd/kernel";
 import { cloudflare, d1Index } from "../src/cloudflare.ts";
 import { directory } from "../src/directory.ts";
 import { events } from "../src/events.ts";

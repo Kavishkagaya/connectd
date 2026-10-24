@@ -2,16 +2,16 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve as resolvePath } from "node:path";
-import type { DeployContext, Deployed, Env } from "@openconnect/cli";
-import { ENV, generateKeys } from "@openconnect/cli/keys";
-import { workdir } from "@openconnect/cli/workdir";
+import type { DeployContext, Deployed, Env } from "@connectd/cli";
+import { ENV, generateKeys } from "@connectd/cli/keys";
+import { workdir } from "@connectd/cli/workdir";
 import { type Generated, generate, publicUrl, workerName } from "./generate.ts";
 import type { CloudflareOptions } from "./index.ts";
 
 /**
  * The Cloudflare adapter (`target: cloudflare(...)`): the project into the user's own account,
  * through wrangler. The CLI has already chosen the production env and the secrets. Generated files
- * go to `.openconnect/deploy/` (gitignored, rebuilt on every deploy, nothing secret in them);
+ * go to `.connectd/deploy/` (gitignored, rebuilt on every deploy, nothing secret in them);
  * secrets go to Cloudflare with the deployed version, through a 0600 temp file removed right after,
  * and nowhere else.
  */
@@ -23,7 +23,7 @@ const ROTATES: Record<string, string> = { [ENV.state]: "state", [ENV.sessions]: 
 /** The JSON array in a wrangler command's stdout (anything printed before it is skipped). */
 const json = <T>(out: string) => JSON.parse(out.slice(Math.max(0, out.search(/^\s*\[/m)))) as T;
 
-export const NO_WRANGLER = `openconnect deploy runs wrangler, which isn't installed here:
+export const NO_WRANGLER = `connectd deploy runs wrangler, which isn't installed here:
   bun add -d wrangler     (or npm i -D wrangler)
   bunx wrangler login     (or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)`;
 
@@ -47,7 +47,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
   const db = `${name}-index`;
   log(
     [
-      `\nopenconnect deploy ${name}${o.dryRun ? "  (dry run: nothing is sent to Cloudflare)" : ""}`,
+      `\nconnectd deploy ${name}${o.dryRun ? "  (dry run: nothing is sent to Cloudflare)" : ""}`,
       `  public URL   ${url ?? "the workers.dev URL (read from the first deploy, then deployed again with it)"}`,
       ...o.summary,
       "  steps        wrangler secret list · d1 list (create if missing) · d1 migrations apply --remote · deploy --secrets-file (0600 temp file)",
@@ -60,7 +60,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
     return { name, url, dryRun: true as const, generated: g };
   }
 
-  const bin = o.bin ?? env.OPENCONNECT_WRANGLER ?? (existsSync(join(o.dir, "node_modules", ".bin", "wrangler")) ? join(o.dir, "node_modules", ".bin", "wrangler") : "wrangler");
+  const bin = o.bin ?? env.CONNECTD_WRANGLER ?? (existsSync(join(o.dir, "node_modules", ".bin", "wrangler")) ? join(o.dir, "node_modules", ".bin", "wrangler") : "wrangler");
   const w = (args: string[]) => wrangler(bin, args, o.dir, env, log);
 
   // What the Worker already has: secrets are never rotated or regenerated unless asked.
@@ -71,7 +71,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
   });
   if (list !== null && !url)
     throw new Error(
-      `Worker ${name} exists, but its public URL isn't known here (.openconnect/deploy/state.json from its first deploy is missing, e.g. in CI): pass --url https://${name}.<your-subdomain>.workers.dev (or its custom domain), or set cloudflare({ url }) in the config. Deploying without it would drop its OPENCONNECT_PUBLIC_URL.`,
+      `Worker ${name} exists, but its public URL isn't known here (.connectd/deploy/state.json from its first deploy is missing, e.g. in CI): pass --url https://${name}.<your-subdomain>.workers.dev (or its custom domain), or set cloudflare({ url }) in the config. Deploying without it would drop its CONNECTD_PUBLIC_URL.`,
     );
   const have = new Set(list === null ? [] : json<{ name: string }[]>(list).map((s) => s.name));
   if (project.events && !secrets[ENV.events] && !have.has(ENV.events))
@@ -107,7 +107,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
 
   // Secrets go up with the version (`--secrets-file`), so new code never runs without them. Wrangler
   // reads them from a file only: a 0600 file in a fresh temp dir, removed right after. Never argv.
-  const tmp = mkdtempSync(join(tmpdir(), "openconnect-"));
+  const tmp = mkdtempSync(join(tmpdir(), "connectd-"));
   let child: ChildProcess | undefined;
   // A signal skips `finally`: remove the secrets first, stop wrangler, and exit non-zero.
   const abort = (sig: NodeJS.Signals) => {
@@ -137,7 +137,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
   }
   if (!url) {
     // A new Worker (an existing one needs its URL known, above). ponytail: the workers.dev subdomain
-    // is only known from wrangler's output, so the first deploy goes out without OPENCONNECT_PUBLIC_URL
+    // is only known from wrangler's output, so the first deploy goes out without CONNECTD_PUBLIC_URL
     // and a second one sets it; state.json remembers it.
     const deployed = /https:\/\/[a-z0-9.-]+\.workers\.dev/.exec(out)?.[0];
     if (!deployed) throw new Error("wrangler deploy printed no workers.dev URL; pass --url");

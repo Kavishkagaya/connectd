@@ -1,7 +1,7 @@
 import type { Env, Resolved } from "./project.ts";
 
 /**
- * Where `openconnect deploy` puts the project (SvelteKit-adapter style): `target: cloudflare({ name })`
+ * Where `connectd deploy` puts the project (SvelteKit-adapter style): `target: cloudflare({ name })`
  * in oc.config.ts. The config is bundled into the deployed runtime, so a target there is data only:
  * the module that deploys (`adapter`, resolved from the project at deploy time) and its options.
  * dev ignores it (memory driver, always local).
@@ -19,7 +19,7 @@ export type DeployContext = {
   /** Flags, which win over the options. */
   name?: string;
   url?: string;
-  /** The env names the project reads (and OPENCONNECT_EVENTS_SECRET / OPENCONNECT_API_KEY when set), with values: what becomes the deployment's secrets. */
+  /** The env names the project reads (and CONNECTD_EVENTS_SECRET / CONNECTD_API_KEY when set), with values: what becomes the deployment's secrets. */
   secrets: Record<string, string>;
   /** Where `secrets` came from (`.env.production`, the shell environment), for messages. */
   from: string;

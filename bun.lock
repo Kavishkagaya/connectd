@@ -10,86 +10,86 @@
       },
     },
     "examples/basic": {
-      "name": "openconnect-example-basic",
+      "name": "connectd-example-basic",
       "dependencies": {
-        "@openconnect/cli": "workspace:*",
-        "@openconnect/cloudflare": "workspace:*",
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
-        "@openconnect/providers": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
-        "@openconnect/sdk": "workspace:*",
+        "@connectd/cli": "workspace:*",
+        "@connectd/cloudflare": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
+        "@connectd/providers": "workspace:*",
+        "@connectd/runtime": "workspace:*",
+        "@connectd/sdk": "workspace:*",
       },
     },
     "packages/cli": {
-      "name": "@openconnect/cli",
+      "name": "@connectd/cli",
       "version": "0.0.0",
       "bin": {
-        "openconnect": "./src/bin.ts",
+        "connectd": "./src/bin.ts",
       },
       "dependencies": {
-        "@openconnect/dashboard": "workspace:*",
+        "@connectd/dashboard": "workspace:*",
       },
       "devDependencies": {
-        "@openconnect/cloudflare": "workspace:*",
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
-        "@openconnect/sdk": "workspace:*",
+        "@connectd/cloudflare": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
+        "@connectd/runtime": "workspace:*",
+        "@connectd/sdk": "workspace:*",
       },
       "peerDependencies": {
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
+        "@connectd/runtime": "workspace:*",
       },
     },
     "packages/cloudflare": {
-      "name": "@openconnect/cloudflare",
+      "name": "@connectd/cloudflare",
       "version": "0.0.0",
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.0",
         "@cloudflare/workers-types": "^5.20261011.1",
-        "@openconnect/cli": "workspace:*",
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
+        "@connectd/cli": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
+        "@connectd/runtime": "workspace:*",
         "vitest": "5.0.3",
       },
       "peerDependencies": {
-        "@openconnect/cli": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
+        "@connectd/cli": "workspace:*",
+        "@connectd/runtime": "workspace:*",
       },
     },
     "packages/connect": {
-      "name": "@openconnect/connect",
+      "name": "@connectd/connect",
       "version": "0.0.0",
       "devDependencies": {
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
+        "@connectd/runtime": "workspace:*",
       },
     },
     "packages/connections": {
-      "name": "@openconnect/connections",
+      "name": "@connectd/connections",
       "version": "0.0.0",
       "dependencies": {
-        "@openconnect/kernel": "workspace:*",
+        "@connectd/kernel": "workspace:*",
       },
     },
     "packages/dashboard": {
-      "name": "@openconnect/dashboard",
+      "name": "@connectd/dashboard",
       "version": "0.0.0",
       "devDependencies": {
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
+        "@connectd/runtime": "workspace:*",
       },
       "peerDependencies": {
-        "@openconnect/runtime": "workspace:*",
+        "@connectd/runtime": "workspace:*",
       },
     },
     "packages/kernel": {
-      "name": "@openconnect/kernel",
+      "name": "@connectd/kernel",
       "version": "0.0.0",
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.0",
@@ -98,19 +98,19 @@
       },
     },
     "packages/providers": {
-      "name": "@openconnect/providers",
+      "name": "@connectd/providers",
       "version": "0.0.0",
       "dependencies": {
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
       },
     },
     "packages/runtime": {
-      "name": "@openconnect/runtime",
+      "name": "@connectd/runtime",
       "version": "0.0.0",
       "dependencies": {
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.0",
@@ -119,12 +119,12 @@
       },
     },
     "packages/sdk": {
-      "name": "@openconnect/sdk",
+      "name": "@connectd/sdk",
       "version": "0.0.0",
       "dependencies": {
-        "@openconnect/connections": "workspace:*",
-        "@openconnect/kernel": "workspace:*",
-        "@openconnect/runtime": "workspace:*",
+        "@connectd/connections": "workspace:*",
+        "@connectd/kernel": "workspace:*",
+        "@connectd/runtime": "workspace:*",
       },
     },
   },
@@ -146,6 +146,24 @@
     "@cloudflare/workerd-windows-64": ["@cloudflare/workerd-windows-64@1.20261006.1", "", { "os": "win32", "cpu": "x64" }, "sha512-nWP0URNqOBN9fa/gZ7eh/w051DwjOXN8j4lDZDYVXyQPsux6sV3DfyYZT+CjR/rt9nKBSmJT9QE9/bWT18+84w=="],
 
     "@cloudflare/workers-types": ["@cloudflare/workers-types@5.20261011.1", "", {}, "sha512-6dgFMnwq6Wn238QWGHHb93gqIXjbSQMALcurXmI+9SHkM0QeEdHDhbyxwnE8v1m41MUzCtNO/gnTRwI4FsS9fQ=="],
+
+    "@connectd/cli": ["@connectd/cli@workspace:packages/cli"],
+
+    "@connectd/cloudflare": ["@connectd/cloudflare@workspace:packages/cloudflare"],
+
+    "@connectd/connect": ["@connectd/connect@workspace:packages/connect"],
+
+    "@connectd/connections": ["@connectd/connections@workspace:packages/connections"],
+
+    "@connectd/dashboard": ["@connectd/dashboard@workspace:packages/dashboard"],
+
+    "@connectd/kernel": ["@connectd/kernel@workspace:packages/kernel"],
+
+    "@connectd/providers": ["@connectd/providers@workspace:packages/providers"],
+
+    "@connectd/runtime": ["@connectd/runtime@workspace:packages/runtime"],
+
+    "@connectd/sdk": ["@connectd/sdk@workspace:packages/sdk"],
 
     "@cspotcode/source-map-support": ["@cspotcode/source-map-support@0.8.1", "", { "dependencies": { "@jridgewell/trace-mapping": "0.3.9" } }, "sha512-IchNf6dN4tHoMFIn/7OE8LWZ19Y6q/67Bmf6vnGREv8RSbBVb9LPJxEcnwrcwX6ixSvaiGoomAUvu4YSxXrVgw=="],
 
@@ -263,24 +281,6 @@
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
-    "@openconnect/cli": ["@openconnect/cli@workspace:packages/cli"],
-
-    "@openconnect/cloudflare": ["@openconnect/cloudflare@workspace:packages/cloudflare"],
-
-    "@openconnect/connect": ["@openconnect/connect@workspace:packages/connect"],
-
-    "@openconnect/connections": ["@openconnect/connections@workspace:packages/connections"],
-
-    "@openconnect/dashboard": ["@openconnect/dashboard@workspace:packages/dashboard"],
-
-    "@openconnect/kernel": ["@openconnect/kernel@workspace:packages/kernel"],
-
-    "@openconnect/providers": ["@openconnect/providers@workspace:packages/providers"],
-
-    "@openconnect/runtime": ["@openconnect/runtime@workspace:packages/runtime"],
-
-    "@openconnect/sdk": ["@openconnect/sdk@workspace:packages/sdk"],
-
     "@oxc-project/types": ["@oxc-project/types@0.153.0", "", {}, "sha512-jSNrRIyvPVLL5E1z/tS5zLAprosGz/FuI1PWwEOz59j3E4TTTzSpqKb/RDGqJhhW0QHYISGXxq582wGx6T11Tw=="],
 
     "@poppinss/colors": ["@poppinss/colors@4.1.6", "", { "dependencies": { "kleur": "^4.1.5" } }, "sha512-H9xkIdFswbS8n1d6vmRd8+c10t2Qe+rZITbbDHHkQixH5+2x1FDGmi/0K+WgWiqQFKPSlIYB7jlH6Kpfn6Fleg=="],
@@ -349,6 +349,8 @@
 
     "cjs-module-lexer": ["cjs-module-lexer@1.2.3", "", {}, "sha512-0TNiGstbQmCFwt4akjjBg5pLRTSyj/PkWQ1ZoO2zntmg9yLqSRxwEa4iCfQLGjqhiqBfOJa7W/E8wfGrTDmlZQ=="],
 
+    "connectd-example-basic": ["connectd-example-basic@workspace:examples/basic"],
+
     "cookie": ["cookie@1.1.1", "", {}, "sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ=="],
 
     "detect-libc": ["detect-libc@2.1.2", "", {}, "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ=="],
@@ -400,8 +402,6 @@
     "nanoid": ["nanoid@3.3.20", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ=="],
 
     "obug": ["obug@2.2.1", "", {}, "sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q=="],
-
-    "openconnect-example-basic": ["openconnect-example-basic@workspace:examples/basic"],
 
     "path-to-regexp": ["path-to-regexp@6.3.0", "", {}, "sha512-Yhpw4T9C6hPpgPeA28us07OJeqZ5EzQTkbfwuhsUg0c237RomFoETJgmp2sa3F/41gfLE6G5cqcYwznmeEeOlQ=="],
 

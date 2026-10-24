@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { base64url, type Json } from "@openconnect/kernel";
+import { base64url, type Json } from "@connectd/kernel";
 import {
   authorizeUrl,
   clientCredentials,

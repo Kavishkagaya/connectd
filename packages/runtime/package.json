@@ -1,5 +1,5 @@
 {
-  "name": "@openconnect/runtime",
+  "name": "@connectd/runtime",
   "version": "0.0.0",
   "license": "Apache-2.0",
   "type": "module",
@@ -16,8 +16,8 @@
     "test": "bun test src && vitest run"
   },
   "dependencies": {
-    "@openconnect/connections": "workspace:*",
-    "@openconnect/kernel": "workspace:*"
+    "@connectd/connections": "workspace:*",
+    "@connectd/kernel": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.0",

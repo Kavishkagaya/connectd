@@ -1,1 +1,1 @@
-export { slack as default } from "@openconnect/providers";
+export { slack as default } from "@connectd/providers";

@@ -1,5 +1,5 @@
-import { base64url, importHmacKey, importKeys, type Json, kernel, routeTicket } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
+import { base64url, importHmacKey, importKeys, type Json, kernel, routeTicket } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
 import { type Connection, definitionOf } from "./builder.ts";
 import { bind, type Definition } from "./define.ts";
 

@@ -1,9 +1,9 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 import { generate } from "./src/generate.ts";
-import { generateKeys } from "@openconnect/cli/keys";
+import { generateKeys } from "@connectd/cli/keys";
 
-// What `openconnect deploy` would upload for test/fixture, run in workerd from its own wrangler.json:
+// What `connectd deploy` would upload for test/fixture, run in workerd from its own wrangler.json:
 // the generated entry, the DO class and migration, the D1 binding and the copied migrations.
 const fixture = `${import.meta.dirname}/test/fixture`;
 const g = generate({ dir: fixture, config: `${fixture}/oc.config.ts`, name: "fixture", url: "https://oc.test" });
@@ -14,13 +14,13 @@ export default defineConfig({
       wrangler: { configPath: g.wrangler },
       miniflare: {
         // The secrets `deploy` pushes, plus a provider secret from an env file.
-        bindings: { ...generateKeys(), OPENCONNECT_API_KEY: "test-key", EXAMPLE_CLIENT_ID: "cid", ENVD_CLIENT_ID: "envd-cid", MIGRATIONS: await readD1Migrations(g.migrations) },
+        bindings: { ...generateKeys(), CONNECTD_API_KEY: "test-key", EXAMPLE_CLIENT_ID: "cid", ENVD_CLIENT_ID: "envd-cid", MIGRATIONS: await readD1Migrations(g.migrations) },
         // The proxy's upstream.
         outboundService: (req: Request) => Response.json({ url: req.url }),
       },
     })),
   ],
   // The generated entry has the template's shape (test/generated.d.ts types it as src/worker.ts).
-  resolve: { alias: { "openconnect:generated": g.entry } },
+  resolve: { alias: { "connectd:generated": g.entry } },
   test: { include: ["test/**/*.test.ts"] },
 });
