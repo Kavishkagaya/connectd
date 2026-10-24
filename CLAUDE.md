@@ -7,8 +7,8 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
 ```
  L4  DevX        SDK · connect UI · CLI · dashboard            (done; managed parts in openconnect-cloud)
  L3  Runtime     ConnectionDO · proxy · webhooks · events      (done)
- L2  Connections defineConnection(), providers                 (in progress)
- L1  Kernel      connection · tokens · rate · secrets · schedule · oauth   (done)
+ L2  Connections defineConnection(), lifecycle, OAuth, providers   (in progress)
+ L1  Kernel      cell · flight · mutex · timer · queue · ticket · limiter · seal (#53)   (done)
  L0  Drivers     Durable Objects · in-memory · server (deferred)           (done)
 ```
 
@@ -21,22 +21,29 @@ packages/kernel/
   src/index.ts        public API (re-exports only)
   src/driver.ts       L0 contract: Json, Driver, Handler, Program
   src/drivers/        memory.ts, do.ts, parity.ts (shared driver suite)
-  src/primitives/     connection, oauth, rate, schedule, secrets; tests next to each
-  test/               DO driver tests in workerd (vitest)
+  src/kernel.ts        kernel(): the management layer of one instance (#53): name claims, seal/unseal, serve (the Handler)
+  src/cell.ts         cell (read-decide-cas update + outbox, take) and `loop`, the one cas loop every tool uses
+  src/sync.ts         flight / flights (single-flight), mutex (one at a time); in memory
+  src/timer.ts, queue.ts, ticket.ts, limiter.ts   alarms with retry · ordered retried delivery · signed one-time passes · GCRA permits
+  src/secrets.ts, schedule.ts                      pure helpers: AES-GCM with key versions, HMAC sign/verify · backoff
+  src/testkit.ts      memory-driver harness for the kernel's tests (not exported); tests next to each file
+  test/               DO driver tests in workerd (vitest); tools.ts + tools.test.ts run the kernel's tools on the DO driver
 
 packages/connections/
-  src/define.ts       defineConnection, Definition (incl. webhooks: verify/parse/register), hmacHex/safeEqual, bind (runs a definition on one instance)
+  src/lifecycle.ts    one connection on the kernel: the `record` cell (state, sealed credential, Transition outbox), token/refresh (flight + timer), login ticket; State, Credential, NotActive
+  src/oauth.ts        OAuth protocol atoms (PKCE, authorize URL, code exchange, refresh, device flow, DCR, revoke), OAuthError
+  src/define.ts       defineConnection, Definition (incl. webhooks: verify/parse/register), hmacHex/safeEqual, bind (a definition on one instance's kernel)
   src/auth.ts         auth step builders: oauth2, apiKey
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
 packages/providers/   one defineConnection per provider (github, slack, google); tests against fakes
 
 packages/runtime/
-  src/host.ts         the Program every connection instance runs: registry lookup, bind, methods, faults
+  src/host.ts         the Program every connection instance runs: one kernel per instance, registry lookup, bind, extensions' hooks (Hosted.k), methods, faults
   src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
   src/proxy.ts        proxy() extension: /proxy/:def/:id/<path>, token + rate permits in one DO call
-  src/events.ts       events extension: signed, ordered, at-least-once delivery to the user's server; emit(); events.status/flush/redeliver (slots ≠ seqs; KEPT newest done keep a summary, bodies ≤ 64 KB)
+  src/events.ts       events extension: what an event is and how it's signed and POSTed, on the kernel's queue (relays the record's outbox); emit(); events.status/flush/redeliver
   src/signature.ts    Standard Webhooks sign/verify, no imports (`/signature` export, for the SDK)
   src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
@@ -78,27 +85,28 @@ packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli`
 examples/basic/       a user project (workspace): openconnect.config.ts with the providers and one local definition
 ```
 
-Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.
+Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@openconnect/connections`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.
 
 ## Commands
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
 - `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts`, the CLI's Worker template + `project.ts`, and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect` and `packages/dashboard`
 - Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts`
-- One kernel file: `cd packages/kernel && bun test src/primitives/rate.test.ts`
+- One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`
 - Dev server on the example: `cd examples/basic && bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `openconnect --help`)
 - Deploy plan without Cloudflare: `cd examples/basic && bunx openconnect deploy --dry-run` (then `wrangler deploy --dry-run -c .openconnect/deploy/wrangler.json` bundles it offline)
 
 ## Patterns
 
 - **Driver = infrastructure only, per instance**: `store` (get/put/cas/take/delete, optional TTL), named durable `timer`s, `call` to another instance, `now()`. Everything else is kernel code on top.
-- **Concurrency:** handlers interleave at every await (like DOs); the memory driver doesn't serialize either, on purpose. Anything that races goes through `cas` (versioned, no ABA) or `take` (single consumer). Use read-decide-cas loops (`update` in connection.ts and rate.ts).
-- **Program composition:** a `Program` is `(driver, instance) => { onCall, onTimer }`. Primitives expose handlers to route into: `connection().onTimer`, `handleRate` for the `RATE` method. Create primitives once per Program instance (single-flight is in memory).
+- **Concurrency:** handlers interleave at every await (like DOs); the memory driver doesn't serialize either, on purpose. Anything that races goes through `cas` (versioned, no ABA) or `take` (single consumer), in the kernel: `cell.update` (read-decide-cas) and `cell.take`.
+- **Kernel (#53):** `const k = kernel(driver, { instance, keys, stateKey })` once per Program call (the host does it, after settings load); every tool declared once as a typed handle (stored names: letters, digits, `_ . -`), `k.serve(methods)` as the Handler. Mechanism only: nothing about connections, tokens or providers goes in it. Extensions get the instance's kernel as `Hosted.k` and declare their own cells, timers and queues (names `<extension>.<name>`).
+- **Program composition:** a `Program` is `(driver, instance) => { onCall, onTimer }`. `k.serve` routes timers to the handler declared under their name and `kernel.rate` to the limiter; instances without a kernel (app-wide limiters) answer `RATE` with `handleRate`.
 - **Cross-instance:** a scope (app, workspace) is just another instance key reached with `d.call`. Args and results must be `Json`.
-- **Durability:** state and its events change in one `cas` (connection record holds state + sealed credential + event outbox). Timers aren't atomic with `cas`; there's always an on-demand fallback.
+- **Durability:** a change and its messages land in one `cas` (the cell's outbox: the record holds state + sealed credential + Transitions); `queue.relay` moves them on exactly once. Timers aren't atomic with `cas`; there's always an on-demand fallback.
 - **Time:** always `d.now()`, never `Date.now()`, so the fake clock works. Memory `advance(ms)` jumps once; step it to drive retries. `memory(p, { clock: Date.now })` is the real-clock mode (dev): timers fire on their own, `advance` still skews; `dump()`/`snapshot` restore state.
 - **Secrets:** AES-GCM with a key-version byte; values sealed under old keys are re-sealed on read.
-- **Tests:** primitives are tested on the memory driver with `bun:test`. Drivers prove equivalence through `parity.ts` (memory under bun, DO under vitest in workerd). New driver behaviour goes into parity, not one driver's tests.
+- **Tests:** the kernel's tools and the lifecycle are tested on the memory driver with `bun:test`. Drivers prove equivalence through `parity.ts` (memory under bun, DO under vitest in workerd). New driver behaviour goes into parity, not one driver's tests.
 - **Style:** small, minimal code; no abstraction without a second use. Deliberate shortcuts carry a `// ponytail:` comment naming the ceiling and the upgrade path. Strict TS with `noUncheckedIndexedAccess`; `.ts` extensions in imports.
 
 ## Process

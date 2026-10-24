@@ -1,5 +1,5 @@
-import type { Incoming, Webhook } from "@openconnect/connections";
-import { backoff, base64url, type Credential, type Json, NotActive, type RetryPayload } from "@openconnect/kernel";
+import { type Credential, type Incoming, NotActive, type Webhook } from "@openconnect/connections";
+import { base64url, type Json } from "@openconnect/kernel";
 import { findByExternal } from "./directory.ts";
 import { emit } from "./events.ts";
 import { Fail, fault, type Hosted, instanceOf, type Reply, type Settings } from "./host.ts";
@@ -41,14 +41,11 @@ type Stored = { hook: Json; renewAt: number | null; account: string | null };
 // One event must fit one stored DO value (2 MB, #24); leave room for the envelope.
 // ponytail: past 1 MB the payload is dropped, not stored by reference; receivers re-read it from the provider (proxy). Add blob storage (R2) if that bites.
 export const MAX_PAYLOAD = 1_000_000;
-const KEY = "webhooks.hook";
-/** Set while a `webhooks.sync` timer is armed to (re)register or backing off, so `after()` doesn't reset it. */
-const PENDING = "webhooks.pending";
-const TIMER = "webhooks.sync";
 const RENEW_MS = 3_600_000;
 /** Never renew sooner than this after registering, however short-lived the provider makes it. */
 const MIN_RENEW_MS = 60_000;
-const BACKOFF = { baseMs: 30_000, maxAttempts: 8 };
+// ponytail: gives up after 8 attempts (~1h); the next state change or isolate restart tries again.
+const RETRY = { baseMs: 30_000, maxAttempts: 8 };
 const utf8 = new TextEncoder();
 
 /** This connection's webhook secret: derived (HMAC of the instance key), so nothing to store and each connection's differs. */
@@ -122,11 +119,24 @@ export function webhooks(): Extension {
     },
 
     connection: (h) => {
-      const { d, def, bound } = h;
+      const { k, def, bound } = h;
       const w = def.webhooks;
       const registers = !!(w?.register && h.settings.webhooks);
       // Record version last checked, this isolate. undefined: check once after a restart (covers a lost timer).
       let seen: number | null | undefined;
+      /** What `register` returned, kept until revoke. */
+      const hookCell = k.cell<Stored>("webhooks.hook");
+      /** Set while the sync timer is armed to (re)register or backing off, so `after()` doesn't reset it. */
+      const pending = k.cell<boolean>("webhooks.pending");
+      /** Register if active and due. A throw retries with backoff; the pending mark clears when it's done or given up. */
+      const syncTimer = k.timer("webhooks.sync", {
+        async handle() {
+          await run();
+          await pending.delete();
+        },
+        retry: RETRY,
+        giveUp: async () => void (await pending.delete()),
+      });
 
       async function unregister(cred: Credential, hook: Json) {
         if (hook !== null && w?.unregister) await w.unregister(bound.ctx, cred, hook).catch((e) => console.error("webhook unregister", h.instance, e));
@@ -144,33 +154,22 @@ export function webhooks(): Extension {
 
       /** Nothing registered, due for renewal, or registered for another account (an unknown account, null, is no change). */
       async function due(cur: Stored | undefined) {
-        if (!cur || (cur.renewAt !== null && d.now() >= cur.renewAt)) return true;
+        if (!cur || (cur.renewAt !== null && k.now() >= cur.renewAt)) return true;
         const acct = await account();
         return acct !== null && cur.account !== acct;
       }
 
-      async function arm(attempt: number, at: number) {
-        await d.store.put(PENDING, true);
-        await d.timer.set(TIMER, at, { attempt, data: null });
+      async function arm(at: number) {
+        await pending.put(true);
+        await syncTimer.set(at);
       }
 
-      /** Register if active and due. Runs from the timer only; timers don't overlap. */
-      async function sync(attempt: number) {
-        let retrying = false;
-        try {
-          retrying = await run(attempt);
-        } finally {
-          // Whatever happened, unless a retry is armed: leave nothing that stops after() from re-arming.
-          if (!retrying) await d.store.delete(PENDING);
-        }
-      }
-
-      /** True if it armed a retry. */
-      async function run(attempt: number): Promise<boolean> {
-        if (!w?.register) return false;
-        const cur = (await d.store.get(KEY))?.value as unknown as Stored | undefined;
+      /** Register if active and due. Runs from the timer only; timers don't overlap. Throws to retry. */
+      async function run(): Promise<void> {
+        if (!w?.register) return;
+        const cur = (await hookCell.read())?.value;
         // Not active: re-auth keeps the hook, revoke removes it.
-        if ((await bound.conn.read())?.state !== "active" || !(await due(cur))) return false;
+        if ((await bound.conn.read())?.state !== "active" || !(await due(cur))) return;
         let cred;
         let r;
         const acct = (await account()) ?? cur?.account ?? null;
@@ -178,29 +177,24 @@ export function webhooks(): Extension {
           cred = await bound.token();
           r = await w.register(bound.ctx, cred, await endpoint(h));
         } catch (e) {
-          if (e instanceof NotActive) return false;
-          console.error("webhook register failed", h.instance, attempt, e);
-          // ponytail: gives up after 8 attempts (~1h); the next state change or isolate restart tries again.
-          if (attempt + 1 >= BACKOFF.maxAttempts) return false;
-          await arm(attempt + 1, d.now() + backoff(attempt, BACKOFF));
-          return true;
+          if (e instanceof NotActive) return;
+          throw e;
         }
         // An hour before expiry; for short-lived ones at half their life, and never within MIN_RENEW_MS (no loop on a lapsed `expiresAt`).
         const exp = r?.expiresAt;
-        const renewAt = exp === undefined ? null : Math.max(exp - RENEW_MS, d.now() + Math.max(MIN_RENEW_MS, (exp - d.now()) / 2));
+        const renewAt = exp === undefined ? null : Math.max(exp - RENEW_MS, k.now() + Math.max(MIN_RENEW_MS, (exp - k.now()) / 2));
         const next: Stored = { hook: r?.hook ?? null, renewAt, account: acct };
-        await d.store.put(KEY, next as unknown as Json);
+        await hookCell.put(next);
         // Renewed, or re-authed to another account: stop the old subscription.
         // ponytail: after an account change this uses the new account's credential, which the provider may refuse (logged); the old one then lapses or gets 403/410.
         if (cur) await unregister(cred, cur.hook);
         // The renewal timer isn't PENDING: after() re-arms by `due` alone if it's lost.
-        if (renewAt !== null) await d.timer.set(TIMER, renewAt, { attempt: 0, data: null });
+        if (renewAt !== null) await syncTimer.set(renewAt);
         // Revoked while registering: beforeRevoke found nothing to remove, so undo it here.
-        if ((await bound.conn.read())?.state === "revoked" && (await d.store.take(KEY))) {
-          await d.timer.cancel(TIMER);
+        if ((await bound.conn.read())?.state === "revoked" && (await hookCell.take())) {
+          await syncTimer.cancel();
           await unregister(cred, next.hook);
         }
-        return false;
       }
 
       return {
@@ -226,23 +220,17 @@ export function webhooks(): Extension {
            * definition's `register` returned (stored unsealed, so it holds ids, not secrets).
            */
           "webhooks.status": async () => {
-            const cur = (await d.store.get(KEY))?.value as unknown as Stored | undefined;
+            const cur = (await hookCell.read())?.value;
             return {
               supported: !!w,
               registers,
               url: h.settings.webhooks && w ? (await endpoint(h)).url : null,
               registration: cur ? { hook: cur.hook, renewAt: cur.renewAt, account: cur.account } : null,
-              pending: !!(await d.store.get(PENDING)),
+              pending: !!(await pending.read()),
             } satisfies WebhooksStatus as unknown as Json;
           },
           /** URL + secret for registering this connection's webhook yourself (GitHub repo hooks through the proxy). API key only. */
           "webhooks.endpoint": async () => (await endpoint(h)) as unknown as Json,
-        },
-
-        async onTimer(name, payload) {
-          if (name !== TIMER) return false;
-          await sync((payload as unknown as RetryPayload | null)?.attempt ?? 0);
-          return true;
         },
 
         async after() {
@@ -251,9 +239,8 @@ export function webhooks(): Extension {
           const v = await bound.conn.version();
           if (v === seen) return;
           // A fresh isolate ignores PENDING: its timer may have been lost.
-          if (seen !== undefined && (await d.store.get(PENDING))) return void (seen = v);
-          if ((await bound.conn.read())?.state === "active" && (await due((await d.store.get(KEY))?.value as unknown as Stored | undefined)))
-            await arm(0, d.now());
+          if (seen !== undefined && (await pending.read())) return void (seen = v);
+          if ((await bound.conn.read())?.state === "active" && (await due((await hookCell.read())?.value))) await arm(k.now());
           // Only after the check landed: a throw above retries it on the next call.
           seen = v;
         },
@@ -267,9 +254,9 @@ export function webhooks(): Extension {
           } catch (e) {
             if (!(e instanceof NotActive)) throw e;
           }
-          await d.timer.cancel(TIMER);
-          await d.store.delete(PENDING);
-          const cur = (await d.store.take(KEY)) as unknown as Stored | null;
+          await syncTimer.cancel();
+          await pending.delete();
+          const cur = await hookCell.take();
           if (cur?.hook == null) return;
           // ponytail: one best-effort try, no retry: after the revoke there's no credential to retry with.
           // A leftover subscription gets 410 from the per-connection route (and Google channels lapse).

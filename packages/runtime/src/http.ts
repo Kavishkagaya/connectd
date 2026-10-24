@@ -1,4 +1,4 @@
-import { base64url, type Json, routeState } from "@openconnect/kernel";
+import { base64url, type Json, routeTicket } from "@openconnect/kernel";
 import { type Index, listing } from "./directory.ts";
 import { type AnyDefinition, COOKIES, Fail, type Fault, fault, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { complete } from "./session.ts";
@@ -72,8 +72,9 @@ export const routes: Record<string, Route> = {
     public: true,
     async fetch(req, api) {
       const q = Object.fromEntries(new URL(req.url).searchParams);
-      const r = await routeState(q.state ?? "", api.settings.stateKey);
-      if (!r) throw new Fail("bad_request", 400, "unknown or forged state");
+      // A login ticket (the lifecycle's handshake): signed, names its instance.
+      const r = await routeTicket(q.state ?? "", api.settings.stateKey);
+      if (!r || r.name !== "login") throw new Fail("bad_request", 400, "unknown or forged state");
       // The Cookie header overwrites any query parameter of that name: the binding comes from the browser only.
       const res = await api.call(r.instance, "callback", { ...q, [COOKIES]: req.headers.get("cookie") ?? "" });
       if ("ok" in res && res.ok && typeof res.ok === "object" && "target" in res.ok) {

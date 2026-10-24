@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
-import type { Handler, State } from "@openconnect/kernel";
+import type { State } from "@openconnect/connections";
+import type { Handler } from "@openconnect/kernel";
 import { durableObject } from "@openconnect/kernel/do";
 import { after, type Index, LIMIT, page, type Row } from "./directory.ts";
 import type { Runtime } from "./runtime.ts";

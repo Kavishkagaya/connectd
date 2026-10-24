@@ -1,5 +1,5 @@
-import type { Inject } from "@openconnect/connections";
-import { acquire, type Credential, type Json, type Limit, observe, refund, type Scope } from "@openconnect/kernel";
+import type { Credential, Inject } from "@openconnect/connections";
+import type { Json, Limit, Limiter } from "@openconnect/kernel";
 import { type AnyDefinition, Fail, type Hosted, instanceOf } from "./host.ts";
 import { ERROR_HEADER, reply } from "./http.ts";
 import type { Extension } from "./runtime.ts";
@@ -19,12 +19,13 @@ export type Settle = { status?: number; headers?: Record<string, string>; refund
 /** Scope used when a definition only observes (Google): huge, so it only ever holds what the provider says. */
 const OBSERVE_ONLY: Limit = { count: 1_000_000, periodMs: 1000 };
 
-function scopes(h: Hosted): Scope[] {
+/** The definition's limiters, declared once per instance: the connection's own, and the app-wide one in `app:<def>`. */
+function limiters(h: Hosted): Limiter[] {
   const r = h.def.rate;
   if (!r) return [];
-  const own: Scope = { instance: h.instance, key: "proxy", limit: r.connection ?? OBSERVE_ONLY };
+  const own = h.k.limiter("proxy", r.connection ?? OBSERVE_ONLY);
   // ponytail: one app per deployment (see Settings.config), so the app scope is per definition; key it by app when multi-app.
-  return r.app ? [own, { instance: `app:${h.def.id}`, key: "proxy", limit: r.app }] : [own];
+  return r.app ? [own, h.k.limiter.at(`app:${h.def.id}`, "proxy", r.app)] : [own];
 }
 
 function value(cred: Credential, field?: string): string {
@@ -119,29 +120,31 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
       },
     },
 
-    connection: (h) => ({
-      methods: {
-        /** Token (refreshed if due) + permits in one round trip. Token first, so a dead connection uses no permit. */
-        "proxy.prepare": async () => {
-          const credential = await h.bound.token();
-          const v = await acquire(h.d, h.instance, scopes(h));
-          return (v.ok ? { credential } : { retryAfterMs: v.retryAfterMs }) as unknown as Json;
+    connection: (h) => {
+      const all = limiters(h);
+      return {
+        methods: {
+          /** Token (refreshed if due) + permits in one round trip. Token first, so a dead connection uses no permit. */
+          "proxy.prepare": async () => {
+            const credential = await h.bound.token();
+            const v = await h.k.acquire(all);
+            return (v.ok ? { credential } : { retryAfterMs: v.retryAfterMs }) as unknown as Json;
+          },
+          /** Feed response headers to the definition's `rate.observe` (connection scope), or refund a request that never left. */
+          "proxy.settle": async (a) => {
+            const s = (a ?? {}) as Settle;
+            if (s.refund) await h.k.refund(all);
+            const own = all[0];
+            const see = h.def.rate?.observe;
+            if (own && see && s.status) {
+              // ponytail: provider-wide signals (a Retry-After on a per-project quota) only tighten this connection's scope.
+              const seen = see(new Response(null, { status: s.status, headers: s.headers ?? {} }), h.k.now());
+              if (Object.keys(seen).length) await own.observe(seen);
+            }
+            return null;
+          },
         },
-        /** Feed response headers to `rate.observe` (connection scope), or refund a request that never left. */
-        "proxy.settle": async (a) => {
-          const s = (a ?? {}) as Settle;
-          const all = scopes(h);
-          if (s.refund) await refund(h.d, h.instance, all);
-          const own = all[0];
-          const see = h.def.rate?.observe;
-          if (own && see && s.status) {
-            // ponytail: provider-wide signals (a Retry-After on a per-project quota) only tighten this connection's scope.
-            const seen = see(new Response(null, { status: s.status, headers: s.headers ?? {} }), h.d.now());
-            if (Object.keys(seen).length) await observe(h.d, h.instance, own, seen);
-          }
-          return null;
-        },
-      },
-    }),
+      };
+    },
   };
 }

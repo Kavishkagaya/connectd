@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Json } from "../driver.ts";
+import { base64url, type Json } from "@openconnect/kernel";
 import {
   authorizeUrl,
   clientCredentials,
@@ -11,7 +11,6 @@ import {
   register,
   revoke,
 } from "./oauth.ts";
-import { base64url } from "./secrets.ts";
 
 /** Fake fetch: records requests, replies with the next canned [status, body]. */
 function fake(...replies: [number, Json][]) {

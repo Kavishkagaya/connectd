@@ -1,5 +1,5 @@
-import { defineConnection, hmacHex, type OAuth2Config, oauth2, rateHeaders, safeEqual } from "@openconnect/connections";
-import type { Json, OAuth2 } from "@openconnect/kernel";
+import { defineConnection, hmacHex, type OAuth2, type OAuth2Config, oauth2, rateHeaders, safeEqual } from "@openconnect/connections";
+import type { Json } from "@openconnect/kernel";
 
 const API = "https://api.github.com";
 // The REST API rejects requests without a User-Agent.

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
+import { apiKey, defineConnection, type OAuth2, oauth2 } from "@openconnect/connections";
 import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys, type Json, type OAuth2 } from "@openconnect/kernel";
+import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { type Extension, runtime } from "./index.ts";
 
@@ -61,7 +61,7 @@ test("oauth2 over HTTP: connect, public callback, status, token, timer refresh, 
   expect(cb).toEqual({ status: 200, body: { state: "active", metadata: { id: "u1" } } });
   expect((await req("POST", "/connections/example/c1/token")).body.accessToken).toBe("a1");
 
-  await w.advance(H); // kernel.refresh timer, routed through the host
+  await w.advance(H); // the lifecycle's refresh timer, routed by the kernel through the host
   expect((await req("POST", "/connections/example/c1/token")).body.accessToken).toBe("a2");
 
   expect((await req("POST", "/connections/example/c1/revoke", { reason: "user" })).body).toEqual({ state: "revoked", reason: "user", metadata: { id: "u1" } });
@@ -106,17 +106,20 @@ test("extensions add routes, methods, timers and after hooks", async () => {
   const log: string[] = [];
   const ext: Extension = {
     routes: { hello: { public: true, fetch: async (_req, _api, path) => Response.json({ hello: path }) } },
-    connection: ({ d, id }) => ({
-      methods: {
-        ping: async () => {
-          await d.timer.set("ext.tick", d.now() + 1000);
-          return id;
+    connection: ({ k, id }) => {
+      // Timers are declared on the instance's kernel, handler included; the host routes them.
+      const tick = k.timer("ext.tick", { handle: async () => void log.push("tick") });
+      return {
+        methods: {
+          ping: async () => {
+            await tick.set(k.now() + 1000);
+            return id;
+          },
+          connect: async () => "shadowed",
         },
-        connect: async () => "shadowed",
-      },
-      onTimer: async (name) => name === "ext.tick" && (log.push("tick"), true),
-      after: async (cause) => void log.push(cause),
-    }),
+        after: async (cause) => void log.push(cause),
+      };
+    },
   };
   const { w, req } = await setup([ext]);
   expect((await req("GET", "/hello/a/b", undefined, "")).body).toEqual({ hello: ["a", "b"] });

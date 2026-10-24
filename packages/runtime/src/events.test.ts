@@ -21,11 +21,11 @@ function checked(program: Program) {
   const wrapped: Program = (d, instance) => {
     const fit = (k: string, v: Json) => {
       if (JSON.stringify(v).length > LIMIT) throw new Error(`value too large: ${k}`);
-      if (k.startsWith("events.e:")) live.add(k);
+      if (k.startsWith("q:events/e/")) live.add(k);
     };
     const store: Driver["store"] = {
       ...d.store,
-      get: (k) => (k === "record" && reads.record++, k.startsWith("events.e:") && reads.bodies++, d.store.get(k)),
+      get: (k) => (k === "c:record" && reads.record++, k.startsWith("q:events/e/") && reads.bodies++, d.store.get(k)),
       put: (k, v, o) => (fit(k, v), d.store.put(k, v, o)),
       cas: (k, e, v, o) => (fit(k, v), d.store.cas(k, e, v, o)),
       delete: (k) => (live.delete(k), d.store.delete(k)),
@@ -97,7 +97,7 @@ test("lifecycle events are delivered in order, signed, then dropped", async () =
   h.set("webhook-signature", `v1,bm9wZQ== v1,!!! ${first.headers.get("webhook-signature")}`);
   expect(await verify(SECRET, h, first.body, { now: t.w.now() })).toBe(true);
 
-  // Acked: kernel outbox and delivery outbox are both empty, nothing is sent again.
+  // Relayed and delivered: the record's outbox and the queue are both empty, nothing is sent again.
   await t.call("status");
   await t.w.advance(86_400_000);
   expect(t.got.length).toBe(2);
@@ -200,7 +200,7 @@ test("a large backlog: oldest dropped past 1000, the rest delivered in order, ke
   expect(seqs.length).toBe(1000);
   expect(seqs).toEqual(Array.from({ length: 1000 }, (_, i) => 202 + i));
   expect(t.bodies()[0]!.data as unknown).toEqual({ n: 200 });
-  expect([...t.live].sort()).toEqual(Array.from({ length: KEPT }, (_, i) => `events.e:${1202 - KEPT + i}`).sort());
+  expect([...t.live].sort()).toEqual(Array.from({ length: KEPT }, (_, i) => `q:events/e/${1202 - KEPT + i}`).sort());
 });
 
 test("large payloads: each event is its own stored value, so a backlog past 2 MB still drains", async () => {
@@ -368,7 +368,7 @@ test("retention is bounded by bytes: big bodies aren't kept once done (payload_n
   await t.call("hook", { big: "x".repeat(BODY_KEPT) }); // just over the cap with its envelope
   await t.call("hook", { small: 1 });
   await t.w.advance(0);
-  expect([...t.live].sort()).toEqual(["events.e:1", "events.e:3"]);
+  expect([...t.live].sort()).toEqual(["q:events/e/1", "q:events/e/3"]);
   t.reads.bodies = 0;
   const s = ((await t.call("events.status")) as { ok: EventsStatus }).ok;
   expect(t.reads.bodies).toBe(0);

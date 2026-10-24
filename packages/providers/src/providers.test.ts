@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { hmacHex } from "@openconnect/connections";
+import { hmacHex, type OAuth2 } from "@openconnect/connections";
 import { fakeOAuth, harness } from "@openconnect/connections/testing";
-import { base64url, type Json, type OAuth2 } from "@openconnect/kernel";
+import { base64url, type Json } from "@openconnect/kernel";
 import { github } from "./github.ts";
 import { google } from "./google.ts";
 import { slack } from "./slack.ts";

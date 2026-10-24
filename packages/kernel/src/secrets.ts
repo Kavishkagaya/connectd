@@ -1,5 +1,3 @@
-import type { Driver, Json } from "../driver.ts";
-
 // Crypto ported from v1 packages/shared/src/crypto.ts.
 
 const IV_BYTES = 12;
@@ -69,28 +67,4 @@ export async function verify(signed: string, key: CryptoKey): Promise<string | n
   } catch {
     return null;
   }
-}
-
-/**
- * Encrypted values in the instance store (connector client secrets, API keys).
- * Rotation: add the new key version and make it current. Values sealed under an older key
- * are re-sealed on read; retire the old key once nothing sealed under it remains.
- */
-export function secrets(d: Driver, keys: Keys) {
-  const k = (name: string) => `secret:${name}`;
-  return {
-    async put(name: string, value: Json) {
-      await d.store.put(k(name), await encrypt(JSON.stringify(value), keys));
-    },
-    async get(name: string): Promise<Json | null> {
-      const r = await d.store.get(k(name));
-      if (!r) return null;
-      const sealed = r.value as string;
-      const value = JSON.parse(await decrypt(sealed, keys)) as Json;
-      // Losing this cas is fine: whoever wrote sealed under the current key too.
-      if (keyVersion(sealed) !== keys.current) await d.store.cas(k(name), r.v, await encrypt(JSON.stringify(value), keys));
-      return value;
-    },
-    delete: (name: string) => d.store.delete(k(name)),
-  };
 }

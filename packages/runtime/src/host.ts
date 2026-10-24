@@ -1,22 +1,12 @@
-import { bind, type Definition, InputError, safeEqual } from "@openconnect/connections";
-import {
-  type Driver,
-  encrypt,
-  handleRate,
-  IllegalTransition,
-  type Json,
-  type Keys,
-  NotActive,
-  OAuthError,
-  type Program,
-  RATE,
-  randomId,
-} from "@openconnect/kernel";
+import { bind, type Definition, IllegalTransition, InputError, NotActive, OAuthError, safeEqual } from "@openconnect/connections";
+import { type Driver, handleRate, type Json, type Kernel, type Keys, kernel, type Program, RATE, type Ticket } from "@openconnect/kernel";
 
 /**
  * The connection host: one Program that runs any definition from a registry, one instance per
- * connection. Definition code only ever sees its `ctx` (config, fetch, redirectUri, now), never the
- * driver; the kernel owns the record, so a hook that throws can't leave it half-written.
+ * connection. Each instance gets one kernel (#53); the lifecycle (`bind`) and every extension
+ * declare their tools on it, and `serve` routes timers to them. Definition code only ever sees its
+ * `ctx` (config, fetch, redirectUri, now), never the kernel, so a hook that throws can't leave
+ * anything half-written.
  */
 
 // Definitions differ in config and metadata types; the registry holds any of them.
@@ -76,15 +66,17 @@ export type Fault = { code: string; status: number; message: string; state?: str
 export type Reply = { ok: Json } | { error: Fault };
 export type Method = (args: Json) => Promise<Json>;
 
-/** What an extension sees of one hosted connection. */
-export type Hosted = { d: Driver; instance: string; def: AnyDefinition; id: string; bound: Bound; settings: Settings };
+/**
+ * What an extension sees of one hosted connection. `k` is the instance's kernel: declare cells,
+ * timers, queues and tickets on it once (stored names `<extension>.<name>`). `done` holds a session's
+ * authorized credential for `session.complete` (#29).
+ */
+export type Hosted = { k: Kernel; instance: string; def: AnyDefinition; id: string; bound: Bound; settings: Settings; done: Ticket<string> };
 
-/** An extension's per-connection part. Created once per instance, next to `bind`. */
+/** An extension's per-connection part. Created once per instance, next to `bind`. Timers are declared on `k`. */
 export type Hooks = {
   /** Extra methods, reachable by RPC and by `POST /connections/:def/:id/:method`. Built-ins win on a name clash. */
   methods?: Record<string, Method>;
-  /** True if the timer was this extension's. Name timers `<extension>.<name>`; `kernel.*` is taken. */
-  onTimer?(name: string, payload: Json): Promise<boolean>;
   /** After every method or timer on this connection, failed ones too (state may have moved anyway). Errors are logged. */
   after?(cause: string): Promise<void>;
   /** Before `revoke`, while the credential is still there (webhooks unregister). Errors are logged; the revoke goes on. */
@@ -130,11 +122,10 @@ async function status(b: Bound): Promise<Json> {
   return { state: s.state, ...(s.reason ? { reason: s.reason } : {}), metadata: await b.metadata() };
 }
 
-/** A session's authorized credential waits under `DONE + <completion>` for `session.complete` (#29). */
-export const DONE = "session.done:";
+/** How long a session's authorized credential waits for `session.complete` (#29). */
 const DONE_TTL_MS = 600_000;
 
-const builtins = (b: Bound, hooks: Hooks[], instance: string, d: Driver, keys: Keys): Record<string, Method> => ({
+const builtins = (b: Bound, hooks: Hooks[], instance: string, k: Kernel, done: Ticket<string>): Record<string, Method> => ({
   connect: async (a) => ({ url: await b.connect(input(a)) }),
   callback: async (a) => {
     const { [COOKIES]: cookies = "", ...params } = input(a);
@@ -151,8 +142,8 @@ const builtins = (b: Bound, hooks: Hooks[], instance: string, d: Driver, keys: K
         throw new Fail("session_mismatch", 403, "this browser did not start the authorization");
       // Not activated yet: the credential waits, sealed, for the app's page to confirm (#29), since
       // whoever started the flow (a ticket can be minted outside a browser) may not be this browser's user.
-      const completion = randomId();
-      await d.store.put(`${DONE}${completion}`, await encrypt(JSON.stringify(await b.exchange(params, hs)), keys), { ttlMs: DONE_TTL_MS });
+      // The completion is a one-time kernel ticket: only a reference reaches the browser.
+      const completion = await done.issue(await k.seal((await b.exchange(params, hs)) as unknown as Json));
       return { target, completion };
     } catch (e) {
       return { target, error: fault(e, instance) } as unknown as Json;
@@ -171,25 +162,28 @@ const builtins = (b: Bound, hooks: Hooks[], instance: string, d: Driver, keys: K
 export function host(o: { definitions: Record<string, AnyDefinition>; settings: () => Promise<Settings>; connection: ((h: Hosted) => Hooks)[] }): Program {
   async function init(d: Driver, instance: string) {
     const m = /^conn:([^:]+):(.+)$/.exec(instance);
-    // ponytail: other instances (app-scope rate keys) only answer RATE; give them hooks when an extension needs one.
+    // ponytail: other instances (app-scope limiters) only answer RATE; give them a kernel when an extension needs one.
     if (!m) return null;
     const [, defId, id] = m as unknown as [string, string, string];
     const def = Object.hasOwn(o.definitions, defId) ? o.definitions[defId] : undefined;
     if (!def) throw new Fail("not_found", 404, `unknown definition ${defId}`);
     const s = await o.settings();
     if (!Object.hasOwn(s.config, defId)) throw new Fail("not_configured", 503, `no config for ${defId}`);
+    // One kernel per instance, built once the keys are loaded (Workers can't do crypto at global scope).
+    const k = kernel(d, { instance, keys: s.keys, stateKey: s.stateKey });
     // ponytail: definition code shares the isolate; no per-hook timeout or sandbox beyond workerd's limits (managed: #34).
-    const bound = bind(def, d, instance, {
+    const bound = bind(def, k, {
       config: s.config[defId],
       // Wrapped: workerd's fetch throws "Illegal invocation" when called as a method of ctx.
       fetch: s.fetch ?? (((...a: Parameters<typeof fetch>) => fetch(...a)) as typeof fetch),
       redirectUri: s.redirectUri,
-      keys: s.keys,
-      stateKey: s.stateKey,
     }) as Bound;
-    const hooks = o.connection.map((f) => f({ d, instance, def, id, bound, settings: s }));
-    const methods: Record<string, Method> = Object.assign({}, ...hooks.map((h) => h.methods), builtins(bound, hooks, instance, d, s.keys));
-    return { bound, hooks, methods };
+    const done = k.ticket<string>("session.done", { ttlMs: DONE_TTL_MS });
+    const hooks = o.connection.map((f) => f({ k, instance, def, id, bound, settings: s, done }));
+    const methods: Record<string, Method> = Object.assign({}, ...hooks.map((h) => h.methods), builtins(bound, hooks, instance, k, done));
+    // Timers go to whoever declared them (the lifecycle's refresh, extensions' own).
+    const timers = k.serve({});
+    return { bound, hooks, methods, timers };
   }
 
   return (d, instance) => {
@@ -220,9 +214,7 @@ export function host(o: { definitions: Record<string, AnyDefinition>; settings: 
         const h = await get();
         if (!h) return;
         try {
-          if (await h.bound.onTimer(name, payload)) return;
-          for (const x of h.hooks) if (await x.onTimer?.(name, payload)) return;
-          console.error("unhandled timer", instance, name);
+          await h.timers.onTimer(name, payload);
         } finally {
           await after(h, name);
         }

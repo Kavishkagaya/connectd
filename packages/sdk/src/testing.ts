@@ -1,6 +1,6 @@
-import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
+import { apiKey, defineConnection, type OAuth2, oauth2 } from "@openconnect/connections";
 import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys, type OAuth2 } from "@openconnect/kernel";
+import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { directory, emit, events, type Extension, memoryIndex, proxy, runtime, sessions } from "@openconnect/runtime";
 import { openconnect } from "./client.ts";

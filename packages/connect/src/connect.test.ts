@@ -122,7 +122,7 @@ async function coop(t: Awaited<ReturnType<typeof setup>>, token: string) {
   }
   expect(s.r).toBeUndefined();
   const { returnUrl } = await t.finish({ noOpener: true });
-  expect(returnUrl).toMatch(/^https:\/\/app\.test\/back#openconnect=authorized&definition=example&id=u1&completion=[\w-]+&nonce=[0-9a-f]{24}$/);
+  expect(returnUrl).toMatch(/^https:\/\/app\.test\/back#openconnect=authorized&definition=example&id=u1&completion=[\w.-]+&nonce=[0-9a-f]{24}$/);
   // The app's page, loaded in the popup (same origin as the opener).
   const inPopup = Object.assign(Object.create(t.win), { name: "", close: () => {} }); // COOP cleared window.name
   t.win.location.href = returnUrl!;

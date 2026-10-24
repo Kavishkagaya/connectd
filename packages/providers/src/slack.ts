@@ -1,5 +1,5 @@
-import { defineConnection, hmacHex, type OAuth2Config, oauth2, rateHeaders, safeEqual } from "@openconnect/connections";
-import type { Json, OAuth2, TokenResponse } from "@openconnect/kernel";
+import { defineConnection, hmacHex, type OAuth2, type OAuth2Config, oauth2, rateHeaders, safeEqual, type TokenResponse } from "@openconnect/connections";
+import type { Json } from "@openconnect/kernel";
 
 /** `signingSecret` (app settings, Basic Information) verifies Events API requests (#25). */
 export type SlackConfig = OAuth2Config & { userScopes?: string[]; signingSecret?: string };

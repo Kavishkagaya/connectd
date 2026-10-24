@@ -292,7 +292,7 @@ test("popup without an opener (a provider's COOP cut it) goes on to the return U
   const tk = await t.token("example", "c1", { returnUrl: `${APP}/done` });
   const res = await t.authorize(tk);
   const html = await (await t.back(res.headers.get("location")!, t.cookieOf(res))).text();
-  expect(html).toMatch(/else if \("https:\/\/app\.test\/done#openconnect=authorized\\u0026definition=example\\u0026id=c1\\u0026completion=[\w-]+\\u0026nonce=n1"\) location\.replace\(/);
+  expect(html).toMatch(/else if \("https:\/\/app\.test\/done#openconnect=authorized\\u0026definition=example\\u0026id=c1\\u0026completion=[\w.-]+\\u0026nonce=n1"\) location\.replace\(/);
 });
 
 test("login CSRF: a ticket minted elsewhere, opened in a victim's browser, never activates", async () => {

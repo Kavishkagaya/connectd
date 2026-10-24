@@ -11,10 +11,8 @@
     "test": "bun test src"
   },
   "dependencies": {
+    "@openconnect/connections": "workspace:*",
     "@openconnect/kernel": "workspace:*",
     "@openconnect/runtime": "workspace:*"
-  },
-  "devDependencies": {
-    "@openconnect/connections": "workspace:*"
   }
 }

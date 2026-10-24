@@ -1,4 +1,5 @@
-import { base64url, fromBase64url, type Json, type State } from "@openconnect/kernel";
+import type { State } from "@openconnect/connections";
+import { base64url, fromBase64url, type Json } from "@openconnect/kernel";
 import { Fail } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 
@@ -136,7 +137,7 @@ export async function findByExternal(index: Index, def: string, key: string, val
 export function directory(index: Index): Extension {
   return {
     index,
-    connection: ({ d, def, id, bound }) => {
+    connection: ({ k, def, id, bound }) => {
       // What the index holds for this connection, as far as this instance knows: the version it
       // reflects, and the content last written (null until a write succeeds here).
       let synced = -1;
@@ -155,16 +156,16 @@ export function directory(index: Index): Extension {
       }
 
       async function sync(force: boolean) {
-        // "meta" is bind's key (define.ts). It's written after the record, so reading it first
-        // means a read torn by a concurrent re-auth gets a lower version than the read after it.
-        const meta = await d.store.get("meta");
+        // The metadata cell (bind's). It's written after the record, so reading it first means a
+        // read torn by a concurrent re-auth gets a lower version than the read after it.
+        const meta = await bound.meta.read();
         // Both versions come from one counter per instance, so the max orders the pair.
         // Most calls (token, status, proxied requests) change nothing: stop before decrypting.
         if (!force && Math.max((await bound.conn.version()) ?? 0, meta?.v ?? 0) === synced) return;
         const s = await bound.conn.read();
         if (!s) return; // nothing was ever created (a failed first connect)
         const version = Math.max(s.v, meta?.v ?? 0);
-        const row = { state: s.state, reason: s.reason ?? null, external: externalOf(meta?.value ?? null) };
+        const row = { state: s.state, reason: s.reason ?? null, external: externalOf(meta?.value.m ?? null) };
         // A refresh bumps the version but nothing the index shows; skip the write. The stored row
         // keeps its older version, which is still monotonic: any later change has a higher one.
         // Only with no write in flight here: an older one landing after the skip would be stale
@@ -176,7 +177,7 @@ export function directory(index: Index): Extension {
         inflight++;
         try {
           // ponytail: awaited inside the call, so D1 latency lands on the caller; move to waitUntil if it shows.
-          await index.upsert({ def: def.id, id, ...row, updatedAt: d.now(), version });
+          await index.upsert({ def: def.id, id, ...row, updatedAt: k.now(), version });
         } catch (e) {
           // It may have committed with the response lost: what's stored is unknown, so the next sync writes.
           written = null;
