@@ -1,4 +1,4 @@
-import { type ActionSpec, type AnyAction, actionOf, apiFor, type SchemaIssue, type Store } from "@openconnect/connections";
+import { type ActionSpec, type AnyAction, actionOf, apiFor, NotActive, type SchemaIssue, type State, type Store } from "@openconnect/connections";
 import type { Json } from "@openconnect/kernel";
 import { emit } from "./events.ts";
 import { Fail, type Hooks, type Hosted } from "./host.ts";
@@ -40,7 +40,10 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
   // ponytail: one cell for every key of the connection's store (bounded by a stored value's size); a cell per key when stores grow.
   const cell = h.k.cell<Record<string, Json>>("actions.store");
   const store: Store = {
-    get: async <T extends Json>(key: string) => ((await cell.read())?.value[key] ?? null) as T | null,
+    get: async <T extends Json>(key: string) => {
+      const v = (await cell.read())?.value;
+      return (v && Object.hasOwn(v, key) ? v[key] : null) as T | null;
+    },
     set: async (key, value) => void (await cell.update((cur) => ({ ...cur, [key]: value }))),
     delete: async (key) => void (await cell.update((cur) => (cur && Object.hasOwn(cur, key) ? Object.fromEntries(Object.entries(cur).filter(([k]) => k !== key)) : null))),
   };
@@ -56,18 +59,29 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
     ...(h.def.proxy ? { api: apiFor(h.bound.ctx, h.def.proxy, token) } : {}),
   });
 
-  /** A scheduled run, if the connection is still in the state it's for. Reports either way; a throw is retried by the timer. */
+  /** The state and the record's version, without decrypting the credential. */
+  const record = async (): Promise<{ state: State; v: number } | null> => {
+    const r = await h.bound.conn.record.read();
+    return r ? { state: r.value.state, v: r.v } : null;
+  };
+
+  /**
+   * A scheduled run, if the connection is still in the state it's for. Reports either way; a throw
+   * is retried by the timer. A connection that stopped being active mid-run (revoked) is no failure.
+   */
   async function scheduled(a: ActionSpec, trigger: "every" | "on", attempt: number): Promise<boolean> {
-    const s = await h.bound.conn.read();
-    if (s?.state !== (trigger === "every" ? "active" : a.on)) return false;
+    if ((await record())?.state !== (trigger === "every" ? "active" : a.on)) return false;
+    let output: Json;
     try {
-      const output = await a.run(await ctx(), undefined);
-      await emit(h, { action: a.id, trigger, output }, "action.completed");
+      output = await a.run(await ctx(), undefined);
     } catch (e) {
+      if (e instanceof NotActive) return false;
       console.error("action failed", h.instance, a.id, trigger, attempt, e);
       await emit(h, { action: a.id, trigger, error: message(e), attempt: attempt + 1 }, "action.failed");
       throw e;
     }
+    // Outside the try: a failed emit must not run the action again.
+    await emit(h, { action: a.id, trigger, output }, "action.completed");
     return true;
   }
 
@@ -75,14 +89,16 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
     if (a.every === undefined) return [];
     const ms = a.every;
     const next = h.k.cell<{ at: number }>(`actions.${a.id}.next`);
+    /** The next run, if the connection is (still) active. */
     const arm = async () => {
+      if ((await record())?.state !== "active") return next.delete();
       const at = h.k.now() + ms;
       await next.put({ at });
       await timer.set(at);
     };
     const timer = h.k.timer(`actions.${a.id}.every`, {
       async handle(_p, { attempt }) {
-        if (!(await scheduled(a, "every", attempt))) return next.delete();
+        await scheduled(a, "every", attempt);
         await arm();
       },
       retry: RETRY,
@@ -94,7 +110,8 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
   const on = mine.flatMap((a) => {
     if (a.on === undefined) return [];
     const state = a.on;
-    const seen = h.k.cell<{ state: string | null }>(`actions.${a.id}.seen`);
+    /** The state last seen and the record version it was seen at: an older read never overwrites a newer one. */
+    const seen = h.k.cell<{ state: State; v: number }>(`actions.${a.id}.seen`);
     const timer = h.k.timer(`actions.${a.id}.on`, {
       handle: async (_p, { attempt }) => void (await scheduled(a, "on", attempt)),
       retry: RETRY,
@@ -119,19 +136,27 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
     ]),
   );
 
+  // Record version last handled, this isolate; undefined: check once after a restart (covers a lost timer).
+  let checked: number | undefined;
+
   return {
     methods,
-    // ponytail: state changes are seen after each call or timer, not from the record's outbox, so a
+    // ponytail: state entries are seen after each call or timer, not from the record's outbox, so a
     // state entered and left within one call is missed; relay the outbox here if that ever matters.
     async after() {
       if (!every.length && !on.length) return;
-      const state = (await h.bound.conn.read())?.state ?? null;
+      // One small read, no decrypt, on calls that changed nothing (most: tokens, proxied requests).
+      const r = await record();
+      if (!r || r.v === checked) return;
+      checked = r.v;
+      // Another call may have moved the state since `r`: act only while `r` is still the latest.
+      const current = async () => (await record())?.v === r.v;
       for (const e of every) {
         const n = (await e.next.read())?.value;
-        if (state === "active") {
+        if (r.state === "active") {
           // First time active, or the timer was lost (no run for a whole interval and then some).
-          if (!n || h.k.now() > n.at + e.ms + LOST_MS) await e.arm();
-        } else if (n) {
+          if ((!n || h.k.now() > n.at + e.ms + LOST_MS) && (await current())) await e.arm();
+        } else if (n && (await current())) {
           await e.next.delete();
           await e.timer.cancel();
         }
@@ -139,8 +164,10 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
       for (const o of on) {
         let entered = false;
         await o.seen.update((prev) => {
-          entered = state === o.state && prev?.state !== state;
-          return prev?.state === state ? null : { state };
+          entered = false;
+          if (prev && prev.v >= r.v) return null;
+          entered = r.state === o.state && prev?.state !== r.state;
+          return { state: r.state, v: r.v };
         });
         if (entered) await o.timer.set(h.k.now());
       }

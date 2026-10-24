@@ -8,7 +8,7 @@ import type { Credential, State } from "./lifecycle.ts";
  *
  *   export const starRepo = action("starRepo", github)
  *     .input(z.object({ repo: z.string() }))
- *     .run(({ api }, { repo }) => api.fetch(`/user/starred/${repo}`, { method: "PUT" }));
+ *     .run(async ({ api }, { repo }) => ({ status: (await api.fetch(`/user/starred/${repo}`, { method: "PUT" })).status }));
  *
  *   export const syncIssues = action("syncIssues", github)
  *     .every(HOUR)
@@ -100,7 +100,11 @@ interface WithInput<Id extends string, Conn extends Connection, I, In> {
 interface Scheduled<Id extends string, Conn extends Connection> {
   /** Run every `ms` while the connection is active (first run `ms` after it becomes active). */
   every(ms: number): Scheduled<Id, Conn>;
-  /** Run once each time the connection enters `state` (`active`: after every login or re-auth). */
+  /**
+   * Run once each time the connection enters `state` (`active`: the first login, and each re-auth
+   * after `reauth_required`; a login while already active isn't an entry). Connections already in
+   * `state` when the action is deployed count as entering it the first time they're seen.
+   */
   on(state: State): Scheduled<Id, Conn>;
   run<O extends Json | void>(run: Run<Conn, undefined, O>): Action<Id, Conn, undefined, Out<O>>;
 }
