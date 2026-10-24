@@ -82,8 +82,14 @@ test("app route: accounts, return paths, who may connect", async () => {
   expect(await (await t.confirm({ definition: "example", id: "u1:work", completion: f.get("completion") })).json()).toEqual({ connected: true });
   // A return path off this origin becomes "/".
   expect(await (await t.get("/return?return=//evil.test")).text()).toContain('new URL("/", location.origin)');
-  // An API-key definition has no provider redirect (hosted pages, later).
-  expect((await t.get("/connect/keyed", "u1")).status).toBe(400);
+  // An API-key definition: the runtime's hosted page asks for the key, then back to `return`.
+  const keyed = await t.get("/connect/keyed?return=/settings", "u1");
+  expect(keyed.status).toBe(303);
+  const link = new URL(keyed.headers.get("location")!);
+  expect(`${link.origin}${link.pathname}`).toBe("https://oc.test/connect");
+  const token = new URLSearchParams(link.hash.slice(1)).get("token")!;
+  const info = await t.rt.fetch(new Request("https://oc.test/session", { headers: { authorization: `Bearer ${token}`, "sec-fetch-site": "same-origin" } }), t.w.call);
+  expect(await info.json()).toMatchObject({ definition: "keyed", id: "u1", flow: "form", next: `${APP}/settings` });
 });
 
 test("connectd(): env defaults, listeners checked against their ids", () => {

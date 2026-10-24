@@ -27,7 +27,7 @@ type Deps = {
   base: () => string;
   fetch: (input: string, init: RequestInit) => Promise<Response>;
   // Structural, not the client's types: those include `routes` itself.
-  connection: (def: string, id: string) => { session(a: SessionArgs): Promise<{ token: string }> };
+  connection: (def: string, id: string) => { session(a: SessionArgs): Promise<{ token: string }>; link(o: { next?: string }): Promise<{ url: string }> };
   events: () => { handle(req: Request): Promise<Response> };
   user?: User;
   /** The app's public origin, if `req.url` doesn't show it (behind a proxy). */
@@ -116,13 +116,13 @@ export function routes(d: Deps) {
   const session = (def: string, id: string, a: { returnUrl: string } | { origin: string }) => d.connection(def, id).session(a);
 
   /** `/session/<action>` as the browser would call it: the session token, from the app's origin. */
-  async function browser(origin: string, token: string, action: string, body: unknown) {
-    const res = await d.fetch(`${d.base()}/session/${action}`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${token}`, origin, "content-type": "application/json" },
-      body: JSON.stringify(body),
+  async function browser(origin: string, token: string, action: string, body?: unknown) {
+    const res = await d.fetch(`${d.base()}/session${action ? `/${action}` : ""}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { authorization: `Bearer ${token}`, origin, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-    const r = (await res.json().catch(() => null)) as { ticket?: string; error?: { code: string; message: string } } | null;
+    const r = (await res.json().catch(() => null)) as { ticket?: string; flow?: string; error?: { code: string; message: string } } | null;
     return { ok: res.ok, status: res.status, r };
   }
 
@@ -149,7 +149,13 @@ export function routes(d: Deps) {
     const id = account ? `${user}:${account}` : user;
     const to = local(m.url.searchParams.get("return"), origin);
     const { token } = await session(m.def, id, { returnUrl: `${origin}${m.base}/return?return=${encodeURIComponent(to)}` });
-    // ponytail: redirect flows only; API-key forms and device codes wait for the hosted connect pages.
+    // An API-key form: the runtime's hosted page asks for it, then sends the user back to `return`.
+    const info = await browser(origin, token, "");
+    if (info.ok && info.r?.flow === "form") {
+      const { url } = await d.connection(m.def, id).link({ next: `${origin}${to}` });
+      return new Response(null, { status: 303, headers: { location: url, "cache-control": "no-store" } });
+    }
+    // ponytail: device codes aren't shown by any page yet; connect those from the server.
     const t = await browser(origin, token, "authorize", { mode: "redirect", nonce: "" });
     if (!t.ok || !t.r?.ticket) return fail(t.status >= 400 ? t.status : 502, t.r?.error?.code ?? "authorize_failed", t.r?.error?.message ?? "the runtime gave no ticket");
     return new Response(null, { status: 303, headers: { location: `${d.base()}/session/authorize?ticket=${encodeURIComponent(t.r.ticket)}`, "cache-control": "no-store" } });

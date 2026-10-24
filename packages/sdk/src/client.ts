@@ -203,6 +203,13 @@ export function connectd<R = Registry>(o: Options = {}) {
        */
       session: (o: SessionArgs) => call<{ token: string; expiresAt: number }>("session", o),
       /**
+       * A link to the runtime's own connect page (#54): a button for the provider, or a form for an
+       * API key; then the user goes to `next` (`?connectd=connected&definition=&id=`). For a user
+       * who isn't in your app's browser session (an email, a chat): whoever opens it can connect this
+       * connection, so send it only to that user, and keep `ttlMs` short.
+       */
+      link: (o: { next?: string; ttlMs?: number } = {}) => call<{ url: string; expiresAt: number }>("session", { hosted: true, ...o }),
+      /**
        * The connection's actions (#54): `gh.actions.star({ repo })` runs `star` in this connection's
        * instance (`POST /connections/:def/:id/actions/star`). Input is checked by the action's schema
        * on the server (`bad_request` with `issues`); the connection must be active (`not_active`).

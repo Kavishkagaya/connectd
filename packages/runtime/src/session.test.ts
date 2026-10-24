@@ -358,3 +358,53 @@ test("a callback without a session still answers JSON and activates", async () =
   const done = await t.json(await t.back(c.body.url, null));
   expect(done).toMatchObject({ status: 200, body: { state: "active", metadata: null } });
 });
+
+test("hosted page (link): /connect from the runtime's own origin, the token in the fragment, then next", async () => {
+  const t = await setup();
+  const OWN = "https://oc.test";
+  // Refused: next on the runtime itself or off the allowlist, a hosted session with its own origin, next without hosted.
+  expect((await t.issue("example", "c1", { hosted: true, next: `${OWN}/x` })).status).toBe(403);
+  expect((await t.issue("example", "c1", { hosted: true, next: "https://evil.test/" })).status).toBe(403);
+  expect((await t.issue("example", "c1", { hosted: true, origin: APP })).status).toBe(400);
+  expect((await t.issue("example", "c1", { next: `${APP}/done` })).status).toBe(400);
+
+  const link = await t.issue("example", "c1", { hosted: true, next: `${APP}/settings` });
+  const url = new URL(link.body.url);
+  expect(`${url.origin}${url.pathname}`).toBe(`${OWN}/connect`);
+  const tk = new URLSearchParams(url.hash.slice(1)).get("token")!;
+  expect(tk).toBe(link.body.token);
+
+  const page = await t.send("/connect");
+  expect(page.headers.get("content-type")).toContain("text/html");
+  expect(page.headers.get("content-security-policy")).toContain("connect-src 'self'");
+  expect(await page.text()).toContain('sessionStorage.setItem(KEY, f.get("token"))');
+
+  // The page's own fetches: a same-origin GET has no Origin (Sec-Fetch-Site says where it's from).
+  const own = (path: string, init: RequestInit = {}) =>
+    t.send(`/session${path}`, { ...init, headers: { authorization: `Bearer ${tk}`, "sec-fetch-site": "same-origin", ...(init.method === "POST" ? { origin: OWN } : {}) } });
+  const info = await t.json(await own(""));
+  expect(info.body).toMatchObject({ definition: "example", id: "c1", flow: "redirect", next: `${APP}/settings` });
+  // Cross-site with no Origin is still refused.
+  expect((await t.send("/session", { headers: { authorization: `Bearer ${tk}`, "sec-fetch-site": "cross-site" } })).status).toBe(403);
+
+  // Its button: a ticket from its own origin, the provider, and back to /connect with the outcome.
+  const tkt = await t.json(await own("/authorize", { method: "POST", body: JSON.stringify({ mode: "redirect", nonce: "" }) }));
+  const res = await t.go(tkt.body.ticket);
+  const done = await t.back(res.headers.get("location")!, t.cookieOf(res));
+  const back = new URL(done.headers.get("location")!);
+  expect(`${back.origin}${back.pathname}`).toBe(`${OWN}/connect`);
+  const f = new URLSearchParams(back.hash.slice(1));
+  expect(f.get("connectd")).toBe("authorized");
+  expect((await t.json(await own("/complete", { method: "POST", body: JSON.stringify({ completion: f.get("completion") }) }))).body.state).toBe("active");
+});
+
+test("hosted page: an API-key form, on the runtime's origin", async () => {
+  const t = await setup();
+  const link = await t.issue("keyed", "k1", { hosted: true });
+  const tk = link.body.token as string;
+  const info = await t.json(await t.send("/session", { headers: { authorization: `Bearer ${tk}`, "sec-fetch-site": "same-origin" } }));
+  expect(info.body).toMatchObject({ flow: "form", fields: ["key", "region"] });
+  expect(info.body.next).toBeUndefined();
+  const r = await t.json(await t.browser("/connect", tk, { method: "POST", body: JSON.stringify({ fields: { key: "sk", region: "eu" } }) }, "https://oc.test"));
+  expect(r.body.state).toBe("active");
+});

@@ -29,9 +29,13 @@ const TICKET_TTL_MS = 60_000;
 const COOKIE_MAX_AGE = 600;
 
 /** A session token's payload. Signed, not secret: the browser package reads `returnUrl` to know if it can fall back to a redirect. */
-export type Claims = { typ: typeof TYP; def: string; id: string; exp: number; origin: string; returnUrl?: string };
+export type Claims = { typ: typeof TYP; def: string; id: string; exp: number; origin: string; returnUrl?: string; next?: string };
 
-export type SessionArgs = { origin?: string; returnUrl?: string; ttlMs?: number };
+/**
+ * `hosted: true` (`link()` in the SDK): a session for the runtime's own connect page, `/connect`, and
+ * `next` where that page sends the user once connected (`?connectd=connected&definition=&id=`).
+ */
+export type SessionArgs = { origin?: string; returnUrl?: string; ttlMs?: number; hosted?: boolean; next?: string };
 
 /** `GET /session`: what a frontend needs to render the connect step. */
 export type SessionInfo = {
@@ -43,6 +47,8 @@ export type SessionInfo = {
   state: string | null;
   reason?: string;
   expiresAt: number;
+  /** A hosted session's `next`: where its page goes once connected. */
+  next?: string;
 };
 
 /**
@@ -64,15 +70,29 @@ const parse = (u: unknown) => {
 };
 const originOf = (u: unknown) => parse(u)?.origin ?? null;
 
-/** Exact match against `settings.sessions.origins`. */
+/** The runtime's own public origin (the hosted connect page's), from where the provider comes back. */
+const own = (s: Settings) => originOf(s.redirectUri);
+
+/** Exact match against `settings.sessions.origins`, or the runtime's own origin (its hosted page). */
 const allowed = (s: Settings, origin: string | null | undefined): origin is string =>
-  !!origin && origin !== "null" && !!s.sessions?.origins.some((o) => originOf(o) === origin);
+  !!origin && origin !== "null" && !!s.sessions && (origin === own(s) || s.sessions.origins.some((o) => originOf(o) === origin));
 
 /** Connection method `session`: sign a token for this connection. Runs in the instance (`d.now()`), so a revoked connection is refused here. */
 async function issue(h: Hosted, a: Json): Promise<Json> {
   const s = h.settings.sessions;
   if (!s) throw off();
-  const { origin, returnUrl, ttlMs = TTL_MS } = (a ?? {}) as SessionArgs;
+  const args = (a ?? {}) as SessionArgs;
+  const { ttlMs = TTL_MS, hosted, next } = args;
+  if (hosted !== undefined && typeof hosted !== "boolean") throw bad("hosted must be a boolean");
+  if (hosted && (args.origin !== undefined || args.returnUrl !== undefined)) throw bad("a hosted session has no origin or returnUrl: the runtime's /connect page is both");
+  if (next !== undefined) {
+    if (!hosted) throw bad("next is for hosted sessions (the /connect page); an app's own page has returnUrl");
+    const u = parse(next);
+    if (!u || (u.protocol !== "https:" && u.protocol !== "http:") || u.hash) throw bad("next must be an http(s) URL without a fragment");
+    if (u.origin === own(h.settings) || !allowed(h.settings, u.origin)) throw new Fail("forbidden", 403, `next origin ${u.origin} is not in settings.sessions.origins`);
+  }
+  const origin = hosted ? own(h.settings) ?? undefined : args.origin;
+  const returnUrl = hosted ? `${own(h.settings)}/connect` : args.returnUrl;
   if (origin !== undefined && (typeof origin !== "string" || originOf(origin) !== origin)) throw bad("origin must be an origin like https://app.example.com");
   if (returnUrl !== undefined) {
     const u = parse(returnUrl);
@@ -88,8 +108,10 @@ async function issue(h: Hosted, a: Json): Promise<Json> {
   const rec = await h.bound.conn.read();
   if (rec?.state === "revoked") throw new NotActive("revoked", rec.reason);
   const exp = h.k.now() + ttlMs;
-  const claims: Claims = { typ: TYP, def: h.def.id, id: h.id, exp, origin: o, ...(returnUrl ? { returnUrl } : {}) };
-  return { token: await sign(JSON.stringify(claims), s.key), expiresAt: exp };
+  const claims: Claims = { typ: TYP, def: h.def.id, id: h.id, exp, origin: o, ...(returnUrl ? { returnUrl } : {}), ...(next ? { next } : {}) };
+  const token = await sign(JSON.stringify(claims), s.key);
+  // The link carries the token in its fragment: never sent to a server, a log or a Referer.
+  return { token, expiresAt: exp, ...(hosted ? { url: `${returnUrl}#token=${encodeURIComponent(token)}` } : {}) };
 }
 
 /** A signed payload of type `typ`, or a 401. `verify` is null for anything malformed, so garbage never throws. */
@@ -219,7 +241,8 @@ const session: Route = {
   public: true,
   async fetch(req, api, [action, ...rest]) {
     if (action === "authorize" && !rest.length && req.method !== "POST" && req.method !== "OPTIONS") return navigate(req, api);
-    const origin = req.headers.get("origin");
+    // A same-origin GET carries no Origin: the hosted page's own fetches (Sec-Fetch-Site can't be set by a page).
+    const origin = req.headers.get("origin") ?? (req.headers.get("sec-fetch-site") === "same-origin" ? own(api.settings) : null);
     const ok = allowed(api.settings, origin);
     const headers: Record<string, string> = ok ? { vary: "Origin", "access-control-allow-origin": origin, "access-control-expose-headers": ERROR_HEADER } : { vary: "Origin" };
     try {
@@ -242,7 +265,7 @@ const session: Route = {
       if (rest.length) throw new Fail("not_found", 404, "no such route");
       if (!action) {
         if (req.method !== "GET") throw new Fail("method_not_allowed", 405, "GET only");
-        const info: SessionInfo = { definition: c.def, id: c.id, flow, fields: def.auth.fields ?? [], ...(await state(api, instance)), expiresAt: c.exp };
+        const info: SessionInfo = { definition: c.def, id: c.id, flow, fields: def.auth.fields ?? [], ...(await state(api, instance)), expiresAt: c.exp, ...(c.next ? { next: c.next } : {}) };
         return Response.json(info, { headers });
       }
       if (action === "connect") {
@@ -326,12 +349,83 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
 }
 
 /**
+ * `GET /connect#token=`: the runtime's own connect page (#54, `link()`), so an app needs no frontend
+ * package. It keeps the token in sessionStorage (the provider round trip leaves the page), then
+ * renders a button (redirect flows) or a form (API-key fields) on the same `/session` API as
+ * @connectd/connect, from the runtime's own origin. Back from the provider it confirms, then goes
+ * to the session's `next`.
+ */
+const hostedPage: Route = {
+  public: true,
+  async fetch(req, api, rest) {
+    if (rest.length) throw new Fail("not_found", 404, "no such route");
+    if (req.method !== "GET") throw new Fail("method_not_allowed", 405, "GET only");
+    if (!api.settings.sessions) throw off();
+    const nonce = randomId();
+    return new Response(page(nonce), {
+      headers: {
+        ...NO_STORE,
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        "x-content-type-options": "nosniff",
+      },
+    });
+  },
+};
+
+// ponytail: one plain page, no theming; the dashboard's look or per-app branding when someone asks.
+const page = (nonce: string) => `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Connect</title>
+<style nonce="${nonce}">body{font:16px/1.5 system-ui,sans-serif;max-width:28rem;margin:4rem auto;padding:0 1rem;color:#222}button{font:inherit;padding:.5rem 1rem;cursor:pointer}label{display:block;margin:.75rem 0}input{display:block;width:100%;font:inherit;padding:.4rem;box-sizing:border-box}.err{color:#b00020}</style>
+<main id="m"><p>Loading…</p></main>
+<script nonce="${nonce}">(async () => {
+  const KEY = "connectd.session", m = document.getElementById("m");
+  const f = new URLSearchParams(location.hash.slice(1));
+  if (f.get("token")) sessionStorage.setItem(KEY, f.get("token"));
+  history.replaceState(null, "", location.pathname);
+  const token = sessionStorage.getItem(KEY);
+  const el = (tag, props, ...kids) => { const e = Object.assign(document.createElement(tag), props); e.append(...kids); return e; };
+  const show = (...kids) => m.replaceChildren(...kids);
+  const fail = (msg) => show(el("h1", { textContent: "Couldn't connect" }), el("p", { className: "err", textContent: msg }));
+  if (!token) return fail("This link has expired or was already used. Ask for a new one.");
+  const api = async (path, body) => {
+    const res = await fetch("/session" + path, { method: body ? "POST" : "GET", headers: { authorization: "Bearer " + token, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    const r = await res.json().catch(() => null);
+    if (!res.ok) throw new Error((r && r.error && r.error.message) || "HTTP " + res.status);
+    return r;
+  };
+  let info;
+  try { info = await api(""); } catch (e) { sessionStorage.removeItem(KEY); return fail(e.message); }
+  const done = () => {
+    sessionStorage.removeItem(KEY);
+    if (!info.next) return show(el("h1", { textContent: "Connected" }), el("p", { textContent: info.definition + " is connected. You can close this tab." }));
+    const to = new URL(info.next);
+    to.searchParams.set("connectd", "connected"); to.searchParams.set("definition", info.definition); to.searchParams.set("id", info.id);
+    location.replace(to.href);
+  };
+  try {
+    if (f.get("connectd") === "authorized") { await api("/complete", { completion: f.get("completion") }); return done(); }
+    if (f.get("connectd") === "connected") return done();
+    const again = f.get("connectd") === "error" ? el("p", { className: "err", textContent: "That didn't work (" + (f.get("code") || "error") + "). Try again." }) : "";
+    if (info.flow === "redirect") {
+      const b = el("button", { textContent: "Connect " + info.definition });
+      b.onclick = async () => { b.disabled = true; try { const t = await api("/authorize", { mode: "redirect", nonce: "" }); location.assign("/session/authorize?ticket=" + encodeURIComponent(t.ticket)); } catch (e) { b.disabled = false; fail(e.message); } };
+      return show(el("h1", { textContent: "Connect " + info.definition }), again, b);
+    }
+    const inputs = info.fields.map((name) => el("input", { name, type: "password", autocomplete: "off", required: true }));
+    const form = el("form", {}, ...inputs.map((i) => el("label", { textContent: i.name }, i)), el("button", { type: "submit", textContent: "Connect" }));
+    form.onsubmit = async (ev) => { ev.preventDefault(); try { await api("/connect", { fields: Object.fromEntries(inputs.map((i) => [i.name, i.value])) }); done(); } catch (e) { fail(e.message); } };
+    show(el("h1", { textContent: "Connect " + info.definition }), again, form);
+  } catch (e) { fail(e.message); }
+})();</script>`;
+
+/**
  * Frontend connect sessions (#29): `extensions: [sessions()]`, on when `settings.sessions` is set.
  * Adds the `/session` routes, the `session` connection method (token issue, API key) and the
  * internal methods only those routes call.
  */
 export const sessions = (): Extension => ({
-  routes: { session },
+  routes: { session, connect: hostedPage },
   internal: ["session.ticket", "session.authorize", "session.complete"],
   connection: (h) => ({ methods: methods(h) }),
 });

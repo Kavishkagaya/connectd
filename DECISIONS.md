@@ -630,8 +630,16 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
   - ponytail: the catalog is fetched over HTTPS from the repo at a tag (`main` while unreleased), with no hash pinning. The code becomes the app's own and runs with its OAuth secrets, so it should be read like any copied code. Pin by commit SHA, or put a sha256 in `index.json`, once there are releases.
 - Tests: add (header, events.ts, `.env` lines once, refused twice, `--id`, optional names; the copied provider discovered, bundled and its env read), diff (matches, a hunk, a file `add` didn't write), the catalog over a fake HTTP fetch at a URL, the CLI commands, and `unified`.
 
+**Built (step 13): hosted connect pages (`link()`).** The runtime serves the connect page itself, so a basic app needs no frontend package, as agreed:
+- `oc.connection(def, id).link({ next?, ttlMs? })` → `{ url, expiresAt }`: a hosted session (`session({ hosted: true })`), its URL `<runtime>/connect#token=<session token>`. The app sends the user there (a redirect, an email, a chat message). Whoever holds the link can connect that connection, so it goes only to that user, with a short TTL.
+- `GET /connect` (sessions() extension): a page with a CSP nonce (`connect-src 'self'`, `form-action 'none'`, `frame-ancestors 'none'`). Its script moves the token from the fragment to sessionStorage and clears the hash, reads `GET /session`, then shows a Connect button (redirect flows: ticket, provider, back to `/connect`, `/session/complete`) or the definition's fields (API-key flows: `/session/connect`). Done: to `next?connectd=connected&definition=&id=`, else "Connected". No token: "This link has expired or was already used".
+- A hosted session's origin and return URL are the runtime's own (`origin`/`returnUrl` refused with `hosted`); the runtime's own origin is allowed for hosted sessions only. `next` must be http(s), without a fragment, on an origin in `sessions.origins` (not the runtime's own).
+- The page's same-origin `GET /session` sends no Origin header: `Sec-Fetch-Site: same-origin` stands for the runtime's own origin.
+- `oc.routes` connects API-key definitions through it: `/connect/:def` on a form flow redirects to the hosted page with `next` = the app's `return` path.
+- ponytail: device-code flows aren't shown by the page yet.
+- Tests: refusals, the page's headers, the redirect flow end to end through `/connect`, the form flow, the app route's redirect for `keyed`. The page's script was run once in real Chromium (form flow, by hand).
+
 **Agreed, not built yet** (the same discussion; each lands in its own PR and updates this entry):
-- Hosted connect pages: the runtime serves the connect page; the app links to it (`link()`), so a basic app needs no frontend package.
 - A Node build of the CLI (today it runs on Bun only).
 - Several accounts per user: different connection ids (`"u1:work"`, `"u1:personal"`); no new feature.
 - v1 is self-host only: one app per deployment.
