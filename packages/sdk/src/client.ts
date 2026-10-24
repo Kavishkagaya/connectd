@@ -72,6 +72,9 @@ async function failure(res: Response): Promise<OpenConnectError> {
   return new OpenConnectError({ code: "http_error", status: res.status, message: text.slice(0, 200) || res.statusText });
 }
 
+/** The names the actions proxy answers: an action id that isn't reserved (`then`, `toJSON`, Object.prototype's). */
+const actionName = (n: string) => /^[A-Za-z0-9_-]{1,64}$/.test(n) && n !== "then" && n !== "toJSON" && !(n in Object.prototype);
+
 const sleeper = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 /**
@@ -186,12 +189,16 @@ export function openconnect<R = Registry>(o: Options) {
        * on the server (`bad_request` with `issues`); the connection must be active (`not_active`).
        */
       actions: new Proxy({} as ActionsOf<E>, {
-        // Not thenable (`await gh.actions` stays the proxy), no symbols.
-        get: (_t, name) => (typeof name !== "string" || name === "then" ? undefined : (input?: Json) => call(`actions.${name}`, input ?? null)),
+        // Action ids only: not thenable (`await gh.actions` stays the proxy), and `toJSON`, `toString`
+        // and other Object.prototype names (a logger, String(), a dev tool) never reach the server.
+        get: (_t, name) => (typeof name === "string" && actionName(name) ? (input?: Json) => call(`actions.${name}`, input ?? null) : undefined),
       }),
       /** Webhook subscriptions (#54), for definitions with a `subscription` schema (GitHub: `{ repo, events? }`). */
       webhooks: {
-        subscribe: (input: SubscriptionOf<E>) => call<Subscription<SubscriptionOf<E>>>("webhooks.subscribe", input as Json),
+        // Method syntax: a typed connection stays assignable to the untyped `Connection`.
+        subscribe(input: SubscriptionOf<E>) {
+          return call<Subscription<SubscriptionOf<E>>>("webhooks.subscribe", input as Json);
+        },
         list: () => call<Subscription<SubscriptionOf<E>>[]>("webhooks.list"),
         unsubscribe: (subscription: string) => call<null>("webhooks.unsubscribe", { id: subscription }),
       },
@@ -221,6 +228,6 @@ export function openconnect<R = Registry>(o: Options) {
   return client;
 }
 
-export type Client = ReturnType<typeof openconnect>;
+export type Client<R = Registry> = ReturnType<typeof openconnect<R>>;
 /** A connection client, untyped (events hand these out: any definition). */
 export type Connection = ReturnType<ReturnType<typeof openconnect<{}>>["connection"]>;

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { action, connection, hmacHex, type StandardSchemaV1, safeEqual } from "@openconnect/connections";
+import { action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@openconnect/connections";
 import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { runtime, webhooks } from "@openconnect/runtime";
-import { OpenConnectError, openconnect } from "./client.ts";
+import { type Client, type Connection, OpenConnectError, openconnect } from "./client.ts";
 import type { RegistryOf } from "./registry.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -90,4 +90,35 @@ test("untyped without a registry: any id, Json in and out", async () => {
   const c = oc.connection("anything", "x");
   const out: Json = await c.actions.whatever!({ a: 1 });
   expect(out).toEqual({ ok: true });
+});
+
+test("the actions proxy answers action ids only: toJSON, toString and the like make no call; reserved ids are refused", () => {
+  let calls = 0;
+  const oc = openconnect({ url: "https://oc.test", apiKey: "k", fetch: async () => (calls++, Response.json(null)) });
+  const a = oc.connection("anything", "x").actions as Record<string, unknown>;
+  for (const n of ["then", "toJSON", "toString", "valueOf", "constructor", "hasOwnProperty", "a.b", ""]) expect(a[n]).toBeUndefined();
+  expect(JSON.stringify(a)).toBe("{}");
+  expect(typeof a.star).toBe("function");
+  expect(calls).toBe(0);
+  for (const id of ["then", "toJSON", "toString", "constructor"]) expect(() => action(id, tracker)).toThrow("reserved");
+});
+
+test("types: optional input stays optional, plain definitions widen the ids, typed connections fit the untyped Connection", () => {
+  const opt = action("opt", tracker)
+    .input(schema((v) => (v === undefined ? undefined : typeof v === "object" ? (v as { n?: number }) : null)) as StandardSchemaV1<{ n?: number } | undefined>)
+    .run(() => null);
+  const plain = { id: "plain" } as unknown as Definition<any, any>;
+  type W = RegistryOf<() => { definitions: [typeof tracker, Definition<any, any>]; actions: [typeof opt] }>;
+  const oc = openconnect<W>({ url: "https://oc.test", apiKey: "k", fetch: async () => Response.json(null) });
+  const t = oc.connection("tracker", "x");
+  void (() => t.actions.opt());
+  void (() => t.actions.opt({ n: 1 }));
+  // Any id once a plain definition is listed; untyped (Json).
+  const p = oc.connection("plain", "x");
+  void (() => p.actions.whatever?.({ a: 1 }));
+  // A typed connection where an untyped one is expected (event handlers, helpers).
+  const typed = openconnect<R>({ url: "https://oc.test", apiKey: "k" }).connection("tracker", "x");
+  const untyped: Connection = typed;
+  const client: Client = oc as unknown as Client;
+  expect([plain.id, typeof untyped.call, typeof client.connection]).toEqual(["plain", "function", "function"]);
 });

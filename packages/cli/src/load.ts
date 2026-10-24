@@ -35,7 +35,7 @@ export async function importConfig(entry: string, out: string, n: number | strin
  */
 export async function loadProject(dir: string, configPath: string, out: string, n: number, env: Env): Promise<{ config: Config; entry: string; modules: string[] }> {
   const base = await importConfig(configPath, out, n);
-  const modules = modulesIn(dirsOf(base, env, configPath));
+  const modules = modulesIn(dirsOf(base, env, configPath), configPath);
   const { entry } = writeDiscovered(dir, configPath, modules);
   return { config: entry === configPath ? base : await importConfig(entry, out, `${n}-entry`), entry, modules };
 }

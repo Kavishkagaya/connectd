@@ -120,6 +120,8 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** Start an action on `connection`. Its id is unique per connection. */
 export function action<const Id extends string, Conn extends Connection>(id: Id, connection: Conn): Start<Id, Conn> {
   if (!ID.test(id)) throw new Error(`action id ${JSON.stringify(id)}: letters, digits, _ and - only`);
+  // The SDK's `actions` proxy never calls these (promises, JSON.stringify, String() probe them).
+  if (id === "then" || id === "toJSON" || id in Object.prototype) throw new Error(`action id ${JSON.stringify(id)} is reserved`);
   const make = (s: Omit<ActionSpec, "run" | "id" | "connection">): any => ({
     input: (input: StandardSchemaV1) => make({ ...s, input }),
     every(ms: number) {

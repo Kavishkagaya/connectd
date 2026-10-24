@@ -63,3 +63,14 @@ test("no folders: the config runs as is, the registry still comes from it; named
   const named = project({ "openconnect.config.ts": CONFIG(', dirs: ["lib/oc"]') });
   await expect(loadProject(named, join(named, "openconnect.config.ts"), join(named, ".openconnect", "build"), 1, {})).rejects.toThrow("dirs: lib/oc is not a folder");
 });
+
+test("two different connections with one id (the config's and a discovered one) are an error", async () => {
+  const dir = project({
+    "openconnect.config.ts": CONFIG(),
+    "connections/listed.ts": `import { connection } from "@openconnect/connections";
+export const listed = connection("listed").config().auth((f) => f.apiKey("other"));`,
+  });
+  await expect(loadProject(dir, join(dir, "openconnect.config.ts"), join(dir, ".openconnect", "build"), 1, {}).then((r) => resolve(r.config, {}))).rejects.toThrow(
+    "two connections with id listed",
+  );
+});

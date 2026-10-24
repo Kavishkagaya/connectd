@@ -7,6 +7,7 @@ import { devKeys, loadEnv, workdir } from "./env.ts";
 import { ENV, type Env, options, type Project, unconfigured } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
+import { sdkNote } from "./discover.ts";
 
 export const PORT = 8787;
 
@@ -202,6 +203,8 @@ export async function dev(o: DevOptions) {
       })()),
   };
   log(banner(info));
+  const note = sdkNote(dir);
+  if (note) log(note);
   return info;
 }
 

@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { Config, Env } from "./project.ts";
 import { workdir } from "./workdir.ts";
@@ -15,6 +16,7 @@ import { workdir } from "./workdir.ts";
  */
 
 const DEFAULT_DIRS = ["connections", "actions"];
+// ponytail: .ts, .js, .mjs only (no .mts/.cts/.tsx); symlinked folders aren't followed.
 const SOURCE = /\.(ts|js|mjs)$/;
 const SKIP = /\.(test|spec|d)\.(ts|js|mjs)$/;
 
@@ -30,15 +32,15 @@ export function dirsOf(config: Config, env: Env, configPath: string): string[] {
   });
 }
 
-/** Every module under `dirs`, sorted (stable output), tests and declarations left out. */
-export function modulesIn(dirs: string[]): string[] {
+/** Every module under `dirs`, sorted (stable output), tests, declarations and the config itself left out. */
+export function modulesIn(dirs: string[], configPath?: string): string[] {
   const out: string[] = [];
   const walk = (d: string) => {
     for (const e of readdirSync(d, { withFileTypes: true })) {
       if (e.name.startsWith(".") || e.name === "node_modules") continue;
       const p = join(d, e.name);
       if (e.isDirectory()) walk(p);
-      else if (SOURCE.test(e.name) && !SKIP.test(e.name)) out.push(p);
+      else if (e.isFile() && SOURCE.test(e.name) && !SKIP.test(e.name) && p !== configPath) out.push(p);
     }
   };
   for (const d of dirs) walk(d);
@@ -77,13 +79,17 @@ export function writeDiscovered(dir: string, configPath: string, modules: string
     ].join("\n"),
   );
 
-  if (!modules.length) return { entry: configPath, registry };
   const entry = join(work, "entry.ts");
+  if (!modules.length) {
+    rmSync(entry, { force: true });
+    return { entry: configPath, registry };
+  }
   writeFileSync(
     entry,
     [
       head,
       `import config from ${spec(work, configPath)};`,
+      // By package name, like the config's own import: the bundle keeps packages external, resolved from the app.
       'import { withModules } from "@openconnect/cli";',
       ...imports(false),
       "",
@@ -92,4 +98,17 @@ export function writeDiscovered(dir: string, configPath: string, modules: string
     ].join("\n"),
   );
   return { entry, registry };
+}
+
+/**
+ * A note when `@openconnect/sdk` doesn't resolve from the project: the registry then types nothing
+ * (its `declare module` augments a module TypeScript can't find). Null when it resolves.
+ */
+export function sdkNote(dir: string): string | null {
+  try {
+    createRequire(join(dir, "package.json")).resolve("@openconnect/sdk");
+    return null;
+  } catch {
+    return "note: @openconnect/sdk isn't installed here, so .openconnect/registry.d.ts types nothing; add it to the app's dependencies";
+  }
 }

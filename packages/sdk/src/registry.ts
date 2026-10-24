@@ -24,24 +24,47 @@ type Listed<P> = (P extends { definitions: readonly (infer D)[] } ? D : never) |
 type Conns<I> = I extends Connection<infer Id, any, any, any> ? (string extends Id ? never : I) : never;
 type Acts<I> = I extends AnyAction ? I : never;
 
-/** The registry of a project: `Cfg` is its config's type (`typeof config`), `Extra` what folder discovery found. */
-export type RegistryOf<Cfg, Extra = never> = RegistryFrom<Listed<ProjectOf<Cfg>> | Extra>;
+/** A listed definition the registry can't type: a plain one, or a builder whose id is just `string`. */
+type Plain<I> = I extends AnyAction ? never : I extends Connection<infer Id, any, any, any> ? (string extends Id ? I : never) : I;
+
+/**
+ * The registry of a project: `Cfg` is its config's type (`typeof config`), `Extra` what folder
+ * discovery found. When the config lists definitions it can't type, `"~untyped"` marks it, and the
+ * client takes any id besides the typed ones (untyped, Json).
+ */
+export type RegistryOf<Cfg, Extra = never> = RegistryFrom<Listed<ProjectOf<Cfg>> | Extra> &
+  ([Plain<Listed<ProjectOf<Cfg>>>] extends [never] ? unknown : { "~untyped": true });
 type RegistryFrom<I> = {
   [C in Conns<I> as C["id"]]: { connection: C; actions: { [A in Acts<I> as A["connection"]["id"] extends C["id"] ? A["id"] : never]: A } };
 };
 
 /** The ids the client takes: the registry's, or any string without one. */
-export type Known<R> = [keyof R] extends [never] ? string : Extract<keyof R, string>;
-export type EntryOf<R, K> = K extends keyof R ? R[K] : never;
+export type Known<R> = [keyof R] extends [never]
+  ? string
+  : "~untyped" extends keyof R
+    ? Exclude<Extract<keyof R, string>, "~untyped"> | (string & {})
+    : Extract<keyof R, string>;
+export type EntryOf<R, K> = K extends "~untyped" ? never : K extends keyof R ? R[K] : never;
 
 /** The connection's identity (`.identity()`), Json without a registry. */
 export type IdentityOf<E> = [E] extends [never] ? Json : E extends { connection: Connection<any, any, infer M, any> } ? M : Json;
 
-/** `actions.<name>(input)`: typed from each action's input schema and `run`'s output. */
+/** Method syntax (bivariant), so a typed connection's actions fit the untyped `Connection`'s. */
+type Untyped = { call(input?: Json): Promise<Json> }["call"];
+
+/** `actions.<name>(input)`: typed from each action's input schema and `run`'s output; optional input stays optional. */
 export type ActionsOf<E> = [E] extends [never]
-  ? Record<string, (input?: Json) => Promise<Json>>
+  ? Record<string, Untyped>
   : E extends { actions: infer A }
-    ? { [N in keyof A]: A[N] extends Action<any, any, infer I, infer O> ? ([I] extends [undefined] ? () => Promise<O> : (input: I) => Promise<O>) : never }
+    ? {
+        [N in keyof A]: A[N] extends Action<any, any, infer I, infer O>
+          ? [I] extends [undefined]
+            ? () => Promise<O>
+            : undefined extends I
+              ? (input?: I) => Promise<O>
+              : (input: I) => Promise<O>
+          : never;
+      }
     : never;
 
 /** What `webhooks.subscribe` takes: the definition's subscription schema's input. */

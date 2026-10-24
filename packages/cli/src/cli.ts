@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
 import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
+import { sdkNote } from "./discover.ts";
 
 export const HELP = `openconnect <command> [flags]
 
@@ -110,6 +111,8 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
         const config = findConfig(dir, typeof a.flags.config === "string" ? a.flags.config : undefined);
         const { modules } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), { ...process.env });
         log(`wrote .openconnect/registry.d.ts (the config${modules.length ? ` and ${modules.length} discovered module${modules.length === 1 ? "" : "s"}` : ""})`);
+        const note = sdkNote(dir);
+        if (note) log(note);
         return 0;
       } catch (e) {
         log((e as Error).message);

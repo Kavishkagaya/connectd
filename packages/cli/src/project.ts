@@ -64,15 +64,21 @@ export { ENV, generateKeys } from "./keys.ts";
 
 /**
  * The config plus what folder discovery found (the generated entry calls this): every exported
- * connection and action of `modules` not already listed. A connection whose id is listed already
- * (a provider extended under the same id) stays as listed.
+ * connection and action of `modules` not already listed. Another object with an id that's already
+ * there is an error: export only the stage that runs (not `base` and `base.api(...)` both).
  */
 export function withModules(config: Config, modules: Record<string, unknown>[]): Config {
   return (env) => {
     const p = typeof config === "function" ? config(env) : config;
     const found = modules.flatMap((m) => Object.values(m));
     const definitions = [...p.definitions];
-    for (const c of found.filter(isConnection)) if (!definitions.some((d) => d === c || d.id === c.id)) definitions.push(c);
+    for (const c of found.filter(isConnection)) {
+      const same = definitions.find((d) => d.id === c.id);
+      if (same === c) continue;
+      // Two exports with one id (a base and its extension, or a listed provider and a discovered copy): which runs would be a guess.
+      if (same) throw new Error(`two connections with id ${c.id} (one discovered in connections/actions folders): export only the one to run`);
+      definitions.push(c);
+    }
     const actions = [...(p.actions ?? [])];
     for (const a of found.filter(isAction)) if (!actions.includes(a)) actions.push(a);
     return { ...p, definitions, ...(actions.length ? { actions } : {}) };
