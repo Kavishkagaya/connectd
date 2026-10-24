@@ -46,7 +46,7 @@ export type Claims = {
 /**
  * `hosted: true` (`link()` in the SDK): a session for the runtime's own connect page, `/connect`, and
  * `next` where that page sends the user once connected (`?connectd=connected&definition=&id=`).
- * `confirm: true` (needs `next`): the page doesn't activate; it hands `next` the outcome in the
+ * `confirm: true` (needs `next`; API-key forms only): the page doesn't activate; it hands `next` the outcome in the
  * fragment (`#connectd=authorized&completion=`), like a `returnUrl`, and the app's own page confirms
  * it for the signed-in user (`oc.routes`). A hosted link works once: whoever holds it can connect.
  */
@@ -104,6 +104,8 @@ async function issue(h: Hosted, a: Json): Promise<Json> {
   const { ttlMs = TTL_MS, hosted, next, confirm } = args;
   if (hosted !== undefined && typeof hosted !== "boolean") throw bad("hosted must be a boolean");
   if (confirm !== undefined && (typeof confirm !== "boolean" || (confirm && (!hosted || next === undefined)))) throw bad("confirm is for hosted sessions with a next (the app's page confirms)");
+  // A provider's flow has its own confirm step: an app's returnUrl session (`oc.routes`). Here only forms.
+  if (confirm && h.def.auth.callback) throw bad(`confirm is for API-key forms; ${h.def.id} authorizes at the provider: give the app's page a returnUrl session`);
   if (hosted && (args.origin !== undefined || args.returnUrl !== undefined)) throw bad("a hosted session has no origin or returnUrl: the runtime's /connect page is both");
   if (next !== undefined) {
     if (!hosted) throw bad("next is for hosted sessions (the /connect page); an app's own page has returnUrl");
@@ -383,6 +385,7 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
       }
       const rec = await h.bound.conn.read();
       if (rec?.state === "revoked") throw new NotActive("revoked", rec.reason);
+      // A form's start (apiKey) only builds the credential: nothing to pend or poll, unlike bound.connect. The app's confirm checks it (metadata).
       const step = await h.def.auth.start(h.bound.ctx, fields);
       if (!("credential" in step)) throw bad(`${h.def.id} authorizes at the provider: use /session/authorize`);
       const completion = await h.done.issue(await h.k.seal(step.credential as unknown as Json));
@@ -494,10 +497,7 @@ const page = (nonce: string) => `<!doctype html><meta charset="utf-8"><meta name
     location.replace(to.href);
   };
   try {
-    if (f.get("connectd") === "authorized") {
-      if (info.confirm) return hand(f.get("completion"));
-      await api("/complete", { completion: f.get("completion") }); return done();
-    }
+    if (f.get("connectd") === "authorized") { await api("/complete", { completion: f.get("completion") }); return done(); }
     if (f.get("connectd") === "connected") return done();
     const again = f.get("connectd") === "error" ? el("p", { className: "err", textContent: "That didn't work (" + (f.get("code") || "error") + "). Try again." }) : "";
     if (info.flow === "redirect") {

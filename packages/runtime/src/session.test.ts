@@ -431,6 +431,7 @@ test("hosted page, confirm: the form's credential waits for the app's page, whic
   const t = await setup();
   expect((await t.issue("keyed", "k1", { hosted: true, confirm: true })).status).toBe(400);
   expect((await t.issue("keyed", "k1", { confirm: true, origin: APP })).status).toBe(400);
+  expect((await t.issue("example", "c1", { hosted: true, confirm: true, next: `${APP}/return` })).status).toBe(400);
   const tk = (await t.issue("keyed", "k1", { hosted: true, confirm: true, next: `${APP}/return` })).body.token as string;
   const info = await t.json(await t.send("/session", { headers: { authorization: `Bearer ${tk}`, "sec-fetch-site": "same-origin" } }));
   expect(info.body).toMatchObject({ flow: "form", confirm: true, next: `${APP}/return` });
