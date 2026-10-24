@@ -666,8 +666,14 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
   - `<src>/lib/oc.ts`: `connectd({ user, listeners, origin })`, with `user` returning null until the app returns its signed-in user.
   - For a Next.js app, `app/api/connectd/[...path]/route.ts` (`oc.routes`). Elsewhere it says where to mount it.
   - It runs `types` when the packages are installed, so `lib/oc.ts` typechecks at once.
-- Keys an older `connectd dev` kept in `.connectd/dev.vars` move into `.env` (sealed credentials stay readable). Names already set are kept; a set key version means no `V1` is added.
+- Keys an older `connectd dev` kept in `.connectd/dev.vars` move into `.env`, every key version included: that dev ran with dev.vars under .env, so credentials sealed before a later version still need the old one. Names already set are kept; an empty value counts as unset; a set key version means no fresh `V1`.
 - `dev` only reads: its keys come from `.env` (or the process env), it never makes its own, and without them it fails with "run `connectd init` first" (naming dev.vars when there is one). Its default port is `CONNECTD_URL`'s, when that's a localhost URL. `loadEnv` no longer takes generated keys, and `devKeys` is gone.
+- After review:
+  - `.env` is checked with `git check-ignore` (parent .gitignores and negations count); outside a repo, the directory's .gitignore (`.env`, `/.env`, `.env*`, a later `!.env`). `.env.*` alone no longer counts.
+  - An existing `.env` that gets keys is made owner only (0600).
+  - Next.js: the route goes in the root `app/` when the root has `app/` or `pages/` (Next ignores `src/app` then), else `src/app`.
+  - `APP_URL` must be an origin (`new URL(x).origin === x`); the error names where it came from. `--app-url` or `--port` ignored because `.env` has the value already is said so, and the next steps print `.env`'s `CONNECTD_URL`.
+  - dev warns when `CONNECTD_URL` isn't `http://localhost:<port>` (it can't listen there).
 - Tests: a Next.js app (every file, the `.env` lines after the app's own, idempotent), another app (`--port`, `--app-url`, a new `.env`'s mode, the route left to mount), and kept values (set keys, versions, an existing config, dev.vars moved). Dev: no keys refused, with the dev.vars hint.
 
 **Agreed, not built yet** (the same discussion; each lands in its own PR and updates this entry):

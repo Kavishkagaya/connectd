@@ -1,7 +1,8 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { parseEnv } from "./env.ts";
-import { ENV, generateKeys } from "./keys.ts";
+import { generateKeys } from "./keys.ts";
 import { CONFIG_FILES, loadProject } from "./load.ts";
 import { workdir } from "./workdir.ts";
 
@@ -26,23 +27,38 @@ const PORT = 8787;
 
 export type InitOptions = { dir: string; port?: number; appUrl?: string; log?: (line: string) => void };
 
-/** The generated keys this project needs: .connectd/dev.vars's (an older dev made them), else fresh ones. Names .env already has are kept. */
-function keysFor(dir: string, have: Record<string, string>): Record<string, string> {
+const VERSIONED = /^CONNECTD_KEY_V\d+$/;
+
+/**
+ * The generated keys this project lacks (a name set to "" counts as missing). First every one an
+ * older dev kept in .connectd/dev.vars (it ran with dev.vars under .env, so that's the set it sealed
+ * with, every key version included), then fresh ones; no V1 when any key version is set.
+ */
+function keysFor(dir: string, have: Record<string, string>): { keys: Record<string, string>; moved: number } {
   const legacy = join(workdir(dir), "dev.vars");
   const old = existsSync(legacy) ? parseEnv(readFileSync(legacy, "utf8")) : {};
-  const fresh = generateKeys();
   const out: Record<string, string> = {};
-  const versioned = (k: string) => k.startsWith(ENV.key);
-  // A key version already set (or kept from dev.vars) means the encryption keys exist: no V1 next to them.
-  const hasKeys = Object.keys(have).some(versioned);
-  for (const [k, v] of Object.entries(old)) if (versioned(k) && !hasKeys && !have[k]) out[k] = v;
-  for (const [k, v] of Object.entries(fresh)) {
-    if (have[k] || out[k]) continue;
-    if (versioned(k)) {
-      if (!hasKeys && !Object.keys(out).some(versioned)) out[k] = v;
-    } else out[k] = old[k] ?? v;
-  }
-  return out;
+  for (const [k, v] of Object.entries(old)) if (v && !have[k] && k.startsWith("CONNECTD_")) out[k] = v;
+  const moved = Object.keys(out).length;
+  const set = (k: string) => !!(have[k] || out[k]);
+  const versions = [...Object.keys(have), ...Object.keys(out)].some((k) => VERSIONED.test(k) && set(k));
+  for (const [k, v] of Object.entries(generateKeys())) if (!set(k) && !(VERSIONED.test(k) && versions)) out[k] = v;
+  return { keys: out, moved };
+}
+
+/** Whether git ignores `file` (parent .gitignores and negations included); outside a repo, the directory's own .gitignore. */
+function ignored(dir: string, file: string): boolean {
+  const r = spawnSync("git", ["check-ignore", "-q", file], { cwd: dir });
+  // 0: ignored, 1: not; 128 (not a repo) or no git: read the file.
+  if (r.status === 0 || r.status === 1) return r.status === 0;
+  const gi = join(dir, ".gitignore");
+  const lines = existsSync(gi) ? readFileSync(gi, "utf8").split(/\r?\n/).map((l) => l.trim()) : [];
+  // ponytail: only the forms that ignore .env itself, a later `!.env` winning; git check-ignore covers the rest in a repo.
+  let on = false;
+  for (const l of lines)
+    if (/^\/?\.env\*?$/.test(l)) on = true;
+    else if (/^!\/?\.env$/.test(l)) on = false;
+  return on;
 }
 
 const pkg = (dir: string) => {
@@ -81,9 +97,14 @@ export async function init(o: InitOptions): Promise<void> {
   const envFile = join(dir, ".env");
   const before = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
   const have = parseEnv(before);
+  const from = o.appUrl !== undefined ? "--app-url" : have.APP_URL ? "APP_URL in .env" : "APP_URL";
   const appUrl = (o.appUrl ?? have.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
-  if (!/^https?:\/\/[^/]+$/.test(appUrl)) throw new Error(`--app-url must be an origin like http://localhost:3000 (${appUrl})`);
-  const keys = keysFor(dir, have);
+  let origin: string | null = null;
+  try {
+    origin = new URL(appUrl).origin;
+  } catch {}
+  if (origin !== appUrl || !/^https?:/.test(appUrl)) throw new Error(`${from} must be an origin like http://localhost:3000 (${appUrl})`);
+  const { keys, moved } = keysFor(dir, have);
   const lines = [
     ...(have.APP_URL ? [] : ["# Your app's origin: oc.config.ts builds sessions.origins and events.url from it.", `APP_URL=${appUrl}`]),
     ...(have.CONNECTD_URL ? [] : ["# Where `connectd dev` runs: the app's client calls it.", `CONNECTD_URL=http://localhost:${port}`]),
@@ -94,13 +115,15 @@ export async function init(o: InitOptions): Promise<void> {
   if (lines.length) {
     if (before) appendFileSync(envFile, `${before.endsWith("\n") ? "" : "\n"}\n${lines.join("\n")}\n`);
     else writeFileSync(envFile, `${lines.join("\n")}\n`, { mode: 0o600 });
+    // It holds keys now: owner only, even if others could read it before.
+    if (Object.keys(keys).length) chmodSync(envFile, 0o600);
     wrote.push(".env");
   } else kept.push(".env");
 
   // .env holds the keys now: never committed.
-  const gi = join(dir, ".gitignore");
-  const ignores = existsSync(gi) ? readFileSync(gi, "utf8") : "";
-  if (!ignores.split(/\r?\n/).some((l) => /^\/?\.env(\*|\.\*)?$/.test(l.trim()))) {
+  if (!ignored(dir, ".env")) {
+    const gi = join(dir, ".gitignore");
+    const ignores = existsSync(gi) ? readFileSync(gi, "utf8") : "";
     appendFileSync(gi, `${ignores && !ignores.endsWith("\n") ? "\n" : ""}.env\n`);
     wrote.push(".gitignore");
   }
@@ -149,7 +172,9 @@ export const oc = connectd({
 
   // Next.js (App Router): the route the config's events.url and the connect links use.
   const isNext = uses(dir, "next");
-  const appDir = [join(src, "app"), join(dir, "app")].find((d) => existsSync(d)) ?? join(src, "app");
+  // Next reads src/app only when the root has no app/ or pages/.
+  const rootFirst = existsSync(join(dir, "app")) || existsSync(join(dir, "pages"));
+  const appDir = rootFirst ? join(dir, "app") : join(src, "app");
   if (isNext) {
     const route = join(appDir, "api", "connectd", "[...path]", "route.ts");
     write(route, `import { oc } from "${spec(route, client)}";\n\n// connect/:def, return, events (oc.routes).\nexport const { GET, POST } = oc.routes;\n`);
@@ -166,14 +191,16 @@ export const oc = connectd({
   const done = [
     wrote.length ? `wrote ${wrote.join(", ")}` : "nothing to write: already set up",
     kept.length ? `  kept ${kept.join(", ")} (already there)` : "",
-    Object.keys(keys).length && existsSync(join(workdir(dir), "dev.vars")) ? "  the keys from .connectd/dev.vars are in .env now (it isn't read any more)" : "",
+    moved ? "  the keys from .connectd/dev.vars are in .env now (dev doesn't read it any more; deploy still refuses its values)" : "",
+    o.appUrl !== undefined && have.APP_URL && have.APP_URL !== appUrl ? `  --app-url ignored: .env already has APP_URL=${have.APP_URL}` : "",
+    o.port !== undefined && have.CONNECTD_URL ? `  --port ignored: .env already has CONNECTD_URL=${have.CONNECTD_URL}` : "",
     typed ? "" : "  run connectd types once the packages are installed (it writes .connectd/app.ts, which lib/oc.ts imports)",
   ];
   const next = [
     step("connectd add github", `a provider into ${folders}/ (\`connectd add\` lists them), then its env names in .env`),
     step(relative(dir, client), "return your signed-in user's id from user(req)"),
     isNext ? "" : step("oc.routes", "mount GET and POST at /api/connectd/* in your app (Express: toNode from @connectd/sdk/node)"),
-    step("connectd dev", `the runtime on http://localhost:${port}`),
+    step("connectd dev", `the runtime on ${have.CONNECTD_URL || `http://localhost:${port}`}`),
     cloudflare ? "" : step("to deploy", "npm i -D @connectd/cloudflare, then target: cloudflare({ name }) in the config"),
   ];
   log([...done.filter(Boolean), "", "Next:", ...next.filter(Boolean)].join("\n"));

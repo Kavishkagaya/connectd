@@ -162,6 +162,9 @@ export async function dev(o: DevOptions) {
   const index = memoryIndex();
   let w: ReturnType<typeof memory> | undefined;
 
+  // The app calls CONNECTD_URL: a URL dev can't listen on (https, a path, no port) would leave them apart.
+  if (o.port === undefined && first.CONNECTD_URL && portOf(first.CONNECTD_URL) === undefined)
+    log(`CONNECTD_URL=${first.CONNECTD_URL} isn't http://localhost:<port>: listening on ${PORT}, which your app won't call (fix it in .env, or --port)`);
   const server = await serve(o.port ?? portOf(first.CONNECTD_URL) ?? PORT, async (req) => {
       const t = performance.now();
       const res =

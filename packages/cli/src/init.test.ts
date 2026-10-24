@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "./cli.ts";
@@ -80,9 +80,9 @@ test("init keeps what's there: set keys, an existing config, .connectd/dev.vars'
   await init({ dir, log: (l) => void lines.push(l) });
   const env = parseEnv(read(dir, ".env"));
   expect(env.CONNECTD_API_KEY).toBe("mine");
-  // Its own key versions: no V1 next to them, and dev.vars's V1 isn't added either.
+  // dev.vars's V1 comes over next to .env's V2: the old dev ran with both, so credentials sealed before V2 need it.
   expect(env.CONNECTD_KEY_V2).toBe("k2");
-  expect(env.CONNECTD_KEY_V1).toBeUndefined();
+  expect(env.CONNECTD_KEY_V1).toBe("old-k1");
   expect(env.CONNECTD_STATE_KEY).toBe("old-state");
   expect(env.APP_URL).toBe("https://app.test");
   expect(read(dir, "oc.config.ts")).toBe("export default {};\n");
@@ -95,4 +95,31 @@ test("init keeps what's there: set keys, an existing config, .connectd/dev.vars'
   const old = app({ ".connectd/dev.vars": "CONNECTD_KEY_V1=old-k1\n" });
   await init({ dir: old, log: () => {} });
   expect(parseEnv(read(old, ".env")).CONNECTD_KEY_V1).toBe("old-k1");
+});
+
+test("init: .gitignore forms, an appended .env made owner only, empty values, Next's root app/ or pages/, bad origins", async () => {
+  // `.env.*` doesn't ignore .env; `!.env` undoes `.env*`.
+  for (const [gi, added] of [[".env.*\n", true], [".env*\n!.env\n", true], ["/.env\n", false], [".env*\n", false]] as const) {
+    const dir = app({ ".gitignore": gi });
+    await init({ dir, log: () => {} });
+    expect([gi, read(dir, ".gitignore")]).toEqual([gi, added ? `${gi}.env\n` : gi]);
+  }
+  const shared = app({ ".env": "DATABASE_URL=x\nCONNECTD_KEY_V1=\nCONNECTD_API_KEY=\n" });
+  chmodSync(join(shared, ".env"), 0o644);
+  await init({ dir: shared, log: () => {} });
+  expect(statSync(join(shared, ".env")).mode & 0o777).toBe(0o600);
+  // Empty is missing: filled (the later line wins), so dev doesn't send you back to init forever.
+  const env = parseEnv(read(shared, ".env"));
+  expect(env.CONNECTD_KEY_V1).toBeTruthy();
+  expect(env.CONNECTD_API_KEY).toStartWith("oc_");
+
+  const next = JSON.stringify({ dependencies: { next: "16" } });
+  for (const root of ["app/layout.tsx", "pages/index.tsx"]) {
+    const dir = app({ "package.json": next, "src/lib/util.ts": "", [root]: "" });
+    await init({ dir, log: () => {} });
+    expect(read(dir, "app/api/connectd/[...path]/route.ts")).toContain('from "../../../../src/lib/oc"');
+    expect(existsSync(join(dir, "src/app"))).toBe(false);
+  }
+  for (const bad of ["http://user@evil.test", "http://localhost:3000/app", "ftp://x.test"]) await expect(init({ dir: app(), appUrl: bad, log: () => {} })).rejects.toThrow("--app-url must be an origin");
+  await expect(init({ dir: app({ ".env": "APP_URL=http://localhost:3000/x\n" }), log: () => {} })).rejects.toThrow("APP_URL in .env must be an origin");
 });
