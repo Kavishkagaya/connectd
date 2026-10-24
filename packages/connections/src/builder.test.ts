@@ -146,6 +146,23 @@ test("builder: apiKey with the key in a header; definitionOf passes a plain defi
   expect(await c.connect({ key: "k1" })).toBeNull();
   expect(await c.metadata()).toEqual({ key: "k1" });
 
+  // Default headers plus a non-default key: both on the proxy's inject, request headers win.
+  const both = connection("both")
+    .config()
+    .auth((f) => f.apiKey("key"))
+    .api({ baseUrl: "https://b.test", headers: { "x-client": "oc", accept: "application/json" }, key: { query: "api_key" } })
+    .limit({ app: { count: 1, periodMs: 1 } })
+    .observe(() => ({ remaining: 0 }));
+  const d = definitionOf(both);
+  const u = new URL("https://b.test/x");
+  const h = new Headers({ accept: "text/plain" });
+  (d.proxy?.inject as (url: URL, h: Headers, c: unknown) => void)(u, h, { kind: "static", fields: { key: "k9" } });
+  expect(u.searchParams.get("api_key")).toBe("k9");
+  expect(h.get("x-client")).toBe("oc");
+  expect(h.get("accept")).toBe("text/plain");
+  expect(d.rate?.app).toEqual({ count: 1, periodMs: 1 });
+  expect(d.rate?.observe?.(new Response(), 0)).toEqual({ remaining: 0 });
+
   const plain = defineConnection({ id: "plain", auth: { start: async () => ({ credential: { kind: "static", fields: {} } }) } });
   expect(definitionOf(plain)).toBe(plain);
 });

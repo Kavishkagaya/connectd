@@ -49,7 +49,9 @@ export const github = connection("github")
     },
   })
   .identity(async ({ api }) => {
-    const u = await api.get<{ id: number; login: string }>("/user");
+    const res = await api.fetch("/user", { headers: { accept: "application/vnd.github+json" } });
+    if (!res.ok) throw new Error(`github /user ${res.status}`);
+    const u = (await res.json()) as { id: number; login: string };
     return { id: String(u.id), login: u.login };
   })
   .external((me) => ({ id: me.id }));

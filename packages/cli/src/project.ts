@@ -1,7 +1,7 @@
+import { type AnyConnection, definitionOf } from "@openconnect/connections";
 import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
-import { type AnyConnection, definitionOf } from "@openconnect/connections";
 import {
   type AnyDefinition,
   directory,

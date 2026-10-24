@@ -1,4 +1,4 @@
-import { BEARER, type Credential, inject } from "@openconnect/connections";
+import { BEARER, type Credential, inject, MissingField } from "@openconnect/connections";
 import type { Json, Limit, Limiter } from "@openconnect/kernel";
 import { type AnyDefinition, Fail, type Hosted, instanceOf } from "./host.ts";
 import { ERROR_HEADER, reply } from "./http.ts";
@@ -27,7 +27,6 @@ function limiters(h: Hosted): Limiter[] {
   // ponytail: one app per deployment (see Settings.config), so the app scope is per definition; key it by app when multi-app.
   return r.app ? [own, h.k.limiter.at(`app:${h.def.id}`, "proxy", r.app)] : [own];
 }
-
 
 /**
  * The upstream URL: the raw (still encoded) rest after /proxy/:def/:id, trailing slash and query
@@ -77,7 +76,8 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
           try {
             inject(d.proxy.inject ?? BEARER, url, headers, ready.credential);
           } catch (e) {
-            throw new Fail("bad_credential", 500, (e as Error).message);
+            if (e instanceof MissingField) throw new Fail("bad_credential", 500, e.message);
+            throw e;
           }
 
           // The timeout covers the wait for response headers only; a long download keeps streaming.

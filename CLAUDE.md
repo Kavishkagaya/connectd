@@ -37,7 +37,7 @@ packages/connections/
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
-packages/providers/   one defineConnection per provider (github, slack, google); tests against fakes
+packages/providers/   one connection(...) builder per provider (github, slack, google); tests against fakes
 
 packages/runtime/
   src/host.ts         the Program every connection instance runs: one kernel per instance, registry lookup, bind, extensions' hooks (Hosted.k), methods, faults

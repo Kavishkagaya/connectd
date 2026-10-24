@@ -95,6 +95,9 @@ export type Inject =
   | { query: string; field?: string }
   | ((url: URL, headers: Headers, cred: Credential) => void);
 
+/** A static credential without the field an `Inject` names. */
+export class MissingField extends Error {}
+
 export const BEARER: Inject = { header: "authorization", prefix: "Bearer " };
 
 /** Put the credential on a request as `i` says. Throws if a static credential lacks the field. */
@@ -103,7 +106,7 @@ export function inject(i: Inject, url: URL, headers: Headers, cred: Credential) 
   let v: string | undefined;
   if (cred.kind === "oauth2") v = cred.accessToken;
   else v = i.field ? cred.fields[i.field] : Object.values(cred.fields)[0];
-  if (v === undefined) throw new Error(`credential has no field ${i.field ?? "(any)"}`);
+  if (v === undefined) throw new MissingField(`credential has no field ${i.field ?? "(any)"}`);
   if ("query" in i) url.searchParams.set(i.query, v);
   else headers.set(i.header, (i.prefix ?? "") + v);
 }

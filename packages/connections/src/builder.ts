@@ -124,6 +124,7 @@ export type Api = {
 };
 
 export type ApiSpec = {
+  // ponytail: one fixed base URL; a function of the credential when a provider needs a per-connection host (Salesforce instance_url).
   baseUrl: string;
   /** Sent on every request unless the request sets them (GitHub's `user-agent`). */
   headers?: Record<string, string>;
@@ -131,6 +132,7 @@ export type ApiSpec = {
   key?: Inject;
 };
 
+// ponytail: calls here take no limiter permit (identity makes one per login); route them through the proxy's limiters when capabilities call the API often.
 function api(ctx: Ctx<unknown>, proxy: NonNullable<Definition<unknown, Json>["proxy"]>, cred: Credential): Api {
   const call = (path: string, init: RequestInit = {}) => {
     const url = new URL(`${proxy.baseUrl.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`);
