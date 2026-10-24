@@ -1,4 +1,4 @@
-# openconnect
+# connectd
 
 OAuth connection platform: open-source self-host path plus a low-cost managed service on Cloudflare. Full solution (SDK, CLI, events, webhooks), not just an HTTP API. Apache-2.0. The managed layer lives in a separate private repo (`openconnect-cloud`).
 
@@ -56,8 +56,8 @@ packages/runtime/
   src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
-  src/client.ts       openconnect<R = Registry>({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, OpenConnectError
-  src/registry.ts     interface Registry (filled by the CLI's generated .openconnect/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types, EventsOf (the events the app gets, typed per connection)
+  src/client.ts       connectd<R = Registry>({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, ConnectdError
+  src/registry.ts     interface Registry (filled by the CLI's generated .connectd/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types, EventsOf (the events the app gets, typed per connection)
   src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
   src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
@@ -75,29 +75,29 @@ packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /
   src/fake.ts         the real runtime + dashboard() on the memory driver and a fake DOM, for the tests and e2e
   e2e/chromium.ts     real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 
-packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli` exports project.ts; runtime/kernel/connections are peer deps
+packages/cli/         `connectd` bin (#30, #31; Bun only); `@connectd/cli` exports project.ts; runtime/kernel/connections are peer deps
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), resolve() (connections' env config, `envNames`, `missing`), workerEnv(), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
-  src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .openconnect/ dir
-  src/env.ts          dotenv parsing; dev's env (generated keys < .env < process env; .dev.vars refused); dev keys generated once into .openconnect/dev.vars
+  src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
+  src/env.ts          dotenv parsing; dev's env (generated keys < .env < process env; .dev.vars refused); dev keys generated once into .connectd/dev.vars
   src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
-  src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts (events.ts never in the Worker), .openconnect/entry.ts (withFolders) and registry.d.ts. Node APIs only
+  src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts (events.ts never in the Worker), .connectd/entry.ts (withFolders) and registry.d.ts. Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
-  src/deploy.ts       `openconnect deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `openconnect dev`: memory driver on a real clock behind Bun.serve, snapshot in .openconnect/state.json, config bundled with Bun.build and swapped in place on save
+  src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
+  src/dev.ts          `connectd dev`: memory driver on a real clock behind Bun.serve, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/cli.ts, args.ts commands (dev, deploy, types, keys, help) and a declared-flags parser; src/bin.ts the entry
 
 packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, url })` in oc.config.ts; the adapter deploys through wrangler
   src/index.ts        cloudflare(): a Target, data only (Workers-safe: the config is bundled into the Worker)
   src/adapter.ts      deploy(ctx) (`/adapter` export, Node): wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
-  src/generate.ts     deploy's files in .openconnect/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
+  src/generate.ts     deploy's files in .connectd/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
 
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers, one local, github/actions/profile.ts)
 ```
 
-Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@openconnect/connections`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers, target types), `/keys`, `/workdir`, bin `openconnect`. Cloudflare target: `@openconnect/cloudflare`, `/adapter`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.
+Kernel subpath exports: `@connectd/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@connectd/connections`. Runtime: `@connectd/runtime`, `/cloudflare`, `/signature`. CLI: `@connectd/cli` (`defineConfig`, project helpers, target types), `/keys`, `/workdir`, bin `connectd`. Cloudflare target: `@connectd/cloudflare`, `/adapter`. SDK: `@connectd/sdk`, `/node`. Browser: `@connectd/connect`. Dashboard: `@connectd/dashboard`.
 
 ## Commands
 
@@ -105,8 +105,8 @@ Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Conn
 - `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts`, the Cloudflare Worker template + the CLI's `project.ts`, and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect` and `packages/dashboard`
 - Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts`
 - One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`
-- Dev server on the example: `cd examples/basic && bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `openconnect --help`)
-- Deploy plan without Cloudflare: `cd examples/basic && bunx openconnect deploy --dry-run` (then `wrangler deploy --dry-run -c .openconnect/deploy/wrangler.json` bundles it offline)
+- Dev server on the example: `cd examples/basic && bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `connectd --help`)
+- Deploy plan without Cloudflare: `cd examples/basic && bunx connectd deploy --dry-run` (then `wrangler deploy --dry-run -c .connectd/deploy/wrangler.json` bundles it offline)
 
 ## Patterns
 

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { type ActionCtx, action, connection, type StandardSchemaV1 } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
+import { type ActionCtx, action, connection, type StandardSchemaV1 } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
 import { type ConnectionEvent, events, runtime } from "./index.ts";
 
 const MIN = 60_000;

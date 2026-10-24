@@ -1,12 +1,12 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Overview } from "@openconnect/dashboard";
-import { type ConnectionEvent, openconnect } from "@openconnect/sdk";
+import type { Overview } from "@connectd/dashboard";
+import { type ConnectionEvent, connectd } from "@connectd/sdk";
 import { main } from "./cli.ts";
 import { type Dev, dev, swappable } from "./dev.ts";
-import type { Program } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
+import type { Program } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
 import { parseEnv } from "./env.ts";
 import { NO_CLOUDFLARED, tunnel, tunnelUrl } from "./tunnel.ts";
 
@@ -33,7 +33,7 @@ const until = async <T>(f: () => T | Promise<T>, ms = 3000): Promise<NonNullable
 };
 
 const CONFIG = `
-import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
+import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
 import { label } from "./label.ts";
 
 export default (env) => ({
@@ -86,36 +86,36 @@ async function start(dir: string, env: Record<string, string>, o: { watch?: bool
   const lines: string[] = [];
   const d = await dev({ dir, port: 0, env, watch: o.watch ?? false, log: (l) => void lines.push(l), ...(o.reset ? { reset: true } : {}) });
   running.push(d);
-  return { d, lines, oc: openconnect({ url: d.url, apiKey: d.apiKey }) };
+  return { d, lines, oc: connectd({ url: d.url, apiKey: d.apiKey }) };
 }
 
 /** connect, the user approving at the provider, and the provider redirecting back to /callback. */
-async function authorize(d: Dev, oc: ReturnType<typeof openconnect>, id: string) {
+async function authorize(d: Dev, oc: ReturnType<typeof connectd>, id: string) {
   const { url } = await oc.connection("example", id).connect();
   const state = new URL(url as string).searchParams.get("state") as string;
   const res = await fetch(`${d.url}/callback?code=c1&state=${encodeURIComponent(state)}`);
   expect(res.status).toBe(200);
 }
 
-test("keys: generated once into .openconnect/dev.vars, gitignored, kept across runs", async () => {
+test("keys: generated once into .connectd/dev.vars, gitignored, kept across runs", async () => {
   const w = world();
   const dir = project();
   const a = await start(dir, w.env);
   expect(a.d.created).toBe(true);
   expect(a.d.apiKey).toMatch(/^oc_[A-Za-z0-9]{32}$/);
   expect(a.lines.join("\n")).toContain(a.d.apiKey);
-  const vars = parseEnv(readFileSync(join(dir, ".openconnect", "dev.vars"), "utf8"));
+  const vars = parseEnv(readFileSync(join(dir, ".connectd", "dev.vars"), "utf8"));
   expect(Object.keys(vars).sort()).toEqual(
-    ["OPENCONNECT_API_KEY", "OPENCONNECT_EVENTS_SECRET", "OPENCONNECT_KEY_V1", "OPENCONNECT_SESSIONS_KEY", "OPENCONNECT_STATE_KEY", "OPENCONNECT_WEBHOOKS_KEY"].sort(),
+    ["CONNECTD_API_KEY", "CONNECTD_EVENTS_SECRET", "CONNECTD_KEY_V1", "CONNECTD_SESSIONS_KEY", "CONNECTD_STATE_KEY", "CONNECTD_WEBHOOKS_KEY"].sort(),
   );
-  expect(vars.OPENCONNECT_EVENTS_SECRET).toStartWith("whsec_");
-  expect(readFileSync(join(dir, ".openconnect", ".gitignore"), "utf8")).toBe("*\n");
+  expect(vars.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
+  expect(readFileSync(join(dir, ".connectd", ".gitignore"), "utf8")).toBe("*\n");
   await a.d.stop();
   const b = await start(dir, w.env);
   expect(b.d.created).toBe(false);
   expect(b.d.apiKey).toBe(a.d.apiKey);
   // The project's own env wins over generated keys.
-  writeFileSync(join(dir, ".env"), "CLIENT_ID=cid\nOPENCONNECT_API_KEY=mine\n");
+  writeFileSync(join(dir, ".env"), "CLIENT_ID=cid\nCONNECTD_API_KEY=mine\n");
   await b.d.stop();
   expect((await start(dir, w.env)).d.apiKey).toBe("mine");
 });
@@ -142,10 +142,10 @@ test("config: function of the env (.env < process env), banner, unconfigured def
     ["example", false],
     ["keyed", true],
   ]);
-  const oc = openconnect({ url: d.url, apiKey: d.apiKey });
+  const oc = connectd({ url: d.url, apiKey: d.apiKey });
   await expect(oc.connection("example", "u1").connect()).rejects.toMatchObject({ code: "not_configured" });
   await d.stop();
-  const again = await start(dir, { ...w.env, CLIENT_ID: "cid", OPENCONNECT_PUBLIC_URL: "https://dev.example.com/" });
+  const again = await start(dir, { ...w.env, CLIENT_ID: "cid", CONNECTD_PUBLIC_URL: "https://dev.example.com/" });
   expect(again.d.loaded()!.unconfigured).toEqual([]);
   expect(again.d.loaded()!.publicUrl).toBe("https://dev.example.com");
   const { url } = await again.oc.connection("example", "u1").connect();
@@ -154,7 +154,7 @@ test("config: function of the env (.env < process env), banner, unconfigured def
 
 test("one .env: a connection reads its config with env(); only the names read reach the runtime; .dev.vars is refused", async () => {
   const w = world();
-  const conn = `import { connection } from "@openconnect/connections";
+  const conn = `import { connection } from "@connectd/connections";
 export default connection().config((env) => ({ clientId: env("TRACKER_ID"), region: env.optional("TRACKER_REGION") ?? "us" })).auth((f) => f.apiKey("key"))
   .identity(async (ctx) => ({ config: ctx.config }));`;
   const dir = project({ ".env": "TRACKER_ID=t1\nDATABASE_URL=postgres://app\n", "oc/tracker/connection.ts": conn });
@@ -184,7 +184,7 @@ export default connection().config((env) => ({ clientId: env("TRACKER_ID"), regi
 test("config errors: no config file, duplicate ids, a broken config serves 503 until fixed", async () => {
   const w = world();
   await expect(dev({ dir: mkdtempSync(join(TMP, "e-")), port: 0, watch: false, log: () => {} })).rejects.toThrow(/no oc.config.ts/);
-  const dir = project({ "oc.config.ts": `import { apiKey, defineConnection } from "@openconnect/connections";
+  const dir = project({ "oc.config.ts": `import { apiKey, defineConnection } from "@connectd/connections";
 const k = defineConnection({ id: "k", auth: apiKey(["key"]) });
 export default { definitions: [k, k] };` });
   const { d, lines } = await start(dir, w.env);
@@ -199,7 +199,7 @@ test("dev server through the SDK: oauth2 and API-key connect, list, proxy, signe
   const w = world();
   const dir = project();
   const { d, oc } = await start(dir, w.env);
-  const secret = parseEnv(readFileSync(join(dir, ".openconnect", "dev.vars"), "utf8")).OPENCONNECT_EVENTS_SECRET!;
+  const secret = parseEnv(readFileSync(join(dir, ".connectd", "dev.vars"), "utf8")).CONNECTD_EVENTS_SECRET!;
   const got: ConnectionEvent[] = [];
   const ev = oc.events({ secret }).on("*", (e) => void got.push(e));
   w.receive((req) => ev.handle(req));
@@ -256,7 +256,7 @@ test("restart: connections, the index and the keys survive; --reset starts empty
   await authorize(a.d, a.oc, "u1");
   await a.oc.connection("keyed", "k1").connect({ key: "sekret" });
   await a.d.stop();
-  expect(existsSync(join(dir, ".openconnect", "state.json"))).toBe(true);
+  expect(existsSync(join(dir, ".connectd", "state.json"))).toBe(true);
 
   const b = await start(dir, w.env);
   expect(await b.oc.connection("example", "u1").status()).toMatchObject({ state: "active", metadata: { login: "octo" } });
@@ -299,7 +299,7 @@ test("cli: help, flags, deploy slot", async () => {
   const out: string[] = [];
   const log = (s: string) => void out.push(s);
   expect(await main(["--help"], { log })).toBe(0);
-  expect(out.at(-1)).toContain("openconnect dev");
+  expect(out.at(-1)).toContain("connectd dev");
   expect(await main([], { log })).toBe(2);
   expect(await main(["dev", "--prot", "1"], { log })).toBe(2);
   expect(out.at(-1)).toStartWith("unknown flag --prot");
@@ -353,7 +353,7 @@ test("state.json: owner-only, its writes don't trigger reloads, stop is idempote
   const dir = project();
   const { d, oc, lines } = await start(dir, w.env, { watch: true });
   await oc.connection("keyed", "k1").connect({ key: "sekret" });
-  const state = join(dir, ".openconnect", "state.json");
+  const state = join(dir, ".connectd", "state.json");
   await until(() => existsSync(state));
   await Bun.sleep(700); // past another save tick and the watcher's debounce
   expect(statSync(state).mode & 0o777).toBe(0o600);
@@ -362,13 +362,13 @@ test("state.json: owner-only, its writes don't trigger reloads, stop is idempote
   await d.stop();
 });
 
-test("env reads are by name: a config spreading env is refused; `openconnect keys` prints fresh values", async () => {
+test("env reads are by name: a config spreading env is refused; `connectd keys` prints fresh values", async () => {
   const { resolve } = await import("./project.ts");
   expect(() => resolve((env) => ({ ...env, definitions: [] }), { PATH: "/bin", CLOUDFLARE_API_TOKEN: "t" })).toThrow("spreading or listing env isn't supported");
   expect(resolve((env) => ({ definitions: [], ...(env.EVENTS_URL ? { events: { url: env.EVENTS_URL } } : {}) }), { EVENTS_URL: "https://a.test", PATH: "/bin" }).envNames).toEqual(["EVENTS_URL"]);
   const out: string[] = [];
   expect(await main(["keys"], { log: (l) => void out.push(l), dir: TMP })).toBe(0);
   const k = parseEnv(out.join("\n"));
-  expect(k.OPENCONNECT_API_KEY).toMatch(/^oc_[A-Za-z0-9]{32}$/);
-  expect(k.OPENCONNECT_EVENTS_SECRET).toStartWith("whsec_");
+  expect(k.CONNECTD_API_KEY).toMatch(/^oc_[A-Za-z0-9]{32}$/);
+  expect(k.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
 });

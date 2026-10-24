@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { base64url } from "@openconnect/kernel";
+import { base64url } from "@connectd/kernel";
 import { connection, definitionOf } from "./builder.ts";
 import { type Jwk, signJwt, verifyJwt } from "./jwt.ts";
 import type { OAuth2 } from "./lifecycle.ts";

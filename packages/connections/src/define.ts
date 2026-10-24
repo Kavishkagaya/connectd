@@ -1,4 +1,4 @@
-import type { Json, Kernel, Limit, Observed } from "@openconnect/kernel";
+import type { Json, Kernel, Limit, Observed } from "@connectd/kernel";
 import type { StandardSchemaV1 } from "./action.ts";
 import { type Credential, lifecycle, NotActive, type OAuth2 } from "./lifecycle.ts";
 import { OAuthError, type TokenResponse } from "./oauth.ts";

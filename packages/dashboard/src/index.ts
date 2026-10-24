@@ -1,4 +1,4 @@
-import { type Api, authorized, type Extension, Fail, instanceOf, type Reply, type Route } from "@openconnect/runtime";
+import { type Api, authorized, type Extension, Fail, instanceOf, type Reply, type Route } from "@connectd/runtime";
 import { css, js, version } from "./assets.ts";
 
 /**
@@ -115,7 +115,7 @@ const page = `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>openconnect</title>
+<title>connectd</title>
 <link rel="stylesheet" href="/dashboard/app.css?v=${version}">
 <main id="app"><noscript>The dashboard needs JavaScript.</noscript></main>
 <script type="module" src="/dashboard/app.js?v=${version}"></script>

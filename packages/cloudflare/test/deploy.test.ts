@@ -1,7 +1,7 @@
 import { applyD1Migrations, type D1Migration, reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import worker from "openconnect:generated";
+import worker from "connectd:generated";
 
 const e = env as unknown as { INDEX: D1Database; MIGRATIONS: D1Migration[] };
 beforeEach(() => applyD1Migrations(e.INDEX, e.MIGRATIONS));

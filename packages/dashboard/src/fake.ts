@@ -1,8 +1,8 @@
-import { apiKey, defineConnection, hmacHex, oauth2, safeEqual } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
-import { directory, type Extension, events, memoryIndex, runtime, webhooks } from "@openconnect/runtime";
+import { apiKey, defineConnection, hmacHex, oauth2, safeEqual } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
+import { directory, type Extension, events, memoryIndex, runtime, webhooks } from "@connectd/runtime";
 import { dashboard } from "./index.ts";
 
 /**

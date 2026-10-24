@@ -1,8 +1,8 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
-import type { Handler, Json, Program } from "@openconnect/kernel";
-import { memory, type Snapshot } from "@openconnect/kernel/memory";
-import { memoryIndex, type Runtime, runtime } from "@openconnect/runtime";
+import type { Handler, Json, Program } from "@connectd/kernel";
+import { memory, type Snapshot } from "@connectd/kernel/memory";
+import { memoryIndex, type Runtime, runtime } from "@connectd/runtime";
 import { devKeys, loadEnv, workdir } from "./env.ts";
 import { ENV, type Env, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
@@ -18,11 +18,11 @@ export type DevOptions = {
   config?: string;
   /** Default 8787; 0 picks a free one. */
   port?: number;
-  /** Public URL (`/callback`, `/webhooks`), for a tunnel run elsewhere. Default: `--tunnel`'s, `OPENCONNECT_PUBLIC_URL`, or localhost. */
+  /** Public URL (`/callback`, `/webhooks`), for a tunnel run elsewhere. Default: `--tunnel`'s, `CONNECTD_PUBLIC_URL`, or localhost. */
   url?: string;
   /** Start a cloudflared quick tunnel; `bin` replaces `cloudflared` (tests). */
   tunnel?: boolean | { bin: string };
-  /** Start from empty state (drops `.openconnect/state.json`). */
+  /** Start from empty state (drops `.connectd/state.json`). */
   reset?: boolean;
   /** Default true. */
   watch?: boolean;
@@ -63,8 +63,8 @@ export function swappable() {
 }
 
 /**
- * `openconnect dev`: the runtime on the memory driver with a real clock, served by Bun. State
- * (connections, handshakes, outboxes, timers) is snapshotted to `.openconnect/state.json`, so it
+ * `connectd dev`: the runtime on the memory driver with a real clock, served by Bun. State
+ * (connections, handshakes, outboxes, timers) is snapshotted to `.connectd/state.json`, so it
  * survives restarts; a change to the config or anything it imports reloads the definitions in
  * place, keeping state, as a deploy would.
  */
@@ -174,7 +174,7 @@ export async function dev(o: DevOptions) {
     let running = Promise.resolve();
     watcher = watch(dir, { recursive: true }, (_, f) => {
       const p = String(f ?? "");
-      if (/(^|[/\\])(node_modules|\.openconnect|\.git)([/\\]|$)/.test(p)) return;
+      if (/(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/.test(p)) return;
       clearTimeout(timer);
       timer = setTimeout(() => (running = running.then(async () => void (await reload()))), 50);
     });
@@ -215,14 +215,14 @@ export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" |
   const l = d.loaded();
   const rows: [string, string][] = [
     ["URL", d.url],
-    ["API key", `${d.apiKey}${d.created ? "   (new: generated into .openconnect/dev.vars)" : ""}`],
+    ["API key", `${d.apiKey}${d.created ? "   (new: generated into .connectd/dev.vars)" : ""}`],
   ];
   if (l) {
     const pub = l.publicUrl;
     rows.push(["public URL", pub === d.url ? `${pub}   (https-only providers like Slack need --tunnel or --url)` : pub]);
     rows.push(["callback URL", `${pub}/callback   (register this redirect URI with each OAuth provider)`]);
     rows.push(["webhooks", `${pub}/webhooks/:def[/:id]`]);
-    rows.push(["events", l.project.events ? `${l.project.events.url}   (verify with ${ENV.events} from .openconnect/dev.vars)` : "off (set events: { url } in the config)"]);
+    rows.push(["events", l.project.events ? `${l.project.events.url}   (verify with ${ENV.events} from .connectd/dev.vars)` : "off (set events: { url } in the config)"]);
     rows.push(["sessions", l.project.sessions ? l.project.sessions.origins.join(", ") || "no origins" : "off (set sessions: { origins } in the config)"]);
     rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (sign in with the API key)`]);
     rows.push(["definitions", l.project.definitions.map((x) => x.id).join(", ") || "none"]);
@@ -230,5 +230,5 @@ export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" |
     if (l.project.envNames.length) rows.push(["env", `${l.project.envNames.join(", ")}   (from .env; nothing else reaches the runtime)`]);
   }
   rows.push(["state", `${d.statePath}   (--reset to start empty)`]);
-  return `\nopenconnect dev\n${rows.map(([k, v]) => `  ${k.padEnd(14)}${v}`).join("\n")}\n`;
+  return `\nconnectd dev\n${rows.map(([k, v]) => `  ${k.padEnd(14)}${v}`).join("\n")}\n`;
 }

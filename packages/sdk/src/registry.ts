@@ -1,13 +1,13 @@
-import type { Action, Connection } from "@openconnect/connections";
-import type { Json } from "@openconnect/kernel";
-import type { ConnectionEvent, LifecycleEvent, WebhookData } from "@openconnect/runtime";
+import type { Action, Connection } from "@connectd/connections";
+import type { Json } from "@connectd/kernel";
+import type { ConnectionEvent, LifecycleEvent, WebhookData } from "@connectd/runtime";
 
 /**
  * The project's connections and their actions, for the typed client (#54). Empty here; the CLI's
- * generated `.openconnect/registry.d.ts` fills it in (`openconnect dev`, `deploy`, `types`), one
+ * generated `.connectd/registry.d.ts` fills it in (`connectd dev`, `deploy`, `types`), one
  * entry per connection folder, named after it:
  *
- *   declare module "@openconnect/sdk" {
+ *   declare module "@connectd/sdk" {
  *     interface Registry extends RegistryOf<typeof config> {
  *       github: Entry<typeof c0, { starRepo: typeof a0 }>;
  *     }

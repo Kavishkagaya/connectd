@@ -1,6 +1,6 @@
-import { type AnyAction, type AnyConnection, definitionOf, envConfig, isAction, isConnection, withId } from "@openconnect/connections";
-import { dashboard } from "@openconnect/dashboard";
-import { importHmacKey, importKeys } from "@openconnect/kernel";
+import { type AnyAction, type AnyConnection, definitionOf, envConfig, isAction, isConnection, withId } from "@connectd/connections";
+import { dashboard } from "@connectd/dashboard";
+import { importHmacKey, importKeys } from "@connectd/kernel";
 import { ENV } from "./keys.ts";
 import type { Target } from "./target.ts";
 import {
@@ -14,10 +14,10 @@ import {
   type Settings,
   sessions,
   webhooks,
-} from "@openconnect/runtime";
+} from "@connectd/runtime";
 
 /**
- * A user's project: what `oc.config.ts` exports, the one input both `openconnect dev` and `deploy`
+ * A user's project: what `oc.config.ts` exports, the one input both `connectd dev` and `deploy`
  * (#31) build the runtime from. No Node or Bun APIs here, so a Worker can import it. Connections and
  * their actions live in folders under `dir`, one per connection, named by its id (#54):
  *
@@ -44,7 +44,7 @@ export type Project = {
   actions?: Record<string, Record<string, AnyAction>>;
   /** Connector config by definition id (client id/secret). Definitions with no callback step (`apiKey`) default to null. */
   config?: Record<string, unknown>;
-  /** Where lifecycle and webhook events are POSTed (#24); signed with `OPENCONNECT_EVENTS_SECRET`. */
+  /** Where lifecycle and webhook events are POSTed (#24); signed with `CONNECTD_EVENTS_SECRET`. */
   events?: { url: string };
   /** Exact origins the frontend connect UI runs on (#29). */
   sessions?: { origins: string[] };
@@ -52,7 +52,7 @@ export type Project = {
   extensions?: Extension[];
   /** The dashboard at `/dashboard` (#32), signed in with the API key. Default true; false leaves it out. */
   dashboard?: boolean;
-  /** Where `openconnect deploy` puts it (#54): `cloudflare({ name, url })` from @openconnect/cloudflare. dev ignores it. */
+  /** Where `connectd deploy` puts it (#54): `cloudflare({ name, url })` from @connectd/cloudflare. dev ignores it. */
   target?: Target;
 };
 
@@ -95,7 +95,7 @@ export function withFolders(config: Config, folders: Folder[]): Config {
  * A project as the runtime gets it: every definition (listed and from folders), checked; `config`
  * with each connection's own (`.config((env) => ...)`) filled in; `missing`: the required env names
  * a connection still lacks; `envNames`: every name the config and the connections read, the only
- * ones (besides `OPENCONNECT_*`) a Worker gets.
+ * ones (besides `CONNECTD_*`) a Worker gets.
  */
 export type Resolved = Project & {
   definitions: (AnyConnection | AnyDefinition)[];
@@ -118,9 +118,9 @@ export function resolve(config: Config, env: Env): Resolved {
   const raw = typeof config === "function" ? config(seen) : config;
   if (!raw || typeof raw !== "object") throw new Error("the config must export defineConfig({ ... })");
   if (raw.definitions !== undefined && !Array.isArray(raw.definitions)) throw new Error("definitions must be a list");
-  if ("deploy" in raw) throw new Error("the config's deploy: { name, url } is gone: say where it deploys with target: cloudflare({ name, url }) from @openconnect/cloudflare");
+  if ("deploy" in raw) throw new Error("the config's deploy: { name, url } is gone: say where it deploys with target: cloudflare({ name, url }) from @connectd/cloudflare");
   if (raw.target !== undefined && (typeof raw.target !== "object" || raw.target === null || typeof raw.target.adapter !== "string"))
-    throw new Error("target must be a target: target: cloudflare({ name }) from @openconnect/cloudflare (did you forget the call?)");
+    throw new Error("target must be a target: target: cloudflare({ name }) from @connectd/cloudflare (did you forget the call?)");
   const p = { ...raw, definitions: raw.definitions ?? [] };
   const registry: Record<string, AnyDefinition> = {};
   const own: Record<string, unknown> = {};
@@ -138,12 +138,12 @@ export function resolve(config: Config, env: Env): Resolved {
     own[d.id] = r.value;
     if (r.missing.length) missing[d.id] = r.missing;
   }
-  return { ...p, config: { ...p.config, ...own }, registry, missing, envNames: [...names].filter((n) => !n.startsWith("OPENCONNECT_")).sort() };
+  return { ...p, config: { ...p.config, ...own }, registry, missing, envNames: [...names].filter((n) => !n.startsWith("CONNECTD_")).sort() };
 }
 
-/** What a Worker gets of `env`: the names the project reads, and `OPENCONNECT_*` (keys, URL, API key, events secret). */
+/** What a Worker gets of `env`: the names the project reads, and `CONNECTD_*` (keys, URL, API key, events secret). */
 export const workerEnv = (env: Env, names: string[]): Env =>
-  Object.fromEntries(Object.entries(env).filter(([k, v]) => v !== undefined && (k.startsWith("OPENCONNECT_") || names.includes(k))));
+  Object.fromEntries(Object.entries(env).filter(([k, v]) => v !== undefined && (k.startsWith("CONNECTD_") || names.includes(k))));
 
 /** Definitions that need connector config and have none (they answer `not_configured`), or lack env names they read. */
 export const unconfigured = (p: Project & { missing?: Record<string, string[]> }) =>
@@ -160,7 +160,7 @@ function need(env: Env, name: string) {
   return v;
 }
 
-/** Settings from the environment. `OPENCONNECT_PUBLIC_URL` is where `/callback` and `/webhooks` are reached from outside. */
+/** Settings from the environment. `CONNECTD_PUBLIC_URL` is where `/callback` and `/webhooks` are reached from outside. */
 export async function settings(p: Project, env: Env): Promise<Settings> {
   const url = need(env, ENV.url).replace(/\/+$/, "");
   const versions = Object.keys(env).flatMap((k) => (k.startsWith(ENV.key) && env[k] ? [Number(k.slice(ENV.key.length))] : [])).filter(Number.isInteger);

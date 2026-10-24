@@ -1,4 +1,4 @@
-import type { EventsStatus, EventSummary, Fault, Page, Row, WebhooksStatus } from "@openconnect/runtime";
+import type { EventsStatus, EventSummary, Fault, Page, Row, WebhooksStatus } from "@connectd/runtime";
 import type { DefinitionInfo, Detail, Overview } from "./index.ts";
 
 /**
@@ -14,7 +14,7 @@ import type { DefinitionInfo, Detail, Overview } from "./index.ts";
 /** What it uses of `window`; a fake in tests. */
 export type Win = Pick<Window, "document" | "location" | "sessionStorage" | "fetch" | "addEventListener" | "removeEventListener" | "confirm">;
 
-export const KEY = "openconnect.dashboard.key";
+export const KEY = "connectd.dashboard.key";
 
 /** Usable as a path segment: not empty, `.` or `..`. */
 export const addressable = (s: string) => s !== "" && s !== "." && s !== "..";
@@ -24,7 +24,7 @@ function address(args: string[]): [string, string] {
   return [def, id];
 }
 const STATES = ["pending", "active", "reauth_required", "revoked"];
-// ponytail: field types are guessed from names, as in @openconnect/connect's form.
+// ponytail: field types are guessed from names, as in @connectd/connect's form.
 const SECRET = /key|secret|token|password/i;
 
 type Child = Node | string | null | undefined | false;
@@ -139,11 +139,11 @@ export function start(win: Win) {
     return h(
       "form",
       { class: "oc-login", onsubmit: submit },
-      h("h1", {}, "openconnect"),
+      h("h1", {}, "connectd"),
       h("label", {}, "API key ", input),
       h("button", { type: "submit" }, "Sign in"),
       note,
-      h("p", { class: "oc-hint" }, "The deployment's OPENCONNECT_API_KEY. Kept in this tab only."),
+      h("p", { class: "oc-hint" }, "The deployment's CONNECTD_API_KEY. Kept in this tab only."),
     );
   }
 
@@ -153,7 +153,7 @@ export function start(win: Win) {
       h(
         "header",
         {},
-        h("strong", {}, "openconnect"),
+        h("strong", {}, "connectd"),
         h("nav", {}, h("a", { href: "#/" }, "Connections"), h("a", { href: "#/definitions" }, "Definitions")),
         h("button", { type: "button", onclick: signOut }, "Sign out"),
       ),

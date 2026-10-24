@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys, type Json, sign } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
+import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys, type Json, sign } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
 import { proxy, runtime, type Settings, sessions } from "./index.ts";
 
 const TOKEN = "https://example.test/token";
@@ -80,7 +80,7 @@ test("issuing: scoped token with an expiry; origin and returnUrl must be allowli
   expect(ok.body.expiresAt).toBe(T0 + 60_000);
   // Readable, not secret: the browser package checks returnUrl for the redirect fallback.
   const claims = JSON.parse(Buffer.from(ok.body.token.split(".")[0], "base64url").toString());
-  expect(claims).toEqual({ typ: "openconnect.session", def: "example", id: "c1", exp: T0 + 60_000, origin: APP, returnUrl: `${APP}/settings?tab=1` });
+  expect(claims).toEqual({ typ: "connectd.session", def: "example", id: "c1", exp: T0 + 60_000, origin: APP, returnUrl: `${APP}/settings?tab=1` });
   expect((await t.issue("example", "c1", { origin: APP })).body.expiresAt).toBe(T0 + 600_000);
 
   const code = async (args: Json) => {
@@ -135,7 +135,7 @@ test("GET /session: what to render, with CORS for the bound origin only", async 
   expect((await t.json(await t.browser("", "nope"))).body.error.code).toBe("unauthorized");
   const state = await sign(JSON.stringify(["conn:example:c1", "x"]), t.settings.stateKey);
   expect((await t.json(await t.browser("", state))).status).toBe(401);
-  const other5 = await sign(JSON.stringify({ typ: "openconnect.session", def: "example", id: "c2", exp: T0 + 1e9, origin: APP }), t.settings.stateKey);
+  const other5 = await sign(JSON.stringify({ typ: "connectd.session", def: "example", id: "c2", exp: T0 + 1e9, origin: APP }), t.settings.stateKey);
   expect((await t.json(await t.browser("", other5))).status).toBe(401);
   await t.w.advance(600_000);
   const expired = await t.json(await t.browser("", tk));
@@ -211,7 +211,7 @@ test("popup: ticket, then the provider; the callback hands a completion to the o
   expect(html).toContain(`, "${APP}"); window.close();`);
   const msg = t.message(html);
   const { completion, ...rest } = msg;
-  expect(rest).toEqual({ type: "openconnect", nonce: "n1", definition: "example", id: "c1", status: "authorized" });
+  expect(rest).toEqual({ type: "connectd", nonce: "n1", definition: "example", id: "c1", status: "authorized" });
   expect(completion).toBeString();
   expect(done.headers.get("set-cookie")).toContain("Max-Age=0");
   // Exchanged, not activated: only the app's page activates it.
@@ -236,7 +236,7 @@ test("tickets: single use, 60 s, one connection; minted only from the session's 
   // The ticket names its connection; its id only exists in that connection's instance.
   const mine = (await t.ticket(tk)).body.ticket as string;
   const id = JSON.parse(Buffer.from(mine.split(".")[0]!, "base64url").toString()).t;
-  const other = await sign(JSON.stringify({ typ: "openconnect.ticket", def: "example", id: "c2", t: id }), t.settings.sessions!.key);
+  const other = await sign(JSON.stringify({ typ: "connectd.ticket", def: "example", id: "c2", t: id }), t.settings.sessions!.key);
   expect((await t.go(other)).status).toBe(401);
   // A session token isn't a ticket, nor the other way round.
   expect((await t.go(tk)).status).toBe(401);
@@ -261,18 +261,18 @@ test("redirect: back to the bound return URL, the outcome in its fragment; provi
   const back = new URL(done.headers.get("location")!);
   expect(`${back.origin}${back.pathname}${back.search}`).toBe(`${APP}/done?x=1`); // nothing for servers or Referers
   const f = new URLSearchParams(back.hash.slice(1));
-  expect([f.get("openconnect"), f.get("definition"), f.get("id")]).toEqual(["authorized", "example", "c1"]);
+  expect([f.get("connectd"), f.get("definition"), f.get("id")]).toEqual(["authorized", "example", "c1"]);
   expect((await t.confirm(tk, f.get("completion")!)).body.state).toBe("active");
 
   const again = await t.authorize(tk, { mode: "redirect", nonce: "" });
   const st = new URL(again.headers.get("location")!).searchParams.get("state")!;
   const denied = await t.send(`/callback?error=access_denied&state=${encodeURIComponent(st)}`, { headers: { cookie: t.cookieOf(again) } });
-  expect(denied.headers.get("location")).toBe(`${APP}/done?x=1#openconnect=error&definition=example&id=c1&code=access_denied`);
+  expect(denied.headers.get("location")).toBe(`${APP}/done?x=1#connectd=error&definition=example&id=c1&code=access_denied`);
 
   // Errors before the provider (a revoked connection) end the same way.
   await t.send("/connections/example/c1/revoke", { method: "POST", headers: { authorization: "Bearer secret" } });
   const revoked = await t.authorize(tk, { mode: "redirect", nonce: "" });
-  expect(revoked.headers.get("location")).toBe(`${APP}/done?x=1#openconnect=error&definition=example&id=c1&code=not_active`);
+  expect(revoked.headers.get("location")).toBe(`${APP}/done?x=1#connectd=error&definition=example&id=c1&code=not_active`);
 });
 
 test("a completion is refused once the connection was revoked meanwhile, before the provider is called", async () => {
@@ -292,7 +292,7 @@ test("popup without an opener (a provider's COOP cut it) goes on to the return U
   const tk = await t.token("example", "c1", { returnUrl: `${APP}/done` });
   const res = await t.authorize(tk);
   const html = await (await t.back(res.headers.get("location")!, t.cookieOf(res))).text();
-  expect(html).toMatch(/else if \("https:\/\/app\.test\/done#openconnect=authorized\\u0026definition=example\\u0026id=c1\\u0026completion=[\w.-]+\\u0026nonce=n1"\) location\.replace\(/);
+  expect(html).toMatch(/else if \("https:\/\/app\.test\/done#connectd=authorized\\u0026definition=example\\u0026id=c1\\u0026completion=[\w.-]+\\u0026nonce=n1"\) location\.replace\(/);
 });
 
 test("login CSRF: a ticket minted elsewhere, opened in a victim's browser, never activates", async () => {
@@ -314,10 +314,10 @@ test("login CSRF: a ticket minted elsewhere, opened in a victim's browser, never
   // Sending the victim the provider URL instead: the victim's browser has no cookie.
   const own = await t.authorize(attacker, { mode: "redirect", nonce: "" });
   const loc = own.headers.get("location")!;
-  expect((await t.back(loc, null)).headers.get("location")).toBe(`${APP}/done#openconnect=error&definition=example&id=c1&code=session_mismatch`);
+  expect((await t.back(loc, null)).headers.get("location")).toBe(`${APP}/done#connectd=error&definition=example&id=c1&code=session_mismatch`);
   // Nor can the query smuggle a cookie header in, or a wrong cookie pass.
   const r2 = await t.authorize(attacker, { mode: "redirect", nonce: "" });
-  const smuggled = await t.back(r2.headers.get("location")!, null, `&openconnect.cookies=${encodeURIComponent(t.cookieOf(r2))}`);
+  const smuggled = await t.back(r2.headers.get("location")!, null, `&connectd.cookies=${encodeURIComponent(t.cookieOf(r2))}`);
   expect(new URLSearchParams(new URL(smuggled.headers.get("location")!).hash.slice(1)).get("code")).toBe("session_mismatch");
   const r3 = await t.authorize(attacker, { mode: "redirect", nonce: "" });
   const wrong = await t.back(r3.headers.get("location")!, `${t.cookieOf(r3).split("=")[0]}=guess`);

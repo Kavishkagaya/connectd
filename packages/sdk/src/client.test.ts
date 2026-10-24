@@ -1,16 +1,16 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
-import { OpenConnectError, openconnect } from "./index.ts";
+import { ConnectdError, connectd } from "./index.ts";
 import { API, setup, T0 } from "./testing.ts";
 
 const rejects = async (p: Promise<unknown>) => {
   try {
     await p;
   } catch (e) {
-    if (e instanceof OpenConnectError) return e;
+    if (e instanceof ConnectdError) return e;
     throw e;
   }
-  throw new Error("expected an OpenConnectError");
+  throw new Error("expected a ConnectdError");
 };
 
 test("oauth2: connect, status, token, revoke", async () => {
@@ -48,18 +48,18 @@ test("session: a browser token for one connection, from an allowlisted origin", 
   expect(await rejects(t.oc.connection("keyed", "k1").session({ origin: "https://evil.test" }))).toMatchObject({ code: "forbidden", status: 403 });
 });
 
-test("errors are OpenConnectError with the runtime's code and status", async () => {
+test("errors are ConnectdError with the runtime's code and status", async () => {
   const t = await setup();
   expect(await rejects(t.oc.connection("example", "nobody").status())).toMatchObject({ code: "not_found", status: 404 });
   expect(await rejects(t.oc.connection("nope", "x").status())).toMatchObject({ code: "not_found", status: 404 });
   expect(await rejects(t.oc.connection("keyed", "k").connect({ wrong: "x" }))).toMatchObject({ code: "bad_request", status: 400 });
   expect(await rejects(t.oc.connection("keyed", "k").call("proxy.prepare"))).toMatchObject({ code: "not_found", status: 404 });
 
-  const wrongKey = openconnect({ url: "https://oc.test", apiKey: "nope", fetch: (i, init) => t.rt.fetch(new Request(i, init), t.w.call) });
+  const wrongKey = connectd({ url: "https://oc.test", apiKey: "nope", fetch: (i, init) => t.rt.fetch(new Request(i, init), t.w.call) });
   expect(await rejects(wrongKey.connection("keyed", "k").status())).toMatchObject({ code: "unauthorized", status: 401 });
 
   // Something in front of the runtime answering HTML.
-  const gateway = openconnect({ url: "https://oc.test", apiKey: "secret", fetch: async () => new Response("<h1>Bad Gateway</h1>", { status: 502 }) });
+  const gateway = connectd({ url: "https://oc.test", apiKey: "secret", fetch: async () => new Response("<h1>Bad Gateway</h1>", { status: 502 }) });
   expect(await rejects(gateway.connection("keyed", "k").status())).toMatchObject({ code: "http_error", status: 502, message: "<h1>Bad Gateway</h1>" });
 });
 
@@ -103,10 +103,10 @@ test("fetch goes through the proxy; provider responses come back as they are", a
   expect(up.headers.get("content-type")).toBe("text/plain");
 
   // A provider error is the provider's response, not a thrown error, even if it imitates ours.
-  t.upstream(() => Response.json({ error: { code: "not_active", status: 404, message: "x" } }, { status: 404, headers: { "openconnect-error": "not_active" } }));
+  t.upstream(() => Response.json({ error: { code: "not_active", status: 404, message: "x" } }, { status: 404, headers: { "connectd-error": "not_active" } }));
   const miss = await t.oc.connection("example", "u1").fetch("missing");
   expect(miss.status).toBe(404);
-  expect(miss.headers.has("openconnect-error")).toBe(false);
+  expect(miss.headers.has("connectd-error")).toBe(false);
 
   // What the runtime refused throws.
   expect(await rejects(t.oc.connection("example", "ghost").fetch("/user"))).toMatchObject({ code: "not_active", status: 409, state: "missing" });
@@ -148,13 +148,13 @@ test("paths can't climb out of the proxy or the connection: raw, %2e%2e and %2E%
   await t.authorize("u1");
   await t.authorize("u2");
   const sent: string[] = [];
-  const oc = openconnect({ url: "https://oc.test", apiKey: "secret", fetch: (i, init) => (sent.push(i), t.rt.fetch(new Request(i, init), t.w.call)) });
+  const oc = connectd({ url: "https://oc.test", apiKey: "secret", fetch: (i, init) => (sent.push(i), t.rt.fetch(new Request(i, init), t.w.call)) });
   const c = oc.connection("example", "u1");
   for (const p of ["../../../connections/example/u2/token", "%2e%2e/%2e%2e/%2e%2e/connections/example/u2/token", "%2E%2e/%2E%2E/u2/x", "a/../../x", "./.."])
     expect(await rejects(c.fetch(p, { method: "POST" }))).toMatchObject({ code: "bad_request", status: 400 });
   expect(await rejects(c.call(".."))).toMatchObject({ code: "bad_request" });
   for (const [d, i] of [["..", "x"], ["example", "."], ["example", ".."], ["", "x"]])
-    expect(() => oc.connection(d!, i!)).toThrow(OpenConnectError);
+    expect(() => oc.connection(d!, i!)).toThrow(ConnectdError);
   expect(sent).toEqual([]); // nothing left the client
 
   // Inside the prefix is fine, and an id with dots in it is just an id.
@@ -168,7 +168,7 @@ test("the SDK imports no runtime code but signature.ts, which imports nothing", 
   const imports = readdirSync(dir)
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "testing.ts")
     .flatMap((f) => [...readFileSync(dir + f, "utf8").matchAll(/^(?:import|export)\s+(?!type\b)[^;]*?from\s+"([^"]+)"/gms)].map((m) => m[1]!));
-  expect(imports.filter((s) => !s.startsWith("./"))).toEqual(["@openconnect/runtime/signature", "@openconnect/runtime/signature"]);
-  const sig = readFileSync(new URL(import.meta.resolve("@openconnect/runtime/signature")).pathname, "utf8");
+  expect(imports.filter((s) => !s.startsWith("./"))).toEqual(["@connectd/runtime/signature", "@connectd/runtime/signature"]);
+  const sig = readFileSync(new URL(import.meta.resolve("@connectd/runtime/signature")).pathname, "utf8");
   expect(sig).not.toMatch(/^\s*(import|export .* from)\b/m);
 });

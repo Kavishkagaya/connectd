@@ -7,32 +7,32 @@ import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
 import { sdkNote } from "./discover.ts";
 import { ENV, generateKeys } from "./keys.ts";
 
-export const HELP = `openconnect <command> [flags]
+export const HELP = `connectd <command> [flags]
 
 Commands
-  dev       run the runtime locally: in memory, real clock, state kept in .openconnect/, reloads on save
+  dev       run the runtime locally: in memory, real clock, state kept in .connectd/, reloads on save
   deploy    deploy to your Cloudflare account (through wrangler)
-  types     write .openconnect/registry.d.ts (the typed client's registry; dev and deploy write it too)
-  keys      print a new OPENCONNECT_API_KEY and OPENCONNECT_EVENTS_SECRET (for CI secrets and your app's host)
+  types     write .connectd/registry.d.ts (the typed client's registry; dev and deploy write it too)
+  keys      print a new CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET (for CI secrets and your app's host)
   help      this text
 
-openconnect dev
+connectd dev
   --port <n>       port (default ${PORT}; 0 picks a free one)
   --config <file>  config file (default ${CONFIG_FILES[0]})
   --tunnel         expose it on a public https URL with a cloudflared quick tunnel (Slack needs https)
   --url <url>      public URL of a tunnel you run yourself (callback and webhook URLs use it)
   --reset          start from empty state
 
-openconnect deploy
+connectd deploy
   --env-file <f>   the production env (default .env.production; in CI, CI=true, the shell's); only names the project reads are pushed
   --name <name>    Worker name (default: the target's name, cloudflare({ name }), else the directory's name)
   --url <url>      public https origin on a custom domain (default: the workers.dev URL)
-  --rotate <list>  comma-separated: key (adds OPENCONNECT_KEY_V<n+1>), api-key, state, sessions
+  --rotate <list>  comma-separated: key (adds CONNECTD_KEY_V<n+1>), api-key, state, sessions
   --new-keys       generate fresh runtime keys although the index database exists without its Worker
-  --dry-run        write .openconnect/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
+  --dry-run        write .connectd/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
   --config <file>  config file (default ${CONFIG_FILES[0]})
   Needs wrangler (bun add -d wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID).
-  In CI, OPENCONNECT_API_KEY comes from a CI secret (openconnect keys); deploy never prints one there.
+  In CI, CONNECTD_API_KEY comes from a CI secret (connectd keys); deploy never prints one there.
   Managed deploys (--managed) wait for the managed service (#34).
 `;
 
@@ -126,7 +126,7 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
       try {
         const config = findConfig(dir, typeof a.flags.config === "string" ? a.flags.config : undefined);
         const { found } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), { ...process.env });
-        log(`wrote .openconnect/registry.d.ts (${found.length ? found.map((f) => `${f.id}${f.actions.length ? ` (${f.actions.map((a) => a.name).join(", ")})` : ""}`).join(", ") : "no connection folders"})`);
+        log(`wrote .connectd/registry.d.ts (${found.length ? found.map((f) => `${f.id}${f.actions.length ? ` (${f.actions.map((a) => a.name).join(", ")})` : ""}`).join(", ") : "no connection folders"})`);
         const note = sdkNote(dir);
         if (note) log(note);
         return 0;

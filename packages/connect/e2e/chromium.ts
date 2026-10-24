@@ -9,11 +9,11 @@
  * provider page with COOP `same-origin` (cuts the opener), a popup the user closes, the API-key
  * form, redirect mode, and a ticket minted outside a browser that a victim opens.
  */
-import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
-import { runtime, sessions } from "@openconnect/runtime";
+import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
+import { runtime, sessions } from "@connectd/runtime";
 
 const RT = "http://localhost:8788",
   APP = "http://127.0.0.1:5173";
@@ -181,7 +181,7 @@ try {
   await victim.evaluate(() => localStorage.setItem("user", "v1"));
   await victim.goto(`${RT}/session/authorize?ticket=${encodeURIComponent(ticket)}`);
   await victim.click("#ok");
-  await victim.waitForURL(/#openconnect=authorized&definition=example&id=x1&completion=/);
+  await victim.waitForURL(/#connectd=authorized&definition=example&id=x1&completion=/);
   await victim.waitForSelector("#ui button"); // the page script ran (resume() first)
   const vout = await victim.textContent("#out");
   // resume() ignores an outcome for another connection than its session's: nothing confirmed, nothing shown.

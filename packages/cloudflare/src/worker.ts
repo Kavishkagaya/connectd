@@ -1,11 +1,11 @@
-// The Worker entry `openconnect deploy` generates (#31). This file is the template: the generator
-// copies it into .openconnect/deploy/ and points each import below at a resolved path. It runs in
+// The Worker entry `connectd deploy` generates (#31). This file is the template: the generator
+// copies it into .connectd/deploy/ and points each import below at a resolved path. It runs in
 // workerd, so it's typechecked with Workers types (tsconfig.workers.json), not by the root tsc.
 import { env } from "cloudflare:workers";
-import { runtime } from "@openconnect/runtime";
-import { cloudflare, d1Index } from "@openconnect/runtime/cloudflare";
-import config from "openconnect:config";
-import { type Env, options } from "@openconnect/cli";
+import { runtime } from "@connectd/runtime";
+import { cloudflare, d1Index } from "@connectd/runtime/cloudflare";
+import config from "connectd:config";
+import { type Env, options } from "@connectd/cli";
 
 // Module scope: `options` resolves the config against the Worker's vars and secrets (definitions are
 // needed up front); keys are imported lazily on the first request, since Workers can't do crypto here.

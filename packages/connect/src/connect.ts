@@ -16,7 +16,7 @@
  */
 
 /** `GET /session` (the runtime's `SessionInfo`). */
-// ponytail: copied from @openconnect/runtime to keep this package dependency-free; move both to a shared types package with the SDK's.
+// ponytail: copied from @connectd/runtime to keep this package dependency-free; move both to a shared types package with the SDK's.
 export type SessionInfo = {
   definition: string;
   id: string;
@@ -105,7 +105,7 @@ const TERMINAL = new Set(["session_expired", "unauthorized", "forbidden", "not_f
 /** The channel a popup cut off by COOP reports on, from the app's return URL page (same origin, so only the app hears it). */
 const channel = (win: Window, n: string) => {
   const BC = (win as unknown as { BroadcastChannel?: typeof BroadcastChannel }).BroadcastChannel;
-  return BC ? new BC(`openconnect:${n}`) : null;
+  return BC ? new BC(`connectd:${n}`) : null;
 };
 
 /**
@@ -144,7 +144,7 @@ function wait(win: Window, popup: Window, origin: string, n: string, w: Wait): P
       d.status === "connected" ? { status: "connected" } : err(String(d.code ?? "error"), String(d.message ?? ""));
     function onMessage(e: MessageEvent) {
       const d = e.data as { type?: unknown; nonce?: unknown; status?: unknown; completion?: unknown; code?: unknown; message?: unknown } | null;
-      if (e.origin !== origin || e.source !== popup || !d || d.type !== "openconnect" || d.nonce !== n) return;
+      if (e.origin !== origin || e.source !== popup || !d || d.type !== "connectd" || d.nonce !== n) return;
       if (d.status === "authorized" && typeof d.completion === "string") done({ status: "authorized", completion: d.completion });
       else done(result(d));
     }
@@ -152,7 +152,7 @@ function wait(win: Window, popup: Window, origin: string, n: string, w: Wait): P
     if (bc)
       bc.onmessage = (e: MessageEvent) => {
         const d = e.data as { type?: unknown; nonce?: unknown; status?: unknown } | null;
-        if (!d || d.type !== "openconnect" || d.nonce !== n || d.status === "authorized") return;
+        if (!d || d.type !== "connectd" || d.nonce !== n || d.status === "authorized") return;
         // Same origin, so any of the app's pages could say it: check the state before believing a `connected`.
         if (d.status === "connected") state().then((s) => s === "active" && done({ status: "connected" }), () => {});
         else done(result(d));
@@ -204,7 +204,7 @@ export function connect(o: ConnectOptions): Promise<Result> {
   const n = nonce(win);
   // Open first (blank), navigate after: the gesture only counts until the first await.
   if (o.signal?.aborted) return Promise.resolve(err("aborted", "aborted"));
-  const popup = !o.fields && (o.mode ?? "popup") === "popup" ? win.open("", `openconnect-${n}`, "popup,width=520,height=680") : null;
+  const popup = !o.fields && (o.mode ?? "popup") === "popup" ? win.open("", `connectd-${n}`, "popup,width=520,height=680") : null;
   const aborted = () => {
     if (!o.signal?.aborted) return false;
     popup?.close();
@@ -252,7 +252,7 @@ export function connect(o: ConnectOptions): Promise<Result> {
 }
 
 /** The outcome keys the runtime puts in the return URL's fragment. */
-const KEYS = ["openconnect", "definition", "id", "completion", "code", "nonce"];
+const KEYS = ["connectd", "definition", "id", "completion", "code", "nonce"];
 
 /**
  * On the return URL's page, after a redirect (or a popup that lost its opener): if the fragment
@@ -264,7 +264,7 @@ export async function resume(o: { url: string; token: Token; window?: Window }):
   const win = o.window ?? window;
   const here = new URL(win.location.href);
   const f = new URLSearchParams(here.hash.slice(1));
-  const status = f.get("openconnect");
+  const status = f.get("connectd");
   if (!status) return null;
   const token = typeof o.token === "string" ? o.token : await o.token();
   const c = claims(token);
@@ -284,9 +284,9 @@ export async function resume(o: { url: string; token: Token; window?: Window }):
   const n = nonceOf;
   if (r && n) {
     const bc = channel(win, n);
-    bc?.postMessage({ type: "openconnect", nonce: n, ...r });
+    bc?.postMessage({ type: "connectd", nonce: n, ...r });
     bc?.close();
   }
-  if (r && win.name.startsWith("openconnect-")) win.close();
+  if (r && win.name.startsWith("connectd-")) win.close();
   return r;
 }

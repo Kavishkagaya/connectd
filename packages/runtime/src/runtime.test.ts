@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { apiKey, connection, defineConnection, type OAuth2, oauth2 } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
+import { apiKey, connection, defineConnection, type OAuth2, oauth2 } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
 import { type Extension, runtime } from "./index.ts";
 
 const H = 3_600_000;

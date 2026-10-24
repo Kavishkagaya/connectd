@@ -1,4 +1,4 @@
-import type { Json } from "@openconnect/kernel";
+import type { Json } from "@connectd/kernel";
 import { apiKey as apiKeySteps, deadAs, type OAuth2Config, type OAuth2Spec, oauth2Steps } from "./auth.ts";
 import type { Auth, Ctx } from "./define.ts";
 import { type Claims, decodeJwt, type Jwk, signingKey, signJwt, verifyJwt } from "./jwt.ts";
@@ -10,9 +10,9 @@ import { type Client, clientCredentials, deviceAuthorize, devicePoll, OAuthError
  * quirks as methods, every method returning a new flow.
  */
 
-// `Symbol.for`: a config bundled with its own copy of this package (`openconnect dev`) still matches.
-export const STEPS = Symbol.for("openconnect.flow");
-export const IDENTITY = Symbol.for("openconnect.flow.identity");
+// `Symbol.for`: a config bundled with its own copy of this package (`connectd dev`) still matches.
+export const STEPS = Symbol.for("connectd.flow");
+export const IDENTITY = Symbol.for("connectd.flow.identity");
 
 /** An auth flow, as `.auth()` takes it. `M` is the identity it provides by itself (OIDC: the id_token's claims). */
 export type Flow<C, M extends Json = null> = { readonly [STEPS]: Auth<C>; readonly [IDENTITY]?: (cred: Credential) => M };

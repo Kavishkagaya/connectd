@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { type ActionCtx, action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@openconnect/connections";
-import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
-import { events as eventsExt, runtime, webhooks } from "@openconnect/runtime";
-import { type Client, type Connection, OpenConnectError, openconnect } from "./client.ts";
+import { type ActionCtx, action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@connectd/connections";
+import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
+import { events as eventsExt, runtime, webhooks } from "@connectd/runtime";
+import { type Client, type Connection, ConnectdError, connectd } from "./client.ts";
 import type { Entry, RegistryOf } from "./registry.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -49,7 +49,7 @@ test("typed client: ids, actions (input and output), identity and subscriptions 
   };
   const rt = runtime({ definitions: { tracker }, actions: { tracker: { open, me } }, settings: async () => settings, extensions: [webhooks()] });
   const w = memory(rt.program);
-  const oc = openconnect<R>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
+  const oc = connectd<R>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
 
   const t = oc.connection("tracker", "u1");
   // @ts-expect-error not a connection of this project
@@ -70,7 +70,7 @@ test("typed client: ids, actions (input and output), identity and subscriptions 
   t.actions.close;
   // The server checks input too: a 400 with the schema's issues.
   const bad = await (t.actions.open as unknown as (i: Json) => Promise<Json>)({ title: 1 }).catch((e) => e);
-  expect(bad).toBeInstanceOf(OpenConnectError);
+  expect(bad).toBeInstanceOf(ConnectdError);
   expect(bad.code).toBe("bad_request");
 
   const sub = await t.webhooks.subscribe({ repo: "o/r" });
@@ -87,7 +87,7 @@ test("typed client: ids, actions (input and output), identity and subscriptions 
 });
 
 test("untyped without a registry: any id, Json in and out", async () => {
-  const oc = openconnect({ url: "https://oc.test", apiKey: "k", fetch: async () => Response.json({ ok: true }) });
+  const oc = connectd({ url: "https://oc.test", apiKey: "k", fetch: async () => Response.json({ ok: true }) });
   const c = oc.connection("anything", "x");
   const out: Json = await c.actions.whatever!({ a: 1 });
   expect(out).toEqual({ ok: true });
@@ -95,7 +95,7 @@ test("untyped without a registry: any id, Json in and out", async () => {
 
 test("the actions proxy answers action names only: toJSON, toString and the like make no call", () => {
   let calls = 0;
-  const oc = openconnect({ url: "https://oc.test", apiKey: "k", fetch: async () => (calls++, Response.json(null)) });
+  const oc = connectd({ url: "https://oc.test", apiKey: "k", fetch: async () => (calls++, Response.json(null)) });
   const a = oc.connection("anything", "x").actions as Record<string, unknown>;
   for (const n of ["then", "toJSON", "toString", "valueOf", "constructor", "hasOwnProperty", "a.b", ""]) expect(a[n]).toBeUndefined();
   expect(JSON.stringify(a)).toBe("{}");
@@ -111,7 +111,7 @@ test("types: optional input stays optional, plain definitions widen the ids, typ
   const plain = { id: "plain" } as unknown as Definition<any, any>;
   // A config that lists its connections (and their actions) itself.
   type W = RegistryOf<() => { definitions: [typeof tracker, Definition<any, any>]; actions: { tracker: { opt: typeof opt } } }>;
-  const oc = openconnect<W>({ url: "https://oc.test", apiKey: "k", fetch: async () => Response.json(null) });
+  const oc = connectd<W>({ url: "https://oc.test", apiKey: "k", fetch: async () => Response.json(null) });
   const t = oc.connection("tracker", "x");
   void (() => t.actions.opt());
   void (() => t.actions.opt({ n: 1 }));
@@ -119,7 +119,7 @@ test("types: optional input stays optional, plain definitions widen the ids, typ
   const p = oc.connection("plain", "x");
   void (() => p.actions.whatever?.({ a: 1 }));
   // A typed connection where an untyped one is expected (event handlers, helpers).
-  const typed = openconnect<R>({ url: "https://oc.test", apiKey: "k" }).connection("tracker", "x");
+  const typed = connectd<R>({ url: "https://oc.test", apiKey: "k" }).connection("tracker", "x");
   const untyped: Connection = typed;
   const client: Client = oc as unknown as Client;
   expect([plain.id, typeof untyped.call, typeof client.connection]).toEqual(["plain", "function", "function"]);
@@ -169,7 +169,7 @@ test("typed events: webhook.<topic> from the declared topics, <action>.completed
   };
   const rt = runtime({ definitions: { board }, actions: { board: { sync, nightly, bad, unknown, broken } }, settings: async () => settings, extensions: [eventsExt(), webhooks()] });
   const w = memory(rt.program);
-  const oc = openconnect<B>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
+  const oc = connectd<B>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
   const ev = oc.events({ secret, now: w.now });
   deliver = (req) => ev.handle(req);
 

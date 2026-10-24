@@ -1,5 +1,5 @@
-import type { State, Transition } from "@openconnect/connections";
-import { type Delivery, type Json, type Kernel, type Queue, QueueError, type Summary } from "@openconnect/kernel";
+import type { State, Transition } from "@connectd/connections";
+import { type Delivery, type Json, type Kernel, type Queue, QueueError, type Summary } from "@connectd/kernel";
 import { Fail, type Hosted } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 import { sign } from "./signature.ts";

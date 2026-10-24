@@ -1,8 +1,8 @@
-import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
-import { runtime, sessions } from "@openconnect/runtime";
+import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
+import { runtime, sessions } from "@connectd/runtime";
 
 /**
  * Tests only: just enough of a browser window (DOM elements, window.open, location, postMessage,

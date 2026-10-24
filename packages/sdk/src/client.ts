@@ -1,17 +1,17 @@
-import type { Credential, Device, State } from "@openconnect/connections";
-import type { Json } from "@openconnect/kernel";
-import type { Fault, Page, Query, Row, SessionArgs } from "@openconnect/runtime";
+import type { Credential, Device, State } from "@connectd/connections";
+import type { Json } from "@connectd/kernel";
+import type { Fault, Page, Query, Row, SessionArgs } from "@connectd/runtime";
 import { events, type EventsOptions } from "./events.ts";
 import type { ActionsOf, EntryOf, IdentityOf, Known, Registry, SubscriptionOf } from "./registry.ts";
 
-// ponytail: depends on @openconnect/runtime only for types (erased) and signature.ts (no imports);
+// ponytail: depends on @connectd/runtime only for types (erased) and signature.ts (no imports);
 // split signature.ts into its own package before publishing, so installing the SDK doesn't pull the runtime.
 
 /**
  * The server SDK: a thin typed client over the runtime's HTTP API (#22, #23, #26). Fetch only, no
  * Node APIs, so it runs on Node 18+, Bun, Workers and Deno.
  *
- *   const oc = openconnect({ url: "https://connect.example.com", apiKey });
+ *   const oc = connectd({ url: "https://connect.example.com", apiKey });
  *   const gh = oc.connection("github", user.id);
  *   const { url } = await gh.connect();
  *   const res = await gh.fetch("/user", { retry: true });
@@ -44,7 +44,7 @@ export type Retry = {
 export type ProxyInit = RequestInit & { retry?: boolean | Retry };
 
 /** An error the runtime answered (`{ error: Fault }`), or a non-JSON failure in front of it (`code: "http_error"`). */
-export class OpenConnectError extends Error {
+export class ConnectdError extends Error {
   readonly code: string;
   readonly status: number;
   /** `not_active`: the connection's state, and why. */
@@ -54,7 +54,7 @@ export class OpenConnectError extends Error {
   readonly retryAfterMs?: number;
   constructor(f: Fault & { retryAfterMs?: number }) {
     super(f.message);
-    this.name = "OpenConnectError";
+    this.name = "ConnectdError";
     this.code = f.code;
     this.status = f.status;
     if (f.state !== undefined) this.state = f.state;
@@ -63,13 +63,13 @@ export class OpenConnectError extends Error {
   }
 }
 
-async function failure(res: Response): Promise<OpenConnectError> {
+async function failure(res: Response): Promise<ConnectdError> {
   const text = await res.text();
   try {
     const e = (JSON.parse(text) as { error?: Fault }).error;
-    if (e && typeof e.code === "string") return new OpenConnectError({ ...e, status: res.status });
+    if (e && typeof e.code === "string") return new ConnectdError({ ...e, status: res.status });
   } catch {}
-  return new OpenConnectError({ code: "http_error", status: res.status, message: text.slice(0, 200) || res.statusText });
+  return new ConnectdError({ code: "http_error", status: res.status, message: text.slice(0, 200) || res.statusText });
 }
 
 /** The names the actions proxy answers: an action id that isn't reserved (`then`, `toJSON`, Object.prototype's). */
@@ -81,7 +81,7 @@ const sleeper = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * `R`: the project's registry (default: the generated one, `Registry`), so `connection("github", id)`
  * takes only known ids and its actions, status and subscriptions are typed.
  */
-export function openconnect<R = Registry>(o: Options) {
+export function connectd<R = Registry>(o: Options) {
   const base = o.url.replace(/\/+$/, "");
   // Wrapped: workerd's fetch throws "Illegal invocation" when called as a method.
   const f = o.fetch ?? ((input: string, init: RequestInit) => fetch(input, init));
@@ -115,14 +115,14 @@ export function openconnect<R = Registry>(o: Options) {
    */
   function inside(prefix: string, path: string): string {
     const u = new URL(base + prefix + path);
-    if (!u.pathname.startsWith(new URL(base + prefix).pathname)) throw new OpenConnectError({ code: "bad_request", status: 400, message: `path leaves ${prefix}: ${path}` });
+    if (!u.pathname.startsWith(new URL(base + prefix).pathname)) throw new ConnectdError({ code: "bad_request", status: 400, message: `path leaves ${prefix}: ${path}` });
     return u.href;
   }
 
   function connection<K extends Known<R>>(def: K, id: string) {
     type E = EntryOf<R, K>;
     // encodeURIComponent keeps dots, and a `.` or `..` segment would collapse the path.
-    for (const s of [def, id]) if (s === "" || s === "." || s === "..") throw new OpenConnectError({ code: "bad_request", status: 400, message: `bad definition or id: "${s}"` });
+    for (const s of [def, id]) if (s === "" || s === "." || s === "..") throw new ConnectdError({ code: "bad_request", status: 400, message: `bad definition or id: "${s}"` });
     const at = `${encodeURIComponent(def)}/${encodeURIComponent(id)}`;
     const call = async <T = Json>(method: string, args: Json = null) => {
       inside(`/connections/${at}/`, encodeURIComponent(method));
@@ -132,9 +132,9 @@ export function openconnect<R = Registry>(o: Options) {
     /**
      * `fetch` through the proxy (#23): `path` (and query) is relative to the definition's base URL,
      * passed on as written, but it can't climb out of `/proxy/:def/:id/` (`..` throws `bad_request`).
-     * Answers the provider's response, whatever its status; throws `OpenConnectError` only for what
+     * Answers the provider's response, whatever its status; throws `ConnectdError` only for what
      * the runtime refused (not_active, rate_limited, upstream_timeout...), which it marks with
-     * `openconnect-error`. A failure in front of the runtime (a gateway's 502) has no marker, so it
+     * `connectd-error`. A failure in front of the runtime (a gateway's 502) has no marker, so it
      * comes back as a response, like the provider's.
      */
     async function proxied(path: string, init: ProxyInit = {}): Promise<Response> {
@@ -149,7 +149,7 @@ export function openconnect<R = Registry>(o: Options) {
       let waited = 0;
       for (let attempt = 0; ; attempt++) {
         const res = await f(url, req);
-        if (!res.headers.has("openconnect-error")) return res;
+        if (!res.headers.has("connectd-error")) return res;
         const e = await failure(res);
         // Our 429 means the provider was never called, so a retry is safe for any method.
         // ponytail: a stream body can't be sent twice; buffer it yourself to retry one.
@@ -167,7 +167,7 @@ export function openconnect<R = Registry>(o: Options) {
       /**
        * Start (or redo) authorization. `url` is where to send the user; null if it finished inline
        * (API keys: pass the fields as `args`). For a user in a browser, prefer `session()` and
-       * `@openconnect/connect`: this URL isn't tied to the browser that opens it, so anyone who
+       * `@connectd/connect`: this URL isn't tied to the browser that opens it, so anyone who
        * gets it (a user of your app sending it to someone else) can have another person's provider
        * account land on this connection (login CSRF). Sessions bind the flow to the browser and the
        * result to your page. A device flow (#56) also returns `device`: show its `userCode` and
@@ -178,7 +178,7 @@ export function openconnect<R = Registry>(o: Options) {
       token: () => call<Credential>("token"),
       revoke: (reason?: string) => call<Status<IdentityOf<E>>>("revoke", reason === undefined ? null : { reason }),
       /**
-       * A short-lived token for the browser (#29, `@openconnect/connect`): it can start this
+       * A short-lived token for the browser (#29, `@connectd/connect`): it can start this
        * connection's authorization from `origin` (or `returnUrl`'s), and nothing else. Both must be in
        * the runtime's `settings.sessions.origins`; `returnUrl` is where a redirect-mode flow ends.
        */
@@ -228,6 +228,6 @@ export function openconnect<R = Registry>(o: Options) {
   return client;
 }
 
-export type Client<R = Registry> = ReturnType<typeof openconnect<R>>;
+export type Client<R = Registry> = ReturnType<typeof connectd<R>>;
 /** A connection client, untyped (events hand these out: any definition). */
-export type Connection = ReturnType<ReturnType<typeof openconnect<{}>>["connection"]>;
+export type Connection = ReturnType<ReturnType<typeof connectd<{}>>["connection"]>;

@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection, oauth2, rateHeaders } from "@openconnect/connections";
-import { fakeOAuth } from "@openconnect/connections/testing";
-import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
-import { memory } from "@openconnect/kernel/memory";
+import { apiKey, defineConnection, oauth2, rateHeaders } from "@connectd/connections";
+import { fakeOAuth } from "@connectd/connections/testing";
+import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
+import { memory } from "@connectd/kernel/memory";
 import { proxy, runtime } from "./index.ts";
 
 const TOKEN = "https://example.test/token";
@@ -97,7 +97,7 @@ test("rate: connection permits run out → 429 with Retry-After, upstream never 
   const denied = await send("GET", "/proxy/example/c1/x");
   expect(denied.status).toBe(429);
   expect(denied.headers.get("retry-after")).toBe("30");
-  expect(denied.headers.get("openconnect-error")).toBe("rate_limited"); // ours, not the provider's
+  expect(denied.headers.get("connectd-error")).toBe("rate_limited"); // ours, not the provider's
   expect(((await denied.json()) as any).error).toMatchObject({ code: "rate_limited", retryAfterMs: 30_000 });
   expect(seen.length - before).toBe(2);
 
@@ -109,11 +109,11 @@ test("rate: connection permits run out → 429 with Retry-After, upstream never 
 test("response headers sync the rate state: Retry-After and remaining=0 block the next request", async () => {
   const { w, send, connect, upstream } = await setup();
   await connect("c1");
-  upstream(() => new Response("slow down", { status: 429, headers: { "retry-after": "120", "openconnect-error": "forged" } }));
+  upstream(() => new Response("slow down", { status: 429, headers: { "retry-after": "120", "connectd-error": "forged" } }));
   const r = await send("GET", "/proxy/example/c1/x");
   expect(r.status).toBe(429); // the provider's own 429 passes through as is
   expect(await r.text()).toBe("slow down");
-  expect(r.headers.has("openconnect-error")).toBe(false); // only the runtime's own errors carry it
+  expect(r.headers.has("connectd-error")).toBe(false); // only the runtime's own errors carry it
   const blocked = await send("GET", "/proxy/example/c1/x");
   expect(blocked.status).toBe(429);
   expect(Number(blocked.headers.get("retry-after"))).toBeGreaterThanOrEqual(120);

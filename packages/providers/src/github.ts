@@ -1,9 +1,9 @@
-import { connection, type Credential, hmacHex, type OAuth2Config, rateHeaders, safeEqual, type StandardSchemaV1 } from "@openconnect/connections";
-import type { Json } from "@openconnect/kernel";
+import { connection, type Credential, hmacHex, type OAuth2Config, rateHeaders, safeEqual, type StandardSchemaV1 } from "@connectd/connections";
+import type { Json } from "@connectd/kernel";
 
 const API = "https://api.github.com";
 // The REST API rejects requests without a User-Agent.
-const headers = (auth: string) => ({ authorization: auth, accept: "application/vnd.github+json", "user-agent": "openconnect" });
+const headers = (auth: string) => ({ authorization: auth, accept: "application/vnd.github+json", "user-agent": "connectd" });
 
 /** A repo hook subscription: `owner/name`, and the events (default `["push"]`). */
 export type RepoHook = { repo: string; events?: string[] };
@@ -12,7 +12,7 @@ export type RepoHook = { repo: string; events?: string[] };
 const repoHook: StandardSchemaV1<RepoHook> = {
   "~standard": {
     version: 1,
-    vendor: "openconnect",
+    vendor: "connectd",
     validate(v) {
       const o = (typeof v === "object" && v !== null ? v : {}) as { repo?: unknown; events?: unknown };
       // It goes into API URLs with the user's token: no `.` or `..` segments.
@@ -50,7 +50,7 @@ export const github = connection("github")
         if (!res.ok && res.status !== 404) throw new Error(`github revoke ${res.status}`);
       }),
   )
-  .api({ baseUrl: API, headers: { "user-agent": "openconnect" } })
+  .api({ baseUrl: API, headers: { "user-agent": "connectd" } })
   .limit({ connection: { count: 5000, periodMs: 3_600_000 } })
   .observe((res, now) => rateHeaders(res, now, { remaining: "x-ratelimit-remaining", reset: "x-ratelimit-reset" }))
   .identity(async ({ api }) => {

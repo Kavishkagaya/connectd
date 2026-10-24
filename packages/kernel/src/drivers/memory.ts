@@ -11,7 +11,7 @@ export type MemoryOptions = {
   /** Start of the fake clock. */
   now?: number;
   /**
-   * A real clock instead (`Date.now`, for `openconnect dev`): `now()` follows it and timers fire on
+   * A real clock instead (`Date.now`, for `connectd dev`): `now()` follows it and timers fire on
    * their own when due. `advance(ms)` still works on top, as a skew.
    */
   clock?: () => number;

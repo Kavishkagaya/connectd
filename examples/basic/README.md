@@ -5,29 +5,29 @@ A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`con
 ## Dev
 
 ```sh
-cp .env.example .env      # one file for your app and openconnect
-bun run dev               # openconnect dev; only the names the connections read reach the runtime
+cp .env.example .env      # one file for your app and connectd
+bun run dev               # connectd dev; only the names the connections read reach the runtime
 ```
 
 ## Deploy by hand
 
 ```sh
 cp .env.production.example .env.production
-bun run deploy            # openconnect deploy: prints the secrets it sends (names only), then your app's env:
-                          #   OPENCONNECT_URL=https://basic.<you>.workers.dev
-                          #   OPENCONNECT_API_KEY=oc_...   (shown once)
+bun run deploy            # connectd deploy: prints the secrets it sends (names only), then your app's env:
+                          #   CONNECTD_URL=https://basic.<you>.workers.dev
+                          #   CONNECTD_API_KEY=oc_...   (shown once)
 ```
 
 ## Deploy from CI (GitHub Actions)
 
 In CI, deploy reads the shell environment (your CI secrets), and the API key comes from a secret too:
 it never generates or prints one there. Make the two values that are yours once, with
-`bunx openconnect keys`, and put them in the repository's secrets and in your app's host, next to
+`bunx connectd keys`, and put them in the repository's secrets and in your app's host, next to
 the provider credentials and a Cloudflare API token.
 
 ```yaml
-# .github/workflows/openconnect.yml
-name: openconnect
+# .github/workflows/connectd.yml
+name: connectd
 on:
   push:
     branches: [main]
@@ -38,16 +38,16 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install
-      - run: bunx openconnect deploy --url ${{ vars.OPENCONNECT_URL }}
+      - run: bunx connectd deploy --url ${{ vars.CONNECTD_URL }}
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          OPENCONNECT_API_KEY: ${{ secrets.OPENCONNECT_API_KEY }}
-          OPENCONNECT_EVENTS_SECRET: ${{ secrets.OPENCONNECT_EVENTS_SECRET }}
+          CONNECTD_API_KEY: ${{ secrets.CONNECTD_API_KEY }}
+          CONNECTD_EVENTS_SECRET: ${{ secrets.CONNECTD_EVENTS_SECRET }}
           GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
           GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
 ```
 
-`--url` (or `cloudflare({ url })` in `oc.config.ts`) is needed because CI has no `.openconnect/deploy/state.json`
+`--url` (or `cloudflare({ url })` in `oc.config.ts`) is needed because CI has no `.connectd/deploy/state.json`
 from the first deploy. GitHub secret names can't start with `GITHUB_`, hence the `OAUTH_` prefix on
 the secrets: the env names the connections read stay `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.

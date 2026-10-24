@@ -3,7 +3,7 @@
  * instead. Typed structurally, so no Node types or imports: this file runs anywhere, it's only
  * useful on Node.
  *
- *   app.post("/openconnect/events", toNode(ev.handle)); // before express.json(), or after express.raw()
+ *   app.post("/connectd/events", toNode(ev.handle)); // before express.json(), or after express.raw()
  */
 
 type NodeRequest = AsyncIterable<Uint8Array> & {
@@ -22,7 +22,7 @@ export function toNode(handle: (req: Request) => Promise<Response>) {
     if (typeof req.body === "string" || req.body instanceof Uint8Array) body = req.body as RequestInit["body"];
     else if (req.body && typeof req.body === "object" && Object.keys(req.body).length) {
       // A JSON parser already ran: the raw bytes the signature covers are gone. Not a 2xx, so the event waits for the fix.
-      console.error("openconnect: the body was already parsed; mount this before express.json() or use express.raw()");
+      console.error("connectd: the body was already parsed; mount this before express.json() or use express.raw()");
       res.statusCode = 500;
       return void res.end();
     } else {
@@ -46,7 +46,7 @@ export function toNode(handle: (req: Request) => Promise<Response>) {
     try {
       await run(req, res);
     } catch (e) {
-      console.error("openconnect: node adapter", e);
+      console.error("connectd: node adapter", e);
       res.statusCode = 500;
       res.end();
     }

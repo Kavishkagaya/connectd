@@ -1,1 +1,1 @@
-export { google as default } from "@openconnect/providers";
+export { google as default } from "@connectd/providers";

@@ -1,6 +1,6 @@
-import { connection } from "@openconnect/connections";
+import { connection } from "@connectd/connections";
 
-/** A connection of your own, next to the bundled providers: an API key, proxied as a header. Edit it while `openconnect dev` runs. */
+/** A connection of your own, next to the bundled providers: an API key, proxied as a header. Edit it while `connectd dev` runs. */
 export default connection()
   .config()
   .auth((f) => f.apiKey("key"))

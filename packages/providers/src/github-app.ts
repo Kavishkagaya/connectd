@@ -11,11 +11,11 @@ import {
   signingKey,
   signJwt,
   type TokenResponse,
-} from "@openconnect/connections";
-import type { Json } from "@openconnect/kernel";
+} from "@connectd/connections";
+import type { Json } from "@connectd/kernel";
 
 const API = "https://api.github.com";
-const headers = (auth: string) => ({ authorization: auth, accept: "application/vnd.github+json", "user-agent": "openconnect" });
+const headers = (auth: string) => ({ authorization: auth, accept: "application/vnd.github+json", "user-agent": "connectd" });
 
 /**
  * `appId`, `slug` (the app's URL name) and `privateKey` (the PEM GitHub generates) from the app's
@@ -132,7 +132,7 @@ export const githubApp = connection("github-app")
       refresh: (ctx, cred) => mint(ctx, (cred.data as Data).installationId),
     }),
   )
-  .api({ baseUrl: API, headers: { "user-agent": "openconnect" } })
+  .api({ baseUrl: API, headers: { "user-agent": "connectd" } })
   .limit({ connection: { count: 5000, periodMs: 3_600_000 } })
   .observe((res, now) => rateHeaders(res, now, { remaining: "x-ratelimit-remaining", reset: "x-ratelimit-reset" }))
   /** App webhooks: one URL for the app, signed with its webhook secret, routed by installation id. */

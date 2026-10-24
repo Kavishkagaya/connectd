@@ -1,5 +1,5 @@
-import { type Credential, NotActive } from "@openconnect/connections";
-import { type Json, randomId, routeTicket, sign, verify } from "@openconnect/kernel";
+import { type Credential, NotActive } from "@connectd/connections";
+import { type Json, randomId, routeTicket, sign, verify } from "@connectd/kernel";
 import { Fail, type Fault, fault, type Hosted, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { type Api, ERROR_HEADER, type Route } from "./http.ts";
 import type { Extension } from "./runtime.ts";
@@ -21,7 +21,7 @@ import type { Extension } from "./runtime.ts";
  * no status beyond the state.
  */
 
-const TYP = "openconnect.session";
+const TYP = "connectd.session";
 const TTL_MS = 10 * 60_000;
 const MAX_TTL_MS = 60 * 60_000;
 const TICKET_TTL_MS = 60_000;
@@ -47,7 +47,7 @@ export type SessionInfo = {
 
 /**
  * How an authorization ends in the browser: posted to the opener, or on the return URL as
- * `?openconnect=authorized&completion=` / `?openconnect=error&code=`. `authorized` still needs
+ * `?connectd=authorized&completion=` / `?connectd=error&code=`. `authorized` still needs
  * `POST /session/complete`; `connected` is a flow that finished inline.
  */
 export type Outcome = { status: "authorized"; completion: string } | { status: "connected" } | { status: "error"; code: string; message: string };
@@ -143,7 +143,7 @@ const html = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`
 function returnTo(s: Settings, t: Target, o: Outcome): string | null {
   if (!t.returnUrl || !allowed(s, originOf(t.returnUrl))) return null;
   const u = new URL(t.returnUrl);
-  const f = new URLSearchParams({ openconnect: o.status, definition: t.definition, id: t.id });
+  const f = new URLSearchParams({ connectd: o.status, definition: t.definition, id: t.id });
   if (o.status === "authorized") f.set("completion", o.completion);
   if (o.status === "error") f.set("code", o.code);
   // Not secret: names the BroadcastChannel a popup cut off by COOP reports on (`resume()`).
@@ -166,10 +166,10 @@ export function complete(s: Settings, t: Target, o: Outcome): Response {
     const f = { code: "forbidden", status: 403, message: "the session's origin or return URL is no longer allowed" };
     return Response.json({ error: f }, { status: f.status, headers: { ...headers, [ERROR_HEADER]: f.code } });
   }
-  const message = { type: "openconnect", nonce: t.nonce, definition: t.definition, id: t.id, ...o };
+  const message = { type: "connectd", nonce: t.nonce, definition: t.definition, id: t.id, ...o };
   const nonce = randomId();
   const text = o.status === "error" ? `Could not connect (${o.code}). You can close this window.` : "Done. You can close this window.";
-  const body = `<!doctype html><meta charset="utf-8"><title>openconnect</title><p>${html(text)}</p>
+  const body = `<!doctype html><meta charset="utf-8"><title>connectd</title><p>${html(text)}</p>
 <script nonce="${nonce}">if (window.opener) { window.opener.postMessage(${script(message)}, ${script(t.origin)}); window.close(); } else if (${script(back)}) location.replace(${script(back)});</script>`;
   return new Response(body, {
     headers: {
