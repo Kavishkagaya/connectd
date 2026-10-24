@@ -13,6 +13,7 @@
       "name": "openconnect-example-basic",
       "dependencies": {
         "@openconnect/cli": "workspace:*",
+        "@openconnect/cloudflare": "workspace:*",
         "@openconnect/connections": "workspace:*",
         "@openconnect/kernel": "workspace:*",
         "@openconnect/providers": "workspace:*",
@@ -30,17 +31,32 @@
         "@openconnect/dashboard": "workspace:*",
       },
       "devDependencies": {
-        "@cloudflare/vitest-plugin": "1.4.0",
-        "@cloudflare/workers-types": "^5.20261011.1",
+        "@openconnect/cloudflare": "workspace:*",
         "@openconnect/connections": "workspace:*",
         "@openconnect/kernel": "workspace:*",
         "@openconnect/runtime": "workspace:*",
         "@openconnect/sdk": "workspace:*",
-        "vitest": "5.0.3",
       },
       "peerDependencies": {
         "@openconnect/connections": "workspace:*",
         "@openconnect/kernel": "workspace:*",
+        "@openconnect/runtime": "workspace:*",
+      },
+    },
+    "packages/cloudflare": {
+      "name": "@openconnect/cloudflare",
+      "version": "0.0.0",
+      "devDependencies": {
+        "@cloudflare/vitest-plugin": "1.4.0",
+        "@cloudflare/workers-types": "^5.20261011.1",
+        "@openconnect/cli": "workspace:*",
+        "@openconnect/connections": "workspace:*",
+        "@openconnect/kernel": "workspace:*",
+        "@openconnect/runtime": "workspace:*",
+        "vitest": "5.0.3",
+      },
+      "peerDependencies": {
+        "@openconnect/cli": "workspace:*",
         "@openconnect/runtime": "workspace:*",
       },
     },
@@ -248,6 +264,8 @@
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.31", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.1.0", "@jridgewell/sourcemap-codec": "^1.4.14" } }, "sha512-zzNR+SdQSDJzc8joaeP8QQoCQr8NuYx2dIIytl1QeBEZHJ9uW6hebsrYgbz8hJwUQao3TWCMtmfV8Nu1twOLAw=="],
 
     "@openconnect/cli": ["@openconnect/cli@workspace:packages/cli"],
+
+    "@openconnect/cloudflare": ["@openconnect/cloudflare@workspace:packages/cloudflare"],
 
     "@openconnect/connect": ["@openconnect/connect@workspace:packages/connect"],
 

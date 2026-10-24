@@ -1,5 +1,6 @@
 import { apiKey, connection, defineConnection, oauth2 } from "@openconnect/connections";
-import { defineConfig } from "../../src/project.ts";
+import { defineConfig } from "@openconnect/cli";
+import { cloudflare } from "../../src/index.ts";
 
 // The project the workerd test deploys: its generated Worker entry runs the real runtime in workerd.
 export default defineConfig((env) => ({
@@ -12,5 +13,5 @@ export default defineConfig((env) => ({
       .auth((f) => f.oauth2({ authorizeUrl: "https://provider.test/authorize", tokenUrl: "https://provider.test/token" })),
   ],
   config: { example: { clientId: env.EXAMPLE_CLIENT_ID ?? "", clientSecret: env.EXAMPLE_CLIENT_SECRET } },
-  deploy: { name: "fixture" },
+  target: cloudflare({ name: "fixture" }),
 }));

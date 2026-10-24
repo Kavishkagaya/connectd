@@ -25,7 +25,7 @@ openconnect dev
 
 openconnect deploy
   --env-file <f>   the production env (default .env.production; in CI, CI=true, the shell's); only names the project reads are pushed
-  --name <name>    Worker name (default: deploy.name in the config, else the directory's name)
+  --name <name>    Worker name (default: the target's name, cloudflare({ name }), else the directory's name)
   --url <url>      public https origin on a custom domain (default: the workers.dev URL)
   --rotate <list>  comma-separated: key (adds OPENCONNECT_KEY_V<n+1>), api-key, state, sessions
   --new-keys       generate fresh runtime keys although the index database exists without its Worker

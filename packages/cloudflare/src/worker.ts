@@ -5,7 +5,7 @@ import { env } from "cloudflare:workers";
 import { runtime } from "@openconnect/runtime";
 import { cloudflare, d1Index } from "@openconnect/runtime/cloudflare";
 import config from "openconnect:config";
-import { type Env, options } from "./project.ts";
+import { type Env, options } from "@openconnect/cli";
 
 // Module scope: `options` resolves the config against the Worker's vars and secrets (definitions are
 // needed up front); keys are imported lazily on the first request, since Workers can't do crypto here.

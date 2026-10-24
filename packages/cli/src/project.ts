@@ -2,6 +2,7 @@ import { type AnyAction, type AnyConnection, definitionOf, envConfig, isAction, 
 import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
+import type { Target } from "./target.ts";
 import {
   type AnyDefinition,
   directory,
@@ -51,11 +52,8 @@ export type Project = {
   extensions?: Extension[];
   /** The dashboard at `/dashboard` (#32), signed in with the API key. Default true; false leaves it out. */
   dashboard?: boolean;
-  /**
-   * `openconnect deploy` (#31): the Worker's name (default: the project directory's), and its public
-   * URL when it isn't the workers.dev one (a custom domain, served at its root). Flags override both.
-   */
-  deploy?: { name?: string; url?: string };
+  /** Where `openconnect deploy` puts it (#54): `cloudflare({ name, url })` from @openconnect/cloudflare. dev ignores it. */
+  target?: Target;
 };
 
 export type Env = Record<string, string | undefined>;
@@ -65,6 +63,7 @@ export type Config = Project | ((env: Env) => Project);
 export const defineConfig = <T extends Config>(c: T) => c;
 
 export { ENV, generateKeys } from "./keys.ts";
+export type { Adapter, DeployContext, Deployed, Target } from "./target.ts";
 
 /** One connection folder, as the generated entry passes it: the folder's name and its files' default exports. */
 export type Folder = { id: string; file: string; connection: unknown; actions: Record<string, unknown> };
@@ -119,6 +118,9 @@ export function resolve(config: Config, env: Env): Resolved {
   const raw = typeof config === "function" ? config(seen) : config;
   if (!raw || typeof raw !== "object") throw new Error("the config must export defineConfig({ ... })");
   if (raw.definitions !== undefined && !Array.isArray(raw.definitions)) throw new Error("definitions must be a list");
+  if ("deploy" in raw) throw new Error("the config's deploy: { name, url } is gone: say where it deploys with target: cloudflare({ name, url }) from @openconnect/cloudflare");
+  if (raw.target !== undefined && (typeof raw.target !== "object" || raw.target === null || typeof raw.target.adapter !== "string"))
+    throw new Error("target must be a target: target: cloudflare({ name }) from @openconnect/cloudflare (did you forget the call?)");
   const p = { ...raw, definitions: raw.definitions ?? [] };
   const registry: Record<string, AnyDefinition> = {};
   const own: Record<string, unknown> = {};

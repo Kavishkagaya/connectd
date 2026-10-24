@@ -48,6 +48,6 @@ jobs:
           GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
 ```
 
-`--url` (or `deploy.url` in `oc.config.ts`) is needed because CI has no `.openconnect/deploy/state.json`
+`--url` (or `cloudflare({ url })` in `oc.config.ts`) is needed because CI has no `.openconnect/deploy/state.json`
 from the first deploy. GitHub secret names can't start with `GITHUB_`, hence the `OAUTH_` prefix on
 the secrets: the env names the connections read stay `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
