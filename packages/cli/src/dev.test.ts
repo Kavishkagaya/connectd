@@ -377,6 +377,15 @@ test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-
   let seen: Headers | undefined;
   const s = await serve(0, async (req) => {
     seen = req.headers;
+    if (new URL(req.url).pathname === "/broken") {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("part"));
+          setTimeout(() => c.error(new Error("upstream went away")), 50);
+        },
+      });
+      return new Response(body);
+    }
     if (new URL(req.url).pathname === "/stream") {
       let i = 0;
       const body = new ReadableStream<Uint8Array>({
@@ -408,6 +417,9 @@ test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-
     expect(seen?.has("transfer-encoding")).toBe(false);
     expect(seen?.has("connection")).toBe(false);
     expect(up.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"]);
+    // A body that fails partway ends the client's response with an error instead of leaving it hanging.
+    const broken = await fetch(`http://localhost:${s.port}/broken`);
+    expect(await Promise.race([broken.text().then(() => "ended", () => "failed"), new Promise((r) => setTimeout(() => r("hung"), 2000))])).toBe("failed");
     const head = await fetch(`http://localhost:${s.port}/`, { method: "HEAD" });
     expect(head.status).toBe(200);
   } finally {

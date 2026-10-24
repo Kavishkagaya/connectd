@@ -1,9 +1,10 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import type { AddressInfo } from "node:net";
-import { join, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@connectd/kernel";
 import { memory, type Snapshot } from "@connectd/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@connectd/runtime";
@@ -70,6 +71,7 @@ export function swappable() {
  * A `(Request) => Response` handler on node:http (Node and Bun both have it), on localhost. `port` 0
  * picks a free one.
  */
+const IGNORED = /(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/;
 const HOP = ["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-connection"];
 
 export async function serve(port: number, handle: (req: Request) => Promise<Response>) {
@@ -91,9 +93,8 @@ export async function serve(port: number, handle: (req: Request) => Promise<Resp
     else res.writeHead(out.status, head);
     if (!out.body || method === "HEAD") return void res.end();
     // Streamed, as the proxy streams the provider's response (SSE, downloads).
-    const stream = Readable.fromWeb(out.body as NodeReadableStream);
-    res.once("close", () => stream.destroy());
-    await new Promise<void>((ok) => stream.once("end", ok).once("error", ok).once("close", ok).pipe(res));
+    // pipeline: an upstream that fails partway resets the client's connection, a client that goes away stops the upstream.
+    await pipeline(Readable.fromWeb(out.body as NodeReadableStream), res).catch(() => {});
   };
   const server = createServer((req, res) =>
     run(req, res).catch((e) => {
@@ -162,10 +163,13 @@ export async function dev(o: DevOptions) {
 
   let n = 0;
   let loaded: Loaded | undefined;
+  /** What the last good load read: its files' directories, and the connection folders' parent (new folders). */
+  let watched: { folders: string | null; dirs: Set<string> } | undefined;
   /** Build, import and validate; swap only if all of it worked. */
   async function load(): Promise<Loaded> {
     const env = loadEnv(dir, keys.keys, o.env);
-    const { config } = await loadProject(dir, entry, build, ++n, env);
+    const { config, folders, inputs } = await loadProject(dir, entry, build, ++n, env);
+    watched = { folders, dirs: new Set([dir, ...[...inputs].filter((f) => !IGNORED.test(f)).map(dirname)]) };
     const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
     // options() keeps only what the project reads, as deployed: a connection that works here works there.
@@ -214,28 +218,39 @@ export async function dev(o: DevOptions) {
     log(`config failed to load (fix it and save; serving 503 until then):\n${e instanceof Error ? e.message : String(e)}`);
   }
 
-  let watcher: FSWatcher | undefined;
+  let watchers: FSWatcher[] = [];
   if (o.watch !== false) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let running = Promise.resolve();
-    // Armed again after each change: on Linux, Node's recursive watcher loses a file that an editor
-    // saved by renaming a new one over it (vim, sed -i), and then never reports it again.
+    const changed = (_: unknown, f: string | Buffer | null) => {
+      if (IGNORED.test(String(f ?? ""))) return;
+      clearTimeout(timer);
+      timer = setTimeout(
+        () =>
+          (running = running.then(async () => {
+            if (stopping) return;
+            await reload();
+            arm();
+          })),
+        50,
+      );
+    };
+    // The directories of the files the config bundles (not node_modules: a recursive watch walks
+    // the whole tree, on every arm), and the connection folders recursively, armed again after each
+    // reload: the files may have changed, and on Linux, Node's recursive watcher loses a file that an
+    // editor saved by renaming a new one over it (vim, sed -i). Until a load works, the project.
     const arm = () => {
-      watcher = watch(dir, { recursive: true }, (_, f) => {
-        const p = String(f ?? "");
-        if (/(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/.test(p)) return;
-        clearTimeout(timer);
-        timer = setTimeout(
-          () =>
-            (running = running.then(async () => {
-              if (stopping) return;
-              watcher?.close();
-              arm();
-              await reload();
-            })),
-          50,
-        );
-      });
+      for (const x of watchers) x.close();
+      const on = (p: string, recursive: boolean) => {
+        try {
+          return [watch(p, { recursive }, changed)];
+        } catch {
+          return []; // gone since (a deleted folder)
+        }
+      };
+      watchers = watched
+        ? [...[...watched.dirs].flatMap((d) => on(d, false)), ...(watched.folders && existsSync(watched.folders) ? on(watched.folders, true) : [])]
+        : on(dir, true);
     };
     arm();
   }
@@ -255,7 +270,7 @@ export async function dev(o: DevOptions) {
     /** Idempotent (SIGINT twice, a test's cleanup after its own stop). */
     stop: () =>
       (stopping ??= (async () => {
-        watcher?.close();
+        for (const x of watchers) x.close();
         clearInterval(saver);
         await server.stop();
         await w?.stop();
