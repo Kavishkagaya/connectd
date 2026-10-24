@@ -1,7 +1,0 @@
-{
-  // The Worker entry template, the project module it imports, and the workerd test: Workers types instead of Bun's.
-  "extends": "../../tsconfig.json",
-  "compilerOptions": { "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"] },
-  "include": ["src/worker.ts", "src/config.d.ts", "src/project.ts", "test"],
-  "exclude": ["test/fixture/.openconnect"]
-}

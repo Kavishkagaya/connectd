@@ -7,7 +7,7 @@
   ],
   "scripts": {
     "test": "bun run --filter '*' test",
-    "typecheck": "tsc && tsc -p packages/kernel/tsconfig.workers.json && tsc -p packages/runtime/tsconfig.workers.json && tsc -p packages/cli/tsconfig.workers.json && tsc -p packages/sdk/tsconfig.web.json && tsc -p packages/connect/tsconfig.json && tsc -p packages/connect/tsconfig.web.json && tsc -p packages/dashboard/tsconfig.json && tsc -p packages/dashboard/tsconfig.web.json"
+    "typecheck": "tsc && tsc -p packages/kernel/tsconfig.workers.json && tsc -p packages/runtime/tsconfig.workers.json && tsc -p packages/cloudflare/tsconfig.workers.json && tsc -p packages/sdk/tsconfig.web.json && tsc -p packages/connect/tsconfig.json && tsc -p packages/connect/tsconfig.web.json && tsc -p packages/dashboard/tsconfig.json && tsc -p packages/dashboard/tsconfig.web.json"
   },
   "devDependencies": {
     "@types/bun": "^1.3.0",

@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@openconnect/cli": "workspace:*",
+    "@openconnect/cloudflare": "workspace:*",
     "@openconnect/connections": "workspace:*",
     "@openconnect/kernel": "workspace:*",
     "@openconnect/providers": "workspace:*",

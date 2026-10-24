@@ -1,0 +1,26 @@
+{
+  "name": "@openconnect/cloudflare",
+  "version": "0.0.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./adapter": "./src/adapter.ts"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.0",
+    "@cloudflare/workers-types": "^5.20261011.1",
+    "@openconnect/cli": "workspace:*",
+    "@openconnect/connections": "workspace:*",
+    "@openconnect/kernel": "workspace:*",
+    "@openconnect/runtime": "workspace:*",
+    "vitest": "5.0.3"
+  },
+  "peerDependencies": {
+    "@openconnect/cli": "workspace:*",
+    "@openconnect/runtime": "workspace:*"
+  }
+}

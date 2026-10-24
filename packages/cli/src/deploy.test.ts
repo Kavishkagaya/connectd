@@ -4,8 +4,8 @@ import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "./cli.ts";
-import { deploy, type DeployOptions, NO_WRANGLER } from "./deploy.ts";
-import { generate } from "./generate.ts";
+import { type CloudflareDeployed, generate, NO_WRANGLER } from "@openconnect/cloudflare/adapter";
+import { deploy, type DeployOptions } from "./deploy.ts";
 import { loadProject } from "./load.ts";
 
 const TMP = join(import.meta.dir, "..", ".tmp-deploy");
@@ -48,8 +48,10 @@ else if (c1 === "deploy") {
 } else { console.error("fake wrangler: unknown command"); process.exit(1); }
 `;
 
-const CONFIG = (events = false) => `import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
+const CONFIG = (events = false, target = "cloudflare()") => `import { apiKey, defineConnection, oauth2 } from "@openconnect/connections";
+import { cloudflare } from "@openconnect/cloudflare";
 export default (env) => ({
+  target: ${target},
   definitions: [
     defineConnection({ id: "keyed", auth: apiKey(["key"]) }),
     defineConnection({ id: "gh", auth: oauth2({ authorizeUrl: "https://p.test/a", tokenUrl: "https://p.test/t" }) }),
@@ -59,9 +61,9 @@ export default (env) => ({
 });
 `;
 
-function setup(o: { events?: boolean; vars?: string } = {}) {
+function setup(o: { events?: boolean; vars?: string; target?: string } = {}) {
   const dir = mkdtempSync(join(TMP, "my app-"));
-  writeFileSync(join(dir, "oc.config.ts"), CONFIG(o.events));
+  writeFileSync(join(dir, "oc.config.ts"), CONFIG(o.events, o.target));
   writeFileSync(join(dir, ".prod.vars"), o.vars ?? "GH_ID=prod-id\nGH_SECRET=prod-secret\n");
   const bin = join(dir, "wrangler-fake");
   writeFileSync(bin, FAKE);
@@ -70,7 +72,7 @@ function setup(o: { events?: boolean; vars?: string } = {}) {
   const lines: string[] = [];
   let n = 0;
   const run = (x: Partial<DeployOptions> = {}) =>
-    deploy({
+    (deploy as (o: DeployOptions) => Promise<CloudflareDeployed>)({
       dir,
       load: (env) => loadProject(dir, join(dir, "oc.config.ts"), join(dir, ".openconnect", "build"), ++n, env),
       envFile: ".prod.vars",
@@ -362,4 +364,17 @@ test("one env: .env.production by default, only the names the project reads are 
 
 test("parseEnv: a double-quoted value may span lines (a PEM key)", () => {
   expect(parseEnv('K="-----BEGIN KEY-----\nabc\n-----END KEY-----"\nB=plain # c\nE="say \\"hi\\""')).toEqual({ K: "-----BEGIN KEY-----\nabc\n-----END KEY-----", B: "plain", E: 'say "hi"' });
+});
+
+test("targets: deploy needs one; the options give the name and URL, flags win; deploy: {} is the old shape", async () => {
+  await expect(setup({ target: "undefined" }).run()).rejects.toThrow("deploy needs a target in oc.config.ts");
+  const s = setup({ target: 'cloudflare({ name: "from-config", url: "https://oc.example.com" })' });
+  const r = await s.run({ dryRun: true });
+  expect(r.name).toBe("from-config");
+  expect(r.url).toBe("https://oc.example.com");
+  expect((await s.run({ dryRun: true, name: "from-flag" })).name).toBe("from-flag");
+  const bad = setup({ target: '{ adapter: "@openconnect/nope/adapter", options: {} }' });
+  await expect(bad.run()).rejects.toThrow("adapter @openconnect/nope/adapter isn't installed");
+  const old = setup({ target: "cloudflare(), deploy: { name: 'x' }" });
+  await expect(old.run()).rejects.toThrow("deploy: { name, url } is now the target's");
 });
