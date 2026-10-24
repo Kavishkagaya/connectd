@@ -105,6 +105,9 @@ export async function init(o: InitOptions): Promise<void> {
   } catch {}
   if (origin !== appUrl || !/^https?:/.test(appUrl)) throw new Error(`${from} must be an origin like http://localhost:3000 (${appUrl})`);
   const { keys, moved } = keysFor(dir, have);
+  // Ignore rules don't apply to a tracked file: keys written there would go out with the next commit.
+  if (Object.keys(keys).length && spawnSync("git", ["ls-files", "--error-unmatch", ".env"], { cwd: dir }).status === 0)
+    throw new Error("`.env` is tracked by git, so the keys would be committed: `git rm --cached .env`, commit, then connectd init again");
   const lines = [
     ...(have.APP_URL ? [] : ["# Your app's origin: oc.config.ts builds sessions.origins and events.url from it.", `APP_URL=${appUrl}`]),
     ...(have.CONNECTD_URL ? [] : ["# Where `connectd dev` runs: the app's client calls it.", `CONNECTD_URL=http://localhost:${port}`]),
@@ -116,7 +119,12 @@ export async function init(o: InitOptions): Promise<void> {
     if (before) appendFileSync(envFile, `${before.endsWith("\n") ? "" : "\n"}\n${lines.join("\n")}\n`);
     else writeFileSync(envFile, `${lines.join("\n")}\n`, { mode: 0o600 });
     // It holds keys now: owner only, even if others could read it before.
-    if (Object.keys(keys).length) chmodSync(envFile, 0o600);
+    if (Object.keys(keys).length)
+      try {
+        chmodSync(envFile, 0o600);
+      } catch {
+        log("  couldn't make .env owner only (chmod 600 .env): it holds keys now");
+      }
     wrote.push(".env");
   } else kept.push(".env");
 

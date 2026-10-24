@@ -674,6 +674,7 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
   - Next.js: the route goes in the root `app/` when the root has `app/` or `pages/` (Next ignores `src/app` then), else `src/app`.
   - `APP_URL` must be an origin (`new URL(x).origin === x`); the error names where it came from. `--app-url` or `--port` ignored because `.env` has the value already is said so, and the next steps print `.env`'s `CONNECTD_URL`.
   - dev warns when `CONNECTD_URL` isn't `http://localhost:<port>` (it can't listen there).
+  - A `.env` git tracks is refused before anything is written (ignore rules don't apply to a tracked file, so the keys would be committed); the error says `git rm --cached .env`.
 - Tests: a Next.js app (every file, the `.env` lines after the app's own, idempotent), another app (`--port`, `--app-url`, a new `.env`'s mode, the route left to mount), and kept values (set keys, versions, an existing config, dev.vars moved). Dev: no keys refused, with the dev.vars hint.
 
 **Agreed, not built yet** (the same discussion; each lands in its own PR and updates this entry):

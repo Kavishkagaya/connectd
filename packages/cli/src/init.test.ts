@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -122,4 +123,17 @@ test("init: .gitignore forms, an appended .env made owner only, empty values, Ne
   }
   for (const bad of ["http://user@evil.test", "http://localhost:3000/app", "ftp://x.test"]) await expect(init({ dir: app(), appUrl: bad, log: () => {} })).rejects.toThrow("--app-url must be an origin");
   await expect(init({ dir: app({ ".env": "APP_URL=http://localhost:3000/x\n" }), log: () => {} })).rejects.toThrow("APP_URL in .env must be an origin");
+});
+
+test("init refuses to put keys in a .env git tracks", async () => {
+  const dir = app({ ".env": "DATABASE_URL=x\n" });
+  const git = (...a: string[]) => spawnSync("git", a, { cwd: dir });
+  git("init", "-q");
+  git("add", ".env");
+  await expect(init({ dir, log: () => {} })).rejects.toThrow("`.env` is tracked by git");
+  expect(read(dir, ".env")).toBe("DATABASE_URL=x\n");
+  git("rm", "-q", "--cached", ".env");
+  await init({ dir, log: () => {} });
+  expect(parseEnv(read(dir, ".env")).CONNECTD_API_KEY).toStartWith("oc_");
+  expect(git("check-ignore", "-q", ".env").status).toBe(0);
 });
