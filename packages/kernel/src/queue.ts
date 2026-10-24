@@ -1,5 +1,5 @@
-import type { Driver, Json } from "../driver.ts";
-import { type Backoff, backoff } from "../primitives/schedule.ts";
+import type { Driver, Json } from "./driver.ts";
+import { type Backoff, backoff } from "./schedule.ts";
 import { type Cell, loop, type Value } from "./cell.ts";
 import { mutex } from "./sync.ts";
 
@@ -78,13 +78,18 @@ export class QueueError extends Error {
 export type Queue<M extends Json> = {
   /** Add messages to the end. To keep them after a cell's changes, relay that cell first. */
   push(msgs: M[]): Promise<void>;
-  /** Move a cell's outbox messages to the end, exactly once (a crash between the two steps repeats nothing). */
-  relay(c: Cell<Value, M>): Promise<void>;
+  /**
+   * Move a cell's outbox messages to the end, exactly once (a crash between the two steps repeats
+   * nothing). Takes anything with a cell's `name` and `outbox`, so a caller can reshape the messages.
+   */
+  relay(c: Pick<Cell<Value, M>, "name" | "outbox">): Promise<void>;
   status(): Promise<QueueStatus>;
   /** Deliver now: skip a parked head's wait (its attempt count stays). */
   flush(): Promise<QueueStatus>;
   /** Send a done message again: a copy at the end with the same id, seq and body. Returns its slot. */
   redeliver(slot: number): Promise<{ slot: number }>;
+  /** Arm the drain if anything waits (now, or at a parked head's retry). For a fresh isolate: covers a timer lost in a crash. */
+  wake(): Promise<void>;
 };
 
 /**
@@ -258,6 +263,7 @@ export function queue<M extends Json>(d: Driver, instance: string, name: string,
       await arm();
       return { slot: head.slot };
     },
+    wake: arm,
   };
   return { queue: q, drain };
 }

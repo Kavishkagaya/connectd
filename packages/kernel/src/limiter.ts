@@ -1,4 +1,4 @@
-import type { Driver, Json } from "../driver.ts";
+import type { Driver, Json } from "./driver.ts";
 import { loop } from "./cell.ts";
 
 /**
@@ -24,7 +24,7 @@ export type Limiter = {
 
 type Op = { op: "acquire" | "refund" | "observe"; name: string; limit: Limit; n?: number; observed?: Observed };
 
-export const rateKey = (name: string) => `r:${name}`;
+const rateKey = (name: string) => `r:${name}`;
 
 /** Read-modify-cas on one limiter's TAT. `f` returns the new TAT, or null to leave it. Expires once it's in the past. */
 const update = <T>(d: Driver, name: string, f: (tat: number, now: number) => { tat: number | null; result: T }) =>

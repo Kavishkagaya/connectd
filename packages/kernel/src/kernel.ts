@@ -1,7 +1,7 @@
-import type { Driver, Handler, Json } from "../driver.ts";
-import { decrypt, encrypt, type Keys, keyVersion } from "../primitives/secrets.ts";
+import type { Driver, Handler, Json } from "./driver.ts";
+import { decrypt, encrypt, type Keys, keyVersion } from "./secrets.ts";
 import { type Cell, cell, type Value } from "./cell.ts";
-import { acquire, type Limit, type Limiter, limiter, RATE, rate, rateKey, refund } from "./limiter.ts";
+import { acquire, type Limit, type Limiter, limiter, RATE, rate, refund } from "./limiter.ts";
 import { type Queue, type QueueOptions, queue } from "./queue.ts";
 import { flight, flights, mutex } from "./sync.ts";
 import { type Ticket, ticket } from "./ticket.ts";
@@ -147,4 +147,4 @@ export function kernel(d: Driver, o: KernelOptions) {
 }
 
 export type Kernel = ReturnType<typeof kernel>;
-export { rateKey };
+

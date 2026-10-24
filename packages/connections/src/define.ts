@@ -1,15 +1,6 @@
-import {
-  type Credential,
-  connection,
-  type Driver,
-  type Json,
-  type Keys,
-  type Limit,
-  NotActive,
-  type OAuth2,
-  type Observed,
-  type TokenResponse,
-} from "@openconnect/kernel";
+import type { Json, Kernel, Limit, Observed } from "@openconnect/kernel";
+import { type Credential, lifecycle, NotActive, type OAuth2 } from "./lifecycle.ts";
+import type { TokenResponse } from "./oauth.ts";
 
 /**
  * A connection definition: how to authorize against one provider, plus its quirks. Plain data and
@@ -126,17 +117,18 @@ export const defineConnection = <C, M extends Json = null>(def: Definition<C, M>
 
 export type Handshake = { data: Json; extra?: Json };
 
-export type BindOptions<C> = Omit<Ctx<C>, "now"> & { keys: Keys; stateKey: CryptoKey };
+export type BindOptions<C> = Omit<Ctx<C>, "now">;
 
-/** Run a definition on one connection instance. Create once per Program instance, like `connection()`. */
-export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instance: string, opts: BindOptions<C>) {
-  const ctx: Ctx<C> = { config: opts.config, fetch: opts.fetch, redirectUri: opts.redirectUri, now: () => d.now() };
+/**
+ * Run a definition on one connection instance, on that instance's kernel (which holds the keys).
+ * Create once per Program call, with the kernel: it declares the lifecycle's and its own cells.
+ */
+export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: BindOptions<C>) {
+  const ctx: Ctx<C> = { config: opts.config, fetch: opts.fetch, redirectUri: opts.redirectUri, now: () => k.now() };
   const { refresh, revoke } = def.auth;
-  const conn = connection(d, instance, {
-    keys: opts.keys,
-    stateKey: opts.stateKey,
-    ...(refresh ? { refresh: (c: OAuth2) => refresh(ctx, c) } : {}),
-  });
+  const conn = lifecycle(k, refresh ? { refresh: (c: OAuth2) => refresh(ctx, c) } : {});
+  /** Who the credential belongs to; `{ m: null }` for a definition without `metadata`. */
+  const metaCell = k.cell<{ m: Json }>("meta");
 
   /** Take the handshake a callback's `state` names, at most once: the start step's data and `connect`'s `extra`. */
   async function handshake(params: Record<string, string>): Promise<Handshake> {
@@ -155,7 +147,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
     const meta = def.metadata ? await def.metadata(ctx, cred) : null;
     await conn.activate(cred);
     // ponytail: metadata sits next to the record, not in its cas; it's derived, re-auth rewrites it.
-    if (def.metadata) await d.store.put("meta", meta);
+    if (def.metadata) await metaCell.put({ m: meta });
   }
 
   return {
@@ -176,8 +168,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
         await finish(step.credential);
         return null;
       }
-      // Lost cas = someone else created the record meanwhile; fine.
-      if (!s) await conn.write(null, "pending", null);
+      if (!s) await conn.pend();
       return step.redirect(await conn.handshake.open({ data: step.data, ...(extra === undefined ? {} : { extra }) }));
     },
 
@@ -194,14 +185,14 @@ export function bind<C, M extends Json>(def: Definition<C, M>, d: Driver, instan
 
     token: conn.token,
 
-    metadata: async () => ((await d.store.get("meta"))?.value ?? null) as M | null,
+    metadata: async () => ((await metaCell.read())?.value.m ?? null) as M | null,
+    /** The metadata cell: its version orders index rows (#26). */
+    meta: metaCell,
 
     async revoke(reason?: string) {
       const s = await conn.read();
-      if (s?.credential && revoke) await revoke(ctx, s.credential).catch((e) => console.error("provider revoke failed", instance, e));
+      if (s?.credential && revoke) await revoke(ctx, s.credential).catch((e) => console.error("provider revoke failed", k.instance, e));
       return conn.revoke(reason);
     },
-
-    onTimer: conn.onTimer,
   };
 }

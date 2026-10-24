@@ -1,17 +1,17 @@
-// Kernel v2 on the Durable Object driver (#53): a program exercising each stored tool, driven by v2.test.ts.
+// The kernel on the Durable Object driver (#53): a program exercising each stored tool, driven by tools.test.ts.
 import type { Handler, Json, Program } from "../src/driver.ts";
-import { importHmacKey, importKeys } from "../src/primitives/secrets.ts";
-import { kernel } from "../src/v2/kernel.ts";
+import { importHmacKey, importKeys } from "../src/secrets.ts";
+import { kernel } from "../src/kernel.ts";
 
-/** Shared with v2.test.ts through globalThis (the worker and the tests run in one isolate). */
-export const log = globalThis as { ocV2?: { down: boolean; delivered: string[]; tries: number[] } };
-log.ocV2 ??= { down: false, delivered: [], tries: [] };
-const s = () => log.ocV2!;
+/** Shared with tools.test.ts through globalThis (the worker and the tests run in one isolate). */
+export const log = globalThis as { ocTools?: { down: boolean; delivered: string[]; tries: number[] } };
+log.ocTools ??= { down: false, delivered: [], tries: [] };
+const s = () => log.ocTools!;
 
 const raw = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 
 /** Keys are imported on the first event (Workers can't do crypto at global scope), as the runtime host does. */
-export const v2: Program = (d, instance) => {
+export const tools: Program = (d, instance) => {
   let ready: Promise<Handler> | undefined;
   async function init(): Promise<Handler> {
     const k = kernel(d, { instance, keys: await importKeys({ 1: raw(1) }, 1), stateKey: await importHmacKey(raw(9)) });
@@ -29,7 +29,7 @@ export const v2: Program = (d, instance) => {
     });
     const login = k.ticket<{ verifier: string }>("login", { ttlMs: 60_000 });
     const own = k.limiter("proxy", { count: 10, periodMs: 1000 });
-    const app = k.limiter.at("app:v2", "proxy", { count: 1, periodMs: 60_000 });
+    const app = k.limiter.at("app:tools", "proxy", { count: 1, periodMs: 60_000 });
     return k.serve({
       inc: async () => (await counter.update((c, emit) => (emit(`n${(c?.n ?? 0) + 1}`), { n: (c?.n ?? 0) + 1 })))?.n ?? 0,
       relay: async () => (await events.relay(counter), null),

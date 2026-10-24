@@ -105,11 +105,9 @@
       "name": "@openconnect/sdk",
       "version": "0.0.0",
       "dependencies": {
+        "@openconnect/connections": "workspace:*",
         "@openconnect/kernel": "workspace:*",
         "@openconnect/runtime": "workspace:*",
-      },
-      "devDependencies": {
-        "@openconnect/connections": "workspace:*",
       },
     },
   },

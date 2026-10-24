@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { type OAuth2, OAuthError } from "@openconnect/kernel";
+import { type OAuth2 } from "./lifecycle.ts";
+import { OAuthError } from "./oauth.ts";
 import { apiKey, oauth2 } from "./auth.ts";
 import { defineConnection, rateHeaders } from "./define.ts";
 import { fakeOAuth, harness } from "./testing.ts";
@@ -78,7 +79,7 @@ test("oauth2: provider's dead-refresh code means reauth_required; re-auth keeps 
 
   await callback(p.approve((await c.connect())!));
   expect(((await c.token()) as OAuth2).accessToken).toBe("a2");
-  expect((await c.conn.events.pending()).map((e) => e.to)).toEqual(["pending", "active", "reauth_required", "active"]);
+  expect((await c.conn.record.outbox.pending()).map((e) => e.msg.to)).toEqual(["pending", "active", "reauth_required", "active"]);
 });
 
 test("api key: inline connect, metadata rejects a bad key", async () => {

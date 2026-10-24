@@ -7,7 +7,7 @@ export default defineConfig({
       main: "./test/worker.ts",
       miniflare: {
         compatibilityDate: "2026-09-01",
-        durableObjects: { PROBE: { className: "Probe", useSQLite: true }, V2: { className: "V2", useSQLite: true } },
+        durableObjects: { PROBE: { className: "Probe", useSQLite: true }, TOOLS: { className: "Tools", useSQLite: true } },
       },
     }),
   ],

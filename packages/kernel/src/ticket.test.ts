@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { sign } from "../primitives/secrets.ts";
+import { sign } from "./secrets.ts";
 import { routeTicket } from "./ticket.ts";
 import { world } from "./testkit.ts";
 

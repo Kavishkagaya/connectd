@@ -1,4 +1,4 @@
-import type { Driver, Json } from "../driver.ts";
+import type { Driver, Json } from "./driver.ts";
 
 /** A stored value. `null` is reserved: it means "absent" on read and "no change" from `update`. */
 export type Value = Exclude<Json, null>;
@@ -38,6 +38,8 @@ export type Cell<V extends Value, M extends Json = never> = {
   put(value: V): Promise<void>;
   /** Remove it, outbox included. */
   delete(): Promise<void>;
+  /** Read and remove in one step: of callers racing for it, one gets the value, the others null. */
+  take(): Promise<V | null>;
   /** For `queue.relay`: the messages waiting, oldest first, and dropping them once taken. */
   outbox: { pending(): Promise<Item<M>[]>; ack(seq: number): Promise<void> };
 };
@@ -73,6 +75,9 @@ export function cell<V extends Value, M extends Json = never>(d: Driver, key: st
       await c.update(() => value);
     },
     delete: () => d.store.delete(key),
+    async take() {
+      return ((env({ value: await d.store.take(key) })?.data ?? null) as V | null);
+    },
     outbox: {
       async pending() {
         return (env(await d.store.get(key))?.out?.items ?? []) as Item<M>[];

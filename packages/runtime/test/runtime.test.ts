@@ -98,7 +98,7 @@ test("cloudflare: webhooks per connection and app-level (D1 lookup, fan-out to e
   const outbox = async (id: string) => {
     const ns = (env as unknown as { CONNECTION: DurableObjectNamespace }).CONNECTION;
     return runInDurableObject(ns.get(ns.idFromName(`conn:keyed:${id}`)), async (_o, state) =>
-      state.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM kv WHERE key LIKE 'events.e:%'").one().n,
+      state.storage.sql.exec<{ n: number }>("SELECT count(*) AS n FROM kv WHERE key LIKE 'q:events/e/%'").one().n,
     );
   };
   expect([await outbox("k1"), await outbox("k2"), await outbox("k3")]).toEqual([3, 2, 1]);

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { memory } from "../drivers/memory.ts";
+import { memory } from "./drivers/memory.ts";
 import { kernel } from "./kernel.ts";
 import { keys, world } from "./testkit.ts";
 

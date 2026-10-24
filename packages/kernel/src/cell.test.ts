@@ -94,3 +94,12 @@ test("cell: survives a restart", async () => {
   expect((await c.read())?.value).toEqual({ n: 1 });
   expect(await c.outbox.pending()).toEqual([{ seq: 1, msg: "hi" }]);
 });
+
+test("cell: take hands the value to one caller", async () => {
+  const { get } = await world((k) => ({ c: k.cell<Rec>("rec") }));
+  const { c } = await get();
+  await c.put({ n: 1 });
+  const got = await Promise.all([c.take(), c.take()]);
+  expect(got.filter((g) => g !== null)).toEqual([{ n: 1 }]);
+  expect(await c.read()).toBeNull();
+});

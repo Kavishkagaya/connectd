@@ -7,8 +7,7 @@
     ".": "./src/index.ts",
     "./memory": "./src/drivers/memory.ts",
     "./do": "./src/drivers/do.ts",
-    "./parity": "./src/drivers/parity.ts",
-    "./v2": "./src/v2/index.ts"
+    "./parity": "./src/drivers/parity.ts"
   },
   "scripts": {
     "test": "bun test src && vitest run"

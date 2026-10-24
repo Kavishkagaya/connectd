@@ -9,8 +9,8 @@ An OAuth connection platform with an open-source self-host path and a low-cost m
 ```
  L4  DevX        SDK (server + frontend connect UI) · CLI (dev / deploy) · dashboard
  L3  Runtime     proxy · webhook ingress · event/trigger delivery to user's server
- L2  Connections defineConnection(): auth flow, rate policy, webhooks, lifecycle hooks
- L1  Kernel      primitives: lifecycle · tokens · rate · secrets · schedule · oauth atoms
+ L2  Connections defineConnection(): lifecycle, OAuth, auth flow, rate policy, webhooks
+ L1  Kernel      management of one instance: cell · flight · mutex · timer · queue · ticket · limiter · seal
  L0  Drivers     Durable Objects (prod) · in-memory (dev/tests) · server (deferred)
 ```
 

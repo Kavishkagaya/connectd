@@ -1,5 +1,5 @@
-import type { Driver, Json } from "../driver.ts";
-import { randomId, sign, verify } from "../primitives/secrets.ts";
+import type { Driver, Json } from "./driver.ts";
+import { randomId, sign, verify } from "./secrets.ts";
 
 export type Ticket<D extends Json> = {
   /** Keep `data` in this instance for `ttlMs`; returns a signed string naming the instance, the ticket and a random id. */

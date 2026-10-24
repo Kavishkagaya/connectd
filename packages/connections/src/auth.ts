@@ -1,15 +1,6 @@
-import {
-  authorizeUrl,
-  type Client,
-  credentialFrom,
-  exchangeCode,
-  OAuthError,
-  pkce,
-  refreshGrant,
-  revoke,
-  type TokenResponse,
-} from "@openconnect/kernel";
 import { type Auth, type Ctx, InputError } from "./define.ts";
+import { credentialFrom } from "./lifecycle.ts";
+import { authorizeUrl, type Client, exchangeCode, OAuthError, pkce, refreshGrant, revoke, type TokenResponse } from "./oauth.ts";
 
 /** Auth step builders for the common flows. Quirks are config when they're data, hooks when they're behaviour. */
 

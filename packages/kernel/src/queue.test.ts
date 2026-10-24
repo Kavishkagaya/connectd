@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Json } from "../driver.ts";
+import type { Json } from "./driver.ts";
 import type { Cell } from "./cell.ts";
 import type { Kernel } from "./kernel.ts";
 import { type Delivery, QueueError, type QueueOptions } from "./queue.ts";
@@ -203,4 +203,16 @@ test("queue: custom ids", async () => {
   expect(rx.got[0]?.id).toBe("evt_1");
   const j: Json = rx.got[0] as unknown as Json;
   expect(j).toBeTruthy();
+});
+
+test("queue: wake re-arms a lost drain timer", async () => {
+  const { w, q, rx, k } = await setup();
+  rx.up = false;
+  await q.push([{ type: "a" }]);
+  await w.advance(0); // parked
+  await k.timer("lost", { handle: async () => {} }).cancel(); // unrelated timer: harmless
+  rx.up = true;
+  await q.wake();
+  await w.advance(60_000);
+  expect(rx.got.map((m) => m.msg.type)).toEqual(["a"]);
 });

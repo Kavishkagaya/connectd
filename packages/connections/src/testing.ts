@@ -1,4 +1,4 @@
-import { base64url, importHmacKey, importKeys, type Json, routeState } from "@openconnect/kernel";
+import { base64url, importHmacKey, importKeys, type Json, kernel, routeTicket } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { bind, type Definition } from "./define.ts";
 
@@ -8,12 +8,13 @@ const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n
 
 /** One definition on the in-memory driver, with the public /callback route. */
 export async function harness<C, M extends Json>(def: Definition<C, M>, config: C, fetch: typeof globalThis.fetch) {
-  const opts = { config, fetch, redirectUri: "https://oc.test/callback", keys: await importKeys({ 1: key(1) }, 1), stateKey: await importHmacKey(key(9)) };
+  const opts = { config, fetch, redirectUri: "https://oc.test/callback" };
+  const keys = { keys: await importKeys({ 1: key(1) }, 1), stateKey: await importHmacKey(key(9)) };
   const bound = new Map<string, ReturnType<typeof bind<C, M>>>();
   const w = memory((d, id) => {
-    const b = bind(def, d, id, opts);
-    bound.set(id, b);
-    return { onCall: async () => null, onTimer: async (n, p) => void (await b.onTimer(n, p)) };
+    const k = kernel(d, { instance: id, ...keys });
+    bound.set(id, bind(def, k, opts));
+    return k.serve({ init: async () => null });
   });
   const get = async (id: string) => {
     await w.call(id, "init", null);
@@ -21,11 +22,11 @@ export async function harness<C, M extends Json>(def: Definition<C, M>, config: 
   };
   /** Route by signed state, no lookup. */
   const callback = async (q: Record<string, string>) => {
-    const r = await routeState(q.state ?? "", opts.stateKey);
+    const r = await routeTicket(q.state ?? "", keys.stateKey);
     if (!r) throw new Error("bad state");
     return (await get(r.instance)).callback(q);
   };
-  return { w, get, callback };
+  return { w, get, callback, keys };
 }
 
 export type FakeOAuth = {

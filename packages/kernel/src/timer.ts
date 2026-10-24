@@ -1,5 +1,5 @@
-import type { Driver, Json } from "../driver.ts";
-import { type Backoff, backoff } from "../primitives/schedule.ts";
+import type { Driver, Json } from "./driver.ts";
+import { type Backoff, backoff } from "./schedule.ts";
 
 export type TimerOptions<P extends Json> = {
   /** What to do when it rings. Return = done; throw = try again later (with `retry`). */

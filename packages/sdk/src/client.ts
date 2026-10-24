@@ -1,4 +1,5 @@
-import type { Credential, Json, State } from "@openconnect/kernel";
+import type { Credential, State } from "@openconnect/connections";
+import type { Json } from "@openconnect/kernel";
 import type { Fault, Page, Query, Row, SessionArgs } from "@openconnect/runtime";
 import { events, type EventsOptions } from "./events.ts";
 

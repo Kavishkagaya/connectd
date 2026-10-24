@@ -1,7 +1,7 @@
-// Test harness for kernel v2 (not exported): instances on the memory driver, each running `setup`.
-import type { Json, Program } from "../driver.ts";
-import { memory, type Snapshot } from "../drivers/memory.ts";
-import { importHmacKey, importKeys } from "../primitives/secrets.ts";
+// Test harness for the kernel (not exported): instances on the memory driver, each running `setup`.
+import type { Json, Program } from "./driver.ts";
+import { memory, type Snapshot } from "./drivers/memory.ts";
+import { importHmacKey, importKeys } from "./secrets.ts";
 import { type Kernel, kernel, type Method } from "./kernel.ts";
 
 const raw = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));

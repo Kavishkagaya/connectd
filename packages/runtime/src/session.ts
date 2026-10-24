@@ -1,5 +1,6 @@
-import { decrypt, type Json, NotActive, randomId, sign, verify } from "@openconnect/kernel";
-import { DONE, Fail, type Fault, fault, type Hosted, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
+import { type Credential, NotActive } from "@openconnect/connections";
+import { type Json, randomId, routeTicket, sign, verify } from "@openconnect/kernel";
+import { Fail, type Fault, fault, type Hosted, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { type Api, ERROR_HEADER, type Route } from "./http.ts";
 import type { Extension } from "./runtime.ts";
 
@@ -21,7 +22,6 @@ import type { Extension } from "./runtime.ts";
  */
 
 const TYP = "openconnect.session";
-const TICKET = "openconnect.ticket";
 const TTL_MS = 10 * 60_000;
 const MAX_TTL_MS = 60 * 60_000;
 const TICKET_TTL_MS = 60_000;
@@ -87,7 +87,7 @@ async function issue(h: Hosted, a: Json): Promise<Json> {
   if (typeof ttlMs !== "number" || !Number.isInteger(ttlMs) || ttlMs < 1000 || ttlMs > MAX_TTL_MS) throw bad(`ttlMs must be 1000..${MAX_TTL_MS}`);
   const rec = await h.bound.conn.read();
   if (rec?.state === "revoked") throw new NotActive("revoked", rec.reason);
-  const exp = h.d.now() + ttlMs;
+  const exp = h.k.now() + ttlMs;
   const claims: Claims = { typ: TYP, def: h.def.id, id: h.id, exp, origin: o, ...(returnUrl ? { returnUrl } : {}) };
   return { token: await sign(JSON.stringify(claims), s.key), expiresAt: exp };
 }
@@ -101,7 +101,7 @@ async function signed<T extends { typ: string }>(api: Api, value: string, typ: T
   try {
     c = p ? (JSON.parse(p) as Partial<T>) : null;
   } catch {}
-  if (!c || c.typ !== typ || typeof c.def !== "string" || typeof c.id !== "string") throw new Fail("unauthorized", 401, `missing or forged ${typ === TYP ? "session token" : "ticket"}`);
+  if (!c || c.typ !== typ || typeof c.def !== "string" || typeof c.id !== "string") throw new Fail("unauthorized", 401, "missing or forged session token");
   if (!Object.hasOwn(api.definitions, c.def)) throw new Fail("not_found", 404, `unknown definition ${c.def}`);
   return c as T;
 }
@@ -187,9 +187,13 @@ export function complete(s: Settings, t: Target, o: Outcome): Response {
  */
 async function navigate(req: Request, api: Api): Promise<Response> {
   if (req.method !== "GET") throw new Fail("method_not_allowed", 405, "GET or POST");
-  const t = await signed<{ typ: typeof TICKET; def: string; id: string; t: string }>(api, new URL(req.url).searchParams.get("ticket") ?? "", TICKET);
+  if (!api.settings.sessions) throw off();
+  // A kernel ticket (one-time, signed): it names the connection instance, no lookup.
+  const ticket = new URL(req.url).searchParams.get("ticket") ?? "";
+  const t = await routeTicket(ticket, api.settings.stateKey);
+  if (!t || t.name !== "session" || !t.instance.startsWith("conn:")) throw new Fail("unauthorized", 401, "missing or forged ticket");
   const cookie = { name: `oc-${randomId(6)}`, value: randomId() };
-  const reply = await api.call(instanceOf(t.def, t.id), "session.authorize", { ticket: t.t, cookie });
+  const reply = await api.call(t.instance, "session.authorize", { ticket, cookie });
   if ("error" in reply) throw new Fail(reply.error.code, reply.error.status, reply.error.message);
   const r = reply.ok as { target: Target; url?: string | null; error?: Fault };
   if (r.error) return complete(api.settings, r.target, { status: "error", code: r.error.code, message: r.error.message });
@@ -279,23 +283,23 @@ const str = (a: Json, k: string) => {
 
 /** The instance's part: tickets and completions are stored in the connection's own instance, so they can't cross to another. */
 function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
-  const key = (t: string) => `session.ticket:${t}`;
+  type Stored = Omit<Target, "cookie" | "definition" | "id">;
+  const tickets = h.k.ticket<Stored>("session", { ttlMs: TICKET_TTL_MS });
   return {
     session: (a) => issue(h, a),
 
     /** Mint a single-use ticket for this connection; the route checked the token and the Origin. */
     "session.ticket": async (a) => {
-      const s = h.settings.sessions;
-      if (!s) throw off();
-      const t = randomId();
-      const target = { mode: str(a, "mode"), nonce: str(a, "nonce"), origin: str(a, "origin"), ...((a as { returnUrl?: Json }).returnUrl ? { returnUrl: str(a, "returnUrl") } : {}) };
-      await h.d.store.put(key(t), target, { ttlMs: TICKET_TTL_MS });
-      return { ticket: await sign(JSON.stringify({ typ: TICKET, def: h.def.id, id: h.id, t }), s.key) };
+      if (!h.settings.sessions) throw off();
+      const mode = str(a, "mode");
+      if (mode !== "popup" && mode !== "redirect") throw bad("mode must be popup or redirect");
+      const target: Stored = { mode, nonce: str(a, "nonce"), origin: str(a, "origin"), ...((a as { returnUrl?: Json }).returnUrl ? { returnUrl: str(a, "returnUrl") } : {}) };
+      return { ticket: await tickets.issue(target) };
     },
 
     /** Take the ticket and open the handshake. Failures after the take come back with the target, so the browser is sent back. */
     "session.authorize": async (a) => {
-      const stored = (await h.d.store.take(key(str(a, "ticket")))) as Omit<Target, "cookie" | "definition" | "id"> | null;
+      const stored = await tickets.redeem(str(a, "ticket"));
       if (!stored) throw new Fail("bad_ticket", 401, "unknown, used or expired ticket");
       const cookie = (a as { cookie: Target["cookie"] }).cookie;
       const target: Target = { ...stored, cookie: { name: String(cookie?.name), value: String(cookie?.value) }, definition: h.def.id, id: h.id };
@@ -308,12 +312,12 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
 
     /** The app's page confirms what the callback exchanged: check (metadata) and activate. */
     "session.complete": async (a) => {
-      const sealed = await h.d.store.take(`${DONE}${str(a, "completion")}`);
+      const sealed = await h.done.redeem(str(a, "completion"));
       if (typeof sealed !== "string") throw new Fail("bad_completion", 400, "unknown, used or expired completion");
       // Revoked while the user was at the provider: refuse before calling it (metadata) with the new credential.
       const rec = await h.bound.conn.read();
       if (rec?.state === "revoked") throw new NotActive("revoked", rec.reason);
-      await h.bound.finish(JSON.parse(await decrypt(sealed, h.settings.keys)));
+      await h.bound.finish((await h.k.unseal(sealed)).value as unknown as Credential);
       return null;
     },
   };
