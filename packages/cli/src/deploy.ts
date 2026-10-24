@@ -77,7 +77,7 @@ export async function deploy(o: DeployOptions) {
   }
 
   const { config, entry } = await o.load({ ...secrets });
-  const project: Project = resolve(config, { ...secrets });
+  const project = resolve(config, { ...secrets });
   const name = workerName(o.name ?? project.deploy?.name ?? state.name ?? basename(resolvePath(o.dir)));
   const fixed = o.url ?? project.deploy?.url;
   let url = fixed ? publicUrl(fixed) : state.name === name ? state.url : undefined;

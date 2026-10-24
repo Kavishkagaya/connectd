@@ -33,8 +33,8 @@ packages/connections/
   src/lifecycle.ts    one connection on the kernel: the `record` cell (state, sealed credential, Transition outbox), token/refresh (flight + timer), login ticket; State, Credential, NotActive
   src/oauth.ts        OAuth protocol atoms (PKCE, authorize URL, code exchange, refresh, device flow, DCR, revoke), OAuthError
   src/define.ts       defineConnection, Definition (incl. webhooks: verify/parse/register), hmacHex/safeEqual, bind (a definition on one instance's kernel)
-  src/builder.ts      connection(id).config<C>().auth(f => …).api(…).limit().observe().identity().external().webhooks() (#54): compiles to a Definition, read with definitionOf
-  src/action.ts       action(id, connection).input(schema) | .every(ms) / .on(state) .run(fn) (#54): standalone actions, Standard Schema types, ActionCtx (api, store, token)
+  src/builder.ts      connection(id?).config<C>().auth(f => …).api(…).limit().observe().identity().external().webhooks() (#54): compiles to a Definition, read with definitionOf; withId (a folder's name as the id)
+  src/action.ts       action({ input?, every?, on?, run(conn, input) }) (#54): one per file in a connection folder (name from the file), Standard Schema types, ActionCtx (api, store, token)
   src/flows.ts        the flows `.auth()` hands its callback (#56): oauth2, oidc (discovery, id_token checked, claims as identity), clientCredentials, jwtBearer, device, apiKey, flow
   src/jwt.ts          RS256 signing (PKCS#8 and PKCS#1 keys), id_token verification (RS256, ES256)
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
@@ -79,8 +79,8 @@ packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli`
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .openconnect/ dir
   src/env.ts          .env / .dev.vars parsing; dev keys generated once into .openconnect/dev.vars
-  src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan), loadProject (config + folder discovery)
-  src/discover.ts     folder discovery (#54): dirs (default connections/, actions/), .openconnect/entry.ts (withModules) and registry.d.ts. Node APIs only
+  src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
+  src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts (events.ts never in the Worker), .openconnect/entry.ts (withFolders) and registry.d.ts. Node APIs only
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   src/generate.ts     deploy's files in .openconnect/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
   src/deploy.ts       `openconnect deploy`: wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
@@ -89,7 +89,7 @@ packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli`
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/cli.ts, args.ts commands (dev, deploy, types, help) and a declared-flags parser; src/bin.ts the entry
 
-examples/basic/       a user project (workspace): openconnect.config.ts with the providers; connections/ (one local definition) and actions/ (one action), found by folder discovery
+examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers, one local, github/actions/profile.ts)
 ```
 
 Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@openconnect/connections`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.

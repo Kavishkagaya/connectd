@@ -1,4 +1,4 @@
-import { type AnyAction, type AnyConnection, definitionOf, isAction, isConnection } from "@openconnect/connections";
+import { type AnyAction, type AnyConnection, definitionOf, isAction, isConnection, withId } from "@openconnect/connections";
 import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
@@ -16,27 +16,30 @@ import {
 } from "@openconnect/runtime";
 
 /**
- * A user's project: what `openconnect.config.ts` exports, the one input both `openconnect dev`
- * and `deploy` (#31) build the runtime from. No Node or Bun APIs here, so a Worker can import it.
+ * A user's project: what `oc.config.ts` exports, the one input both `openconnect dev` and `deploy`
+ * (#31) build the runtime from. No Node or Bun APIs here, so a Worker can import it. Connections and
+ * their actions live in folders under `dir`, one per connection, named by its id (#54):
+ *
+ *   src/oc/github/connection.ts        export default github   (or connection().config().auth(...))
+ *   src/oc/github/actions/starRepo.ts  export default action({ input, run })
  *
  *   export default defineConfig((env) => ({
- *     definitions: [github],
- *     actions: [starRepo, syncIssues],
+ *     dir: "src/oc",
  *     config: { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } },
- *     events: { url: "http://localhost:3000/api/openconnect" },
+ *     events: { url: "http://localhost:3000/api/oc" },
  *     sessions: { origins: ["http://localhost:3000"] },
  *   }));
  */
 export type Project = {
-  /** `connection(...)` builders, or plain definitions. */
-  definitions: (AnyConnection | AnyDefinition)[];
-  /** `action(id, connection)` builders (#54), each on one of `definitions`. */
-  actions?: AnyAction[];
   /**
-   * Folders whose files' exported connections and actions join `definitions` and `actions` (#54),
-   * relative to the config. Default: `connections/` and `actions/`, where they exist. `[]`: none.
+   * The connection folders' parent, relative to the config. Default: `src/oc` or `oc`, the first
+   * that exists. dev, deploy and `types` read it (the Worker gets what they found).
    */
-  dirs?: string[];
+  dir?: string;
+  /** Connections listed here instead of in a folder: `connection(id)` builders, or plain definitions. */
+  definitions?: (AnyConnection | AnyDefinition)[];
+  /** Actions of listed connections, by connection id, then by name: `{ github: { starRepo } }`. */
+  actions?: Record<string, Record<string, AnyAction>>;
   /** Connector config by definition id (client id/secret). Definitions with no callback step (`apiKey`) default to null. */
   config?: Record<string, unknown>;
   /** Where lifecycle and webhook events are POSTed (#24); signed with `OPENCONNECT_EVENTS_SECRET`. */
@@ -62,35 +65,43 @@ export const defineConfig = <T extends Config>(c: T) => c;
 
 export { ENV, generateKeys } from "./keys.ts";
 
+/** One connection folder, as the generated entry passes it: the folder's name and its files' default exports. */
+export type Folder = { id: string; file: string; connection: unknown; actions: Record<string, unknown> };
+
 /**
- * The config plus what folder discovery found (the generated entry calls this): every exported
- * connection and action of `modules` not already listed. Another object with an id that's already
- * there is an error: export only the stage that runs (not `base` and `base.api(...)` both).
+ * The config plus its connection folders (the generated entry calls this): each folder's
+ * connection, named after the folder, and its actions. An id the config lists too is an error.
  */
-export function withModules(config: Config, modules: Record<string, unknown>[]): Config {
+export function withFolders(config: Config, folders: Folder[]): Config {
   return (env) => {
     const p = typeof config === "function" ? config(env) : config;
-    const found = modules.flatMap((m) => Object.values(m));
-    const definitions = [...p.definitions];
-    for (const c of found.filter(isConnection)) {
-      const same = definitions.find((d) => d.id === c.id);
-      if (same === c) continue;
-      // Two exports with one id (a base and its extension, or a listed provider and a discovered copy): which runs would be a guess.
-      if (same) throw new Error(`two connections with id ${c.id} (one discovered in connections/actions folders): export only the one to run`);
-      definitions.push(c);
+    const definitions = [...(p.definitions ?? [])];
+    const actions = { ...p.actions };
+    for (const f of folders) {
+      const c = f.connection;
+      if (!isConnection(c) && !(typeof c === "object" && c !== null && "auth" in c)) throw new Error(`${f.file}: the default export must be a connection (connection().config().auth(...), or a provider)`);
+      if (definitions.some((d) => d.id === f.id)) throw new Error(`two connections with id ${f.id}: the config lists one and ${f.file} is another`);
+      definitions.push(isConnection(c) ? withId(c, f.id) : { ...(c as AnyDefinition), id: f.id });
+      for (const [name, a] of Object.entries(f.actions)) if (!isAction(a)) throw new Error(`${f.id}/actions/${name}: the default export must be an action({ ... })`);
+      // Typed from the folder only: config-listed actions for it would run untyped (and could shadow one).
+      if (Object.hasOwn(actions, f.id)) throw new Error(`actions for ${f.id} are in the config: put them in its folder's actions/`);
+      if (Object.keys(f.actions).length) actions[f.id] = f.actions as Record<string, AnyAction>;
     }
-    const actions = [...(p.actions ?? [])];
-    for (const a of found.filter(isAction)) if (!actions.includes(a)) actions.push(a);
-    return { ...p, definitions, ...(actions.length ? { actions } : {}) };
+    return { ...p, definitions, ...(Object.keys(actions).length ? { actions } : {}) };
   };
 }
 
 /** The project with definitions checked: unique, non-empty ids. */
-export function resolve(config: Config, env: Env): Project & { registry: Record<string, AnyDefinition> } {
-  const p = typeof config === "function" ? config(env) : config;
-  if (!p || !Array.isArray(p.definitions)) throw new Error("the config must export { definitions: [...] }");
+/** A project as the runtime gets it: every definition (listed and from folders), checked. */
+export type Resolved = Project & { definitions: (AnyConnection | AnyDefinition)[]; registry: Record<string, AnyDefinition> };
+
+export function resolve(config: Config, env: Env): Resolved {
+  const raw = typeof config === "function" ? config(env) : config;
+  const p = raw && typeof raw === "object" ? { ...raw, definitions: raw.definitions ?? [] } : raw;
+  if (!p || typeof p !== "object") throw new Error("the config must export defineConfig({ ... })");
+  if (p.definitions !== undefined && !Array.isArray(p.definitions)) throw new Error("definitions must be a list");
   const registry: Record<string, AnyDefinition> = {};
-  for (const d of p.definitions) {
+  for (const d of p.definitions ?? []) {
     if (!d?.id || typeof d.id !== "string") throw new Error("every definition needs an id (connection(id))");
     if (Object.hasOwn(registry, d.id)) throw new Error(`two definitions with id ${d.id}`);
     registry[d.id] = definitionOf(d);
@@ -99,7 +110,7 @@ export function resolve(config: Config, env: Env): Project & { registry: Record<
 }
 
 /** Definitions that need connector config and have none: they answer `not_configured`. */
-export const unconfigured = (p: Project) => p.definitions.filter((d) => !definitionOf(d).auth.fields && p.config?.[d.id] == null).map((d) => d.id);
+export const unconfigured = (p: Project) => (p.definitions ?? []).filter((d) => !definitionOf(d).auth.fields && (!p.config || !Object.hasOwn(p.config, d.id) || p.config[d.id] == null)).map((d) => d.id);
 
 function need(env: Env, name: string) {
   const v = env[name];
@@ -114,7 +125,7 @@ export async function settings(p: Project, env: Env): Promise<Settings> {
   if (!versions.length) throw new Error(`${ENV.key}1 is not set`);
   const keys = Object.fromEntries(versions.map((v) => [v, env[`${ENV.key}${v}`] as string]));
   const config: Record<string, unknown> = {};
-  for (const d of p.definitions) if (definitionOf(d).auth.fields) config[d.id] = null;
+  for (const d of p.definitions ?? []) if (definitionOf(d).auth.fields) config[d.id] = null;
   return {
     keys: await importKeys(keys, Math.max(...versions)),
     stateKey: await importHmacKey(need(env, ENV.state)),
@@ -132,7 +143,7 @@ export async function settings(p: Project, env: Env): Promise<Settings> {
  * dev, D1 deployed (`d1Index`). Each built-in extension is a no-op until its settings are set; the
  * dashboard is on unless `dashboard: false`.
  */
-export function options(config: Config, env: Env, index: Index): RuntimeOptions & { project: Project } {
+export function options(config: Config, env: Env, index: Index): RuntimeOptions & { project: Resolved } {
   const project = resolve(config, env);
   let loaded: Promise<Settings> | undefined;
   return {

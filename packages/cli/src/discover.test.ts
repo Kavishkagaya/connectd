@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadProject } from "./load.ts";
+import { findConfig, loadProject } from "./load.ts";
 import { resolve } from "./project.ts";
 
 const TMP = join(import.meta.dir, "..", ".tmp-discover");
@@ -14,6 +14,8 @@ import { connection } from "@openconnect/connections";
 export const listed = connection("listed").config().auth((f) => f.apiKey("key"));
 export default defineConfig(() => ({ definitions: [listed]${extra} }));
 `;
+const KEYED = `import { connection } from "@openconnect/connections";
+export default connection().config().auth((f) => f.apiKey("key"));`;
 
 function project(files: Record<string, string>) {
   const dir = mkdtempSync(join(TMP, "p-"));
@@ -23,54 +25,68 @@ function project(files: Record<string, string>) {
   }
   return dir;
 }
+const load = (dir: string) => loadProject(dir, join(dir, "oc.config.ts"), join(dir, ".openconnect", "build"), 1, {});
 
-test("folder discovery: connections and actions from connections/ and actions/ join the config; a registry is written", async () => {
+test("connection folders: the folder names the connection, actions/<name>.ts its actions; entry and registry written", async () => {
   const dir = project({
-    "openconnect.config.ts": CONFIG(),
-    "connections/tracker.ts": `import { connection } from "@openconnect/connections";
-export const tracker = connection("tracker").config().auth((f) => f.apiKey("key"));`,
-    "actions/open.ts": `import { action } from "@openconnect/connections";
-import { tracker } from "../connections/tracker.ts";
-export const open = action("open", tracker).run(() => ({ ok: true }));
-export const helper = 42;`,
-    "actions/nested/close.ts": `import { action } from "@openconnect/connections";
-import { tracker } from "../../connections/tracker.ts";
-export const close = action("close", tracker).run(() => null);`,
-    "actions/open.test.ts": "throw new Error('tests are not imported');",
+    "oc.config.ts": CONFIG(),
+    "src/oc/tracker/connection.ts": KEYED,
+    "src/oc/tracker/actions/open.ts": `import { action } from "@openconnect/connections";
+export default action({ run: () => ({ ok: true }) });`,
+    "src/oc/tracker/actions/close.ts": `import { action } from "@openconnect/connections";
+export default action({ run: () => null });`,
+    "src/oc/tracker/actions/open.test.ts": "throw new Error('tests are not imported');",
+    "src/oc/tracker/actions/_shared.ts": "export const helper = 1;",
+    "src/oc/tracker/events.ts": "throw new Error('the app side: never in the Worker');",
+    // A connection with its own id (a provider's) runs as the folder's.
+    "src/oc/gh/connection.ts": `import { connection } from "@openconnect/connections";
+export default connection("github").config().auth((f) => f.apiKey("token"));`,
+    "src/oc/_shared/util.ts": "throw new Error('not a connection folder');",
   });
-  const config = join(dir, "openconnect.config.ts");
-  const r = await loadProject(dir, config, join(dir, ".openconnect", "build"), 1, {});
-  expect(r.modules.map((m) => m.slice(dir.length + 1))).toEqual(["actions/nested/close.ts", "actions/open.ts", "connections/tracker.ts"]);
+  const r = await load(dir);
+  expect(r.found.map((f) => [f.id, f.actions.map((a) => a.name)])).toEqual([
+    ["gh", []],
+    ["tracker", ["close", "open"]],
+  ]);
   expect(r.entry).toBe(join(dir, ".openconnect", "entry.ts"));
   const p = resolve(r.config, {});
-  expect(p.definitions.map((d) => d.id)).toEqual(["listed", "tracker"]);
-  expect(p.actions?.map((a) => a.id).sort()).toEqual(["close", "open"]);
+  expect(p.definitions.map((d) => d.id)).toEqual(["listed", "gh", "tracker"]);
+  expect(Object.keys(p.actions?.tracker ?? {}).sort()).toEqual(["close", "open"]);
+  expect(p.registry.gh?.id).toBe("gh");
 
   const reg = readFileSync(join(dir, ".openconnect", "registry.d.ts"), "utf8");
-  expect(reg).toContain('import type config from "../openconnect.config.ts";');
-  expect(reg).toContain('import type * as m2 from "../connections/tracker.ts";');
-  expect(reg).toContain("interface Registry extends RegistryOf<typeof config, Exports<typeof m0 | typeof m1 | typeof m2>> {}");
+  expect(reg).toContain('import type config from "../oc.config.ts";');
+  expect(reg).toContain('import type c1 from "../src/oc/tracker/connection.ts";');
+  expect(reg).toContain('"tracker": Entry<typeof c1, { "close": typeof a1_0, "open": typeof a1_1 }>;');
+  expect(reg).not.toContain("events.ts");
+  expect(readFileSync(r.entry, "utf8")).not.toContain("events.ts");
 });
 
-test("no folders: the config runs as is, the registry still comes from it; named dirs must exist", async () => {
-  const dir = project({ "openconnect.config.ts": CONFIG() });
-  const config = join(dir, "openconnect.config.ts");
-  const r = await loadProject(dir, config, join(dir, ".openconnect", "build"), 1, {});
-  expect(r.entry).toBe(config);
+test("no folders: the config runs as is; a named dir must exist", async () => {
+  const dir = project({ "oc.config.ts": CONFIG() });
+  const r = await load(dir);
+  expect(r.entry).toBe(join(dir, "oc.config.ts"));
   expect(existsSync(join(dir, ".openconnect", "entry.ts"))).toBe(false);
-  expect(readFileSync(join(dir, ".openconnect", "registry.d.ts"), "utf8")).toContain("interface Registry extends RegistryOf<typeof config> {}");
-
-  const named = project({ "openconnect.config.ts": CONFIG(', dirs: ["lib/oc"]') });
-  await expect(loadProject(named, join(named, "openconnect.config.ts"), join(named, ".openconnect", "build"), 1, {})).rejects.toThrow("dirs: lib/oc is not a folder");
+  expect(readFileSync(join(dir, ".openconnect", "registry.d.ts"), "utf8")).toContain("interface Registry extends RegistryOf<typeof config> {");
+  await expect(load(project({ "oc.config.ts": CONFIG(', dir: "lib/oc"') }))).rejects.toThrow("dir: lib/oc is not a folder");
 });
 
-test("two different connections with one id (the config's and a discovered one) are an error", async () => {
-  const dir = project({
-    "openconnect.config.ts": CONFIG(),
-    "connections/listed.ts": `import { connection } from "@openconnect/connections";
-export const listed = connection("listed").config().auth((f) => f.apiKey("other"));`,
-  });
-  await expect(loadProject(dir, join(dir, "openconnect.config.ts"), join(dir, ".openconnect", "build"), 1, {}).then((r) => resolve(r.config, {}))).rejects.toThrow(
-    "two connections with id listed",
-  );
+test("refused: a folder without connection.ts, a bad folder or action name, a non-connection export, an id listed twice", async () => {
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/empty/actions/x.ts": "" }))).rejects.toThrow("no connection.ts");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/a.b/connection.ts": KEYED }))).rejects.toThrow("letters, digits");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions/toString.ts": "" }))).rejects.toThrow("reserved");
+  const notConn = project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": "export default 42;" });
+  await expect(load(notConn).then((r) => resolve(r.config, {}))).rejects.toThrow("oc/t/connection.ts: the default export must be a connection");
+  const twice = project({ "oc.config.ts": CONFIG(), "oc/listed/connection.ts": KEYED });
+  await expect(load(twice).then((r) => resolve(r.config, {}))).rejects.toThrow("two connections with id listed");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/constructor/connection.ts": KEYED }))).rejects.toThrow("constructor is reserved");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/connection.js": "export default 1;" }))).rejects.toThrow("one connection file only");
+  const shadow = project({ "oc.config.ts": CONFIG(", actions: { t: {} }"), "oc/t/connection.ts": KEYED });
+  await expect(load(shadow).then((r) => resolve(r.config, {}))).rejects.toThrow("actions for t are in the config");
+});
+
+test("upgrading from the old layout fails loudly: connections/ and actions/ folders, openconnect.config.ts", async () => {
+  await expect(load(project({ "oc.config.ts": CONFIG(), "connections/notes.ts": KEYED }))).rejects.toThrow("connections/ next to oc.config.ts aren't read any more");
+  const old = project({ "openconnect.config.ts": CONFIG() });
+  expect(() => findConfig(old)).toThrow("openconnect.config.ts is now oc.config.ts");
 });

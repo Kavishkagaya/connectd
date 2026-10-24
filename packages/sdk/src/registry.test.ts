@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@openconnect/connections";
+import { type ActionCtx, action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@openconnect/connections";
 import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
 import { runtime, webhooks } from "@openconnect/runtime";
 import { type Client, type Connection, OpenConnectError, openconnect } from "./client.ts";
-import type { RegistryOf } from "./registry.ts";
+import type { Entry, RegistryOf } from "./registry.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 const schema = <T>(check: (v: unknown) => T | null): StandardSchemaV1<T> => ({
@@ -24,12 +24,13 @@ const tracker = connection("tracker")
     subscription: repo,
     register: async (_ctx, _cred, _ep, input) => ({ hook: `hook:${input.repo}` }),
   });
-const open = action("open", tracker)
-  .input(schema((v) => (typeof (v as { title?: unknown })?.title === "string" ? { title: (v as { title: string }).title } : null)))
-  .run(async ({ api }, { title }) => ({ id: (await api.get<{ id: number }>(`/new?title=${encodeURIComponent(title)}`)).id }));
-const me = action("me", tracker).run(async ({ identity }) => identity);
-const config = () => ({ definitions: [tracker], actions: [open, me] });
-type R = RegistryOf<typeof config>;
+const open = action({
+  input: schema((v) => (typeof (v as { title?: unknown })?.title === "string" ? { title: (v as { title: string }).title } : null)),
+  run: async ({ api }, { title }) => ({ id: (await api.get<{ id: number }>(`/new?title=${encodeURIComponent(title)}`)).id }),
+});
+const me = action({ run: async (conn: ActionCtx<typeof tracker>) => conn.identity });
+// As the generated registry writes it for a `tracker/` folder.
+type R = { tracker: Entry<typeof tracker, { open: typeof open; me: typeof me }> };
 
 test("typed client: ids, actions (input and output), identity and subscriptions come from the registry", async () => {
   const settings = {
@@ -46,7 +47,7 @@ test("typed client: ids, actions (input and output), identity and subscriptions 
       return new Response(null, { status: 404 });
     }) as typeof fetch,
   };
-  const rt = runtime({ definitions: { tracker }, actions: [open, me], settings: async () => settings, extensions: [webhooks()] });
+  const rt = runtime({ definitions: { tracker }, actions: { tracker: { open, me } }, settings: async () => settings, extensions: [webhooks()] });
   const w = memory(rt.program);
   const oc = openconnect<R>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
 
@@ -92,7 +93,7 @@ test("untyped without a registry: any id, Json in and out", async () => {
   expect(out).toEqual({ ok: true });
 });
 
-test("the actions proxy answers action ids only: toJSON, toString and the like make no call; reserved ids are refused", () => {
+test("the actions proxy answers action names only: toJSON, toString and the like make no call", () => {
   let calls = 0;
   const oc = openconnect({ url: "https://oc.test", apiKey: "k", fetch: async () => (calls++, Response.json(null)) });
   const a = oc.connection("anything", "x").actions as Record<string, unknown>;
@@ -100,15 +101,16 @@ test("the actions proxy answers action ids only: toJSON, toString and the like m
   expect(JSON.stringify(a)).toBe("{}");
   expect(typeof a.star).toBe("function");
   expect(calls).toBe(0);
-  for (const id of ["then", "toJSON", "toString", "constructor"]) expect(() => action(id, tracker)).toThrow("reserved");
 });
 
 test("types: optional input stays optional, plain definitions widen the ids, typed connections fit the untyped Connection", () => {
-  const opt = action("opt", tracker)
-    .input(schema((v) => (v === undefined ? undefined : typeof v === "object" ? (v as { n?: number }) : null)) as StandardSchemaV1<{ n?: number } | undefined>)
-    .run(() => null);
+  const opt = action({
+    input: schema((v) => (v === undefined ? undefined : typeof v === "object" ? (v as { n?: number }) : null)) as StandardSchemaV1<{ n?: number } | undefined>,
+    run: () => null,
+  });
   const plain = { id: "plain" } as unknown as Definition<any, any>;
-  type W = RegistryOf<() => { definitions: [typeof tracker, Definition<any, any>]; actions: [typeof opt] }>;
+  // A config that lists its connections (and their actions) itself.
+  type W = RegistryOf<() => { definitions: [typeof tracker, Definition<any, any>]; actions: { tracker: { opt: typeof opt } } }>;
   const oc = openconnect<W>({ url: "https://oc.test", apiKey: "k", fetch: async () => Response.json(null) });
   const t = oc.connection("tracker", "x");
   void (() => t.actions.opt());

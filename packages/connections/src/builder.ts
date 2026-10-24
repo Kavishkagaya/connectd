@@ -138,8 +138,19 @@ function make(def: Definition<any, any>): any {
   };
 }
 
-/** Start a connection. `.config<C>()` names the config type (client id/secret, keys); leave it empty for none. */
-export function connection<const Id extends string>(id: Id) {
+/**
+ * The same connection under another id: folder discovery names a connection after its folder
+ * (`src/oc/gh/connection.ts` exporting `github` runs as `gh`).
+ */
+export function withId<T extends AnyConnection>(c: T, id: string): Omit<T, "id"> & { readonly id: string } {
+  return c.id === id ? c : make({ ...definitionOf(c), id });
+}
+
+/**
+ * Start a connection. `.config<C>()` names the config type (client id/secret, keys); leave it empty
+ * for none. In a connection folder the id is the folder's name, so `connection()` takes none.
+ */
+export function connection<const Id extends string = string>(id: Id = "" as Id) {
   return {
     id,
     config: <C = null>() => ({

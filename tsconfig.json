@@ -19,7 +19,7 @@
   "include": [
     "packages/*/src",
     "examples/*/*.ts",
-    "examples/*/*/*.ts"
+    "examples/*/src/**/*.ts"
   ],
   "exclude": [
     "packages/kernel/src/drivers/do.ts",

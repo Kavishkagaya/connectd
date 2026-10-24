@@ -3,20 +3,22 @@ import type { Api, Connection } from "./builder.ts";
 import type { Credential, State } from "./lifecycle.ts";
 
 /**
- * Actions (#54): what an app does with a connection, one per file, written next to the connection
- * they run on (trigger.dev-task style), not inside it.
+ * Actions (#54): what an app does with a connection, one file each, in the connection's folder
+ * (like Nango functions). The file name is the action's name, the folder its connection:
  *
- *   export const starRepo = action("starRepo", github)
- *     .input(z.object({ repo: z.string() }))
- *     .run(async ({ api }, { repo }) => ({ status: (await api.fetch(`/user/starred/${repo}`, { method: "PUT" })).status }));
+ *   // src/oc/github/actions/starRepo.ts
+ *   export default action({
+ *     input: z.object({ repo: z.string() }),
+ *     run: async (conn, { repo }) => ({ status: (await conn.api.fetch(`/user/starred/${repo}`, { method: "PUT" })).status }),
+ *   });
  *
- *   export const syncIssues = action("syncIssues", github)
- *     .every(HOUR)
- *     .run(async ({ api, store }) => { ... });
+ *   // src/oc/github/actions/syncIssues.ts
+ *   export default action({ every: HOUR, run: async (conn) => { ... } });
  *
- * Each runs inside its connection's instance, so `api` is that one user's, already authenticated.
- * The app calls one with `POST /connections/:def/:id/actions/:name`; `.every(ms)` and `.on(state)`
- * runs have no caller, so their results go out as `action.completed` / `action.failed` events.
+ * Each runs inside its connection's instance, so `conn.api` is that one user's, already
+ * authenticated. The app calls one with `oc.connection("github", id).actions.starRepo(input)`;
+ * `every` and `on` runs have no caller, so their results go out as `action.completed` /
+ * `action.failed` events (with the action's name).
  */
 
 /** Standard Schema v1 (standardschema.dev): zod, valibot and arktype implement it, so we depend on none. */
@@ -40,8 +42,12 @@ export type Store = {
   delete(key: string): Promise<void>;
 };
 
-/** What `run` gets. `api` only when the connection has `.api()`. */
-export type ActionCtx<Conn> =
+/**
+ * What `run` gets. Typed for any connection (`config` and `identity` untyped, `api` present); for
+ * exact types annotate it: `run: async (conn: ActionCtx<typeof github>) => ...`. `api` throws on a
+ * connection without `.api()`.
+ */
+export type ActionCtx<Conn = Connection> =
   Conn extends Connection<string, infer C, infer M, infer A>
     ? {
         config: C;
@@ -57,83 +63,61 @@ export type ActionCtx<Conn> =
       } & (true extends A ? { api: Api } : unknown)
     : never;
 
-/** How a run started: an app call, the `.every` timer, or the `.on` state. */
+/** How a run started: an app call, the `every` timer, or the `on` state. */
 export type Trigger = "call" | "every" | "on";
 
-/** What the runtime runs (read with `actionOf`). */
-export type ActionSpec = {
-  id: string;
-  /** The connection's definition id. */
-  connection: string;
+/** An action as written: what `action()` takes, minus the types. */
+export type ActionBody = {
   input?: StandardSchemaV1;
   every?: number;
   on?: State;
-  run(ctx: unknown, input: unknown): Promise<Json>;
+  run(conn: unknown, input: unknown): Promise<Json>;
 };
+
+/** What the runtime runs: the body plus its name and its connection's definition id (from the folders). */
+export type ActionSpec = ActionBody & { id: string; connection: string };
 
 const ACTION = Symbol.for("openconnect.action");
 
-/** A built action. `I`/`O` are its input and output, for the typed client. */
-export type Action<Id extends string = string, Conn extends Connection = Connection, I = unknown, O extends Json = Json> = {
-  readonly id: Id;
-  readonly connection: Conn;
-  readonly [ACTION]: ActionSpec;
+/** A written action. `I`/`O` are its input and output, for the typed client. */
+export type Action<I = unknown, O extends Json = Json> = {
+  readonly [ACTION]: ActionBody;
   /** Types only. */
   readonly "~io"?: { input: I; output: O };
 };
 
-export type AnyAction = Action<string, any, any, any>;
+export type AnyAction = Action<any, any>;
 
-export const actionOf = (a: AnyAction): ActionSpec => a[ACTION];
+export const actionOf = (a: AnyAction): ActionBody => a[ACTION];
 export const isAction = (v: unknown): v is AnyAction => typeof v === "object" && v !== null && ACTION in v;
 
-type Run<Conn, I, O> = (ctx: ActionCtx<Conn>, input: I) => Promise<O> | O;
 /** `void` (nothing returned) comes back as null. */
 type Out<O> = O extends undefined | void ? null : O;
 
-/** After `.input()`: input actions are called by the app only, so no triggers. */
-interface WithInput<Id extends string, Conn extends Connection, I, In> {
-  run<O extends Json | void>(run: Run<Conn, I, O>): Action<Id, Conn, In, Out<O>>;
-}
+// Names end up in stored names (`actions.<name>.*`), URLs and the SDK's `actions` proxy, which
+// never calls these (promises, JSON.stringify and String() probe them).
+const NAME = /^[A-Za-z0-9_-]{1,64}$/;
+/** Why `name` can't name an action, or null. */
+export const badActionName = (name: string): string | null =>
+  !NAME.test(name) ? "letters, digits, _ and - only" : name === "then" || name === "toJSON" || name in Object.prototype ? "reserved" : null;
 
-/** After a trigger: more triggers, then `run`. */
-interface Scheduled<Id extends string, Conn extends Connection> {
-  /** Run every `ms` while the connection is active (first run `ms` after it becomes active). */
-  every(ms: number): Scheduled<Id, Conn>;
-  /**
-   * Run once each time the connection enters `state` (`active`: the first login, and each re-auth
-   * after `reauth_required`; a login while already active isn't an entry). Connections already in
-   * `state` when the action is deployed count as entering it the first time they're seen.
-   */
-  on(state: State): Scheduled<Id, Conn>;
-  run<O extends Json | void>(run: Run<Conn, undefined, O>): Action<Id, Conn, undefined, Out<O>>;
-}
-
-interface Start<Id extends string, Conn extends Connection> extends Scheduled<Id, Conn> {
-  /** What the app passes, checked by the runtime before `run` (a 400 with the schema's issues otherwise). */
-  input<S extends StandardSchemaV1>(schema: S): WithInput<Id, Conn, OutputOf<S>, InputOf<S>>;
-}
-
-// Ids end up in stored names (`actions.<id>.*`) and URLs.
-const ID = /^[A-Za-z0-9_-]{1,64}$/;
-
-/** Start an action on `connection`. Its id is unique per connection. */
-export function action<const Id extends string, Conn extends Connection>(id: Id, connection: Conn): Start<Id, Conn> {
-  if (!ID.test(id)) throw new Error(`action id ${JSON.stringify(id)}: letters, digits, _ and - only`);
-  // The SDK's `actions` proxy never calls these (promises, JSON.stringify, String() probe them).
-  if (id === "then" || id === "toJSON" || id in Object.prototype) throw new Error(`action id ${JSON.stringify(id)} is reserved`);
-  const make = (s: Omit<ActionSpec, "run" | "id" | "connection">): any => ({
-    input: (input: StandardSchemaV1) => make({ ...s, input }),
-    every(ms: number) {
-      if (!(Number.isFinite(ms) && ms >= 1000)) throw new Error(`action ${id}: every() takes at least 1000 ms`);
-      return make({ ...s, every: ms });
-    },
-    on: (on: State) => make({ ...s, on }),
-    run: (run: (ctx: unknown, input: unknown) => unknown): AnyAction => ({
-      id,
-      connection,
-      [ACTION]: { ...s, id, connection: connection.id, run: async (ctx, input) => ((await run(ctx, input)) ?? null) as Json },
-    }),
-  });
-  return make({});
+/** An action the app calls with input, checked by the runtime before `run` (a 400 with the schema's issues otherwise). No triggers. */
+export function action<S extends StandardSchemaV1, O extends Json | void>(spec: {
+  input: S;
+  run(conn: ActionCtx, input: OutputOf<S>): O | Promise<O>;
+}): Action<InputOf<S>, Out<O>>;
+/**
+ * An action without input: the app calls it, and `every` / `on` run it on their own.
+ * - `every`: every `ms` (at least 1000) while the connection is active, the first run `ms` after it becomes active.
+ * - `on`: once each time the connection enters the state (`active`: the first login, and each re-auth
+ *   after `reauth_required`; a login while already active isn't an entry). Connections already in
+ *   it when the action is deployed count as entering it the first time they're seen.
+ */
+export function action<O extends Json | void>(spec: { every?: number; on?: State; run(conn: ActionCtx): O | Promise<O> }): Action<undefined, Out<O>>;
+export function action(spec: { input?: StandardSchemaV1; every?: number; on?: State; run(conn: unknown, input?: unknown): unknown }): AnyAction {
+  if (typeof spec?.run !== "function") throw new Error("action({ run }): run is missing");
+  if (spec.input && (spec.every !== undefined || spec.on !== undefined)) throw new Error("action: an action with input takes no every or on");
+  if (spec.every !== undefined && !(Number.isFinite(spec.every) && spec.every >= 1000)) throw new Error("action: every takes at least 1000 ms");
+  const { run, ...rest } = spec;
+  return { [ACTION]: { ...rest, run: async (conn, input) => ((await run(conn, input)) ?? null) as Json } };
 }

@@ -1,50 +1,89 @@
 import { createRequire } from "node:module";
 import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { badActionName } from "@openconnect/connections";
 import type { Config, Env } from "./project.ts";
 import { workdir } from "./workdir.ts";
 
 /**
- * Folder discovery and the typed client's registry (#54). The config names folders (`dirs`,
- * default `connections/` and `actions/`); every module in them is imported, and its exported
- * connections and actions join the project. Two generated files in `.openconnect/`:
+ * Connection folders (#54). Under the config's `dir`, one folder per connection, named by its id:
  *
- *   entry.ts         the config plus those modules (`withModules`): what dev and deploy run
+ *   github/connection.ts          the connection (default export), required
+ *   github/actions/<name>.ts      one action each (default export), named after the file
+ *   github/events.ts              the app's handlers (#54, app side): never part of the Worker
+ *
+ * Two generated files in `.openconnect/`, rebuilt by dev, deploy and `types`, never edited:
+ *
+ *   entry.ts         the config plus the folders (`withFolders`): what dev and deploy run
  *   registry.d.ts    `interface Registry` for @openconnect/sdk, so `oc.connection("github", id)` is typed
  *
  * Node APIs only (fs, path), no Bun: deploy's plan runs it too.
  */
 
-const DEFAULT_DIRS = ["connections", "actions"];
+const DEFAULT_DIRS = ["src/oc", "oc"];
 // ponytail: .ts, .js, .mjs only (no .mts/.cts/.tsx); symlinked folders aren't followed.
-const SOURCE = /\.(ts|js|mjs)$/;
+const EXTS = [".ts", ".js", ".mjs"];
 const SKIP = /\.(test|spec|d)\.(ts|js|mjs)$/;
+// The id ends up in URLs, instance keys and stored names.
+const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-/** The folders to scan, absolute: the config's `dirs` (each must exist), else the defaults that exist. */
-export function dirsOf(config: Config, env: Env, configPath: string): string[] {
+export type Found = { id: string; connection: string; actions: { name: string; file: string }[] };
+
+const isDir = (p: string) => existsSync(p) && statSync(p).isDirectory();
+
+/** The connection folders' parent, absolute: the config's `dir` (it must exist), else the first default that exists, else null. */
+export function dirOf(config: Config, env: Env, configPath: string): string | null {
   const p = typeof config === "function" ? config(env) : config;
   const base = dirname(configPath);
-  if (p.dirs === undefined) return DEFAULT_DIRS.map((d) => join(base, d)).filter((d) => existsSync(d) && statSync(d).isDirectory());
-  return p.dirs.map((d) => {
-    const abs = resolve(base, d);
-    if (!existsSync(abs) || !statSync(abs).isDirectory()) throw new Error(`dirs: ${d} is not a folder next to ${relative(process.cwd(), configPath) || configPath}`);
-    return abs;
-  });
+  if (p?.dir === undefined) return DEFAULT_DIRS.map((d) => join(base, d)).find(isDir) ?? null;
+  const abs = resolve(base, p.dir);
+  if (!isDir(abs)) throw new Error(`dir: ${p.dir} is not a folder next to ${basename(configPath)}`);
+  return abs;
 }
 
-/** Every module under `dirs`, sorted (stable output), tests, declarations and the config itself left out. */
-export function modulesIn(dirs: string[], configPath?: string): string[] {
-  const out: string[] = [];
-  const walk = (d: string) => {
-    for (const e of readdirSync(d, { withFileTypes: true })) {
-      if (e.name.startsWith(".") || e.name === "node_modules") continue;
-      const p = join(d, e.name);
-      if (e.isDirectory()) walk(p);
-      else if (e.isFile() && SOURCE.test(e.name) && !SKIP.test(e.name) && p !== configPath) out.push(p);
+/**
+ * main-era layouts (`connections/`, `actions/` with named exports) aren't scanned any more: a
+ * project that still has them would start without those connections, silently.
+ */
+export function oldLayout(configPath: string): string | null {
+  const base = dirname(configPath);
+  const old = ["connections", "actions"].filter((d) => isDir(join(base, d)));
+  return old.length
+    ? `${old.map((d) => `${d}/`).join(" and ")} next to ${basename(configPath)} aren't read any more: move each connection to <dir>/<id>/connection.ts (default export) and its actions to <dir>/<id>/actions/<name>.ts`
+    : null;
+}
+
+/** Every connection folder under `dir`, sorted (stable output). Folders and action files starting with `.` or `_` are left out. */
+export function foldersIn(dir: string | null): Found[] {
+  if (!dir) return [];
+  const out: Found[] = [];
+  for (const e of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+    if (!e.isDirectory() || /^[._]/.test(e.name) || e.name === "node_modules") continue;
+    const at = join(dir, e.name);
+    const shown = relative(process.cwd(), at) || at;
+    if (!ID.test(e.name)) throw new Error(`${shown}: a connection folder's name is its id: letters, digits, _ and - only`);
+    if (e.name in Object.prototype) throw new Error(`${shown}: ${e.name} is reserved; name the folder something else`);
+    const files = EXTS.map((x) => join(at, `connection${x}`)).filter(existsSync);
+    if (files.length > 1) throw new Error(`${shown}: one connection file only (found ${files.map((f) => basename(f)).join(", ")})`);
+    const connection = files[0];
+    if (!connection) throw new Error(`${shown}: no connection.ts (export default the connection, e.g. a provider)`);
+    const actions: Found["actions"] = [];
+    const adir = join(at, "actions");
+    if (isDir(adir)) {
+      for (const f of readdirSync(adir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
+        const ext = EXTS.find((x) => f.name.endsWith(x));
+        // `_` files are helpers the actions share, like `_` folders.
+        if (!f.isFile() || !ext || SKIP.test(f.name) || /^[._]/.test(f.name)) continue;
+        const name = f.name.slice(0, -ext.length);
+        const bad = badActionName(name);
+        if (bad) throw new Error(`${join(shown, "actions", f.name)}: the file name is the action's name, and it's ${bad}`);
+        if (actions.some((a) => a.name === name)) throw new Error(`${join(shown, "actions")}: two files for action ${name}`);
+        actions.push({ name, file: join(adir, f.name) });
+      }
     }
-  };
-  for (const d of dirs) walk(d);
-  return [...new Set(out)].sort();
+    out.push({ id: e.name, connection, actions });
+  }
+  return out;
 }
 
 const spec = (from: string, to: string) => {
@@ -53,16 +92,21 @@ const spec = (from: string, to: string) => {
 };
 
 /**
- * Write `.openconnect/entry.ts` (when there are modules) and `.openconnect/registry.d.ts`. Returns
- * the entry to run: the generated one, or the config itself when discovery found nothing.
+ * Write `.openconnect/entry.ts` (when there are folders) and `.openconnect/registry.d.ts`. Returns
+ * the entry to run: the generated one, or the config itself when there are no folders.
  */
-export function writeDiscovered(dir: string, configPath: string, modules: string[]): { entry: string; registry: string } {
+export function writeDiscovered(dir: string, configPath: string, found: Found[]): { entry: string; registry: string } {
   const work = workdir(dir);
-  const head = "// Generated by openconnect (dev, deploy, types) from the config and folder discovery; rebuilt each time.";
-  const imports = (type: boolean) => modules.map((m, i) => `import ${type ? "type " : ""}* as m${i} from ${spec(work, m)};`);
+  const head = "// Generated by openconnect (dev, deploy, types) from oc.config.ts and the connection folders; rebuilt each time, never edited.";
+  const imports = (type: boolean) =>
+    found.flatMap((f, i) => [
+      `import ${type ? "type " : ""}c${i} from ${spec(work, f.connection)};`,
+      ...f.actions.map((a, j) => `import ${type ? "type " : ""}a${i}_${j} from ${spec(work, a.file)};`),
+    ]);
+  const actions = (f: Found, i: number, type: boolean) =>
+    f.actions.length ? `{ ${f.actions.map((a, j) => `${JSON.stringify(a.name)}: ${type ? "typeof " : ""}a${i}_${j}`).join(", ")} }` : "{}";
 
   const registry = join(work, "registry.d.ts");
-  const extra = modules.length ? `, Exports<${modules.map((_, i) => `typeof m${i}`).join(" | ")}>` : "";
   writeFileSync(
     registry,
     [
@@ -70,17 +114,19 @@ export function writeDiscovered(dir: string, configPath: string, modules: string
       "// Include it in the tsconfig of the app that uses @openconnect/sdk.",
       `import type config from ${spec(work, configPath)};`,
       ...imports(true),
-      `import type { ${modules.length ? "Exports, " : ""}RegistryOf } from "@openconnect/sdk";`,
+      `import type { ${found.length ? "Entry, " : ""}RegistryOf } from "@openconnect/sdk";`,
       "",
       'declare module "@openconnect/sdk" {',
-      `  interface Registry extends RegistryOf<typeof config${extra}> {}`,
+      `  interface Registry extends RegistryOf<typeof config> {`,
+      ...found.map((f, i) => `    ${JSON.stringify(f.id)}: Entry<typeof c${i}, ${actions(f, i, true)}>;`),
+      "  }",
       "}",
       "",
     ].join("\n"),
   );
 
   const entry = join(work, "entry.ts");
-  if (!modules.length) {
+  if (!found.length) {
     rmSync(entry, { force: true });
     return { entry: configPath, registry };
   }
@@ -90,10 +136,12 @@ export function writeDiscovered(dir: string, configPath: string, modules: string
       head,
       `import config from ${spec(work, configPath)};`,
       // By package name, like the config's own import: the bundle keeps packages external, resolved from the app.
-      'import { withModules } from "@openconnect/cli";',
+      'import { withFolders } from "@openconnect/cli";',
       ...imports(false),
       "",
-      `export default withModules(config, [${modules.map((_, i) => `m${i}`).join(", ")}]);`,
+      "export default withFolders(config, [",
+      ...found.map((f, i) => `  { id: ${JSON.stringify(f.id)}, file: ${JSON.stringify(relative(dir, f.connection).split(sep).join("/"))}, connection: c${i}, actions: ${actions(f, i, false)} },`),
+      "]);",
       "",
     ].join("\n"),
   );
