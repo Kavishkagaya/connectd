@@ -51,6 +51,8 @@ export const MAX_PAYLOAD = 1_000_000;
 const RENEW_MS = 3_600_000;
 /** Never renew sooner than this after registering, however short-lived the provider makes it. */
 const MIN_RENEW_MS = 60_000;
+// ponytail: all of a connection's subscriptions are one stored value, unregistered one by one on revoke; a cell per subscription past this.
+const MAX_SUBS = 100;
 // ponytail: gives up after 8 attempts (~1h); the next state change or isolate restart tries again.
 const RETRY = { baseMs: 30_000, maxAttempts: 8 };
 const utf8 = new TextEncoder();
@@ -212,9 +214,12 @@ export function webhooks(): Extension {
 
       // --- Explicit subscriptions (#54) ---
       type Sub = Omit<Subscription, "id">;
-      /** Every subscription of this connection by id: one cell, so a renewal can't overwrite an unsubscribe. */
-      const subs = k.cell<Record<string, Sub>>("webhooks.subs");
-      const all = async () => (await subs.read())?.value ?? {};
+      /**
+       * Every subscription of this connection by id, in one cell, so a renewal can't overwrite an
+       * unsubscribe. `closed`: revoked; a subscribe that lands after can't add to it.
+       */
+      const subs = k.cell<{ by: Record<string, Sub>; closed?: true }>("webhooks.subs");
+      const all = async () => (await subs.read())?.value.by ?? {};
       /** Due: renewal time passed, or registered for another account than the connection is on now. */
       const subDue = (s: Sub, acct: string | null) => (s.renewAt !== null && k.now() >= s.renewAt) || (acct !== null && s.account !== acct);
       /** Ring at the earliest renewal. Renewals are on-demand too: `after()` re-arms on the next state change if this is lost. */
@@ -226,43 +231,52 @@ export function webhooks(): Extension {
         const r = await w!.register!(bound.ctx, cred, await endpoint(h), input);
         return { hook: r?.hook ?? null, renewAt: renewAtOf(k.now(), r?.expiresAt), rev: crypto.randomUUID() };
       }
-      /** Remove `id` if it's still at `rev`; returns whether it was. */
-      async function drop(id: string, rev?: string) {
-        let found: Sub | undefined;
-        await subs.update((cur) => {
-          const s = cur && Object.hasOwn(cur, id) ? cur[id] : undefined;
-          found = s && (rev === undefined || s.rev === rev) ? s : undefined;
-          return found && cur ? Object.fromEntries(Object.entries(cur).filter(([i]) => i !== id)) : null;
-        });
-        return found;
+      /** Write `f`'s change; a throw (storage) unregisters `hook`, which nothing would record otherwise. */
+      async function record(cred: Credential, hook: Json, f: Parameters<typeof subs.update>[0]) {
+        try {
+          return await subs.update(f);
+        } catch (e) {
+          await unregister(cred, hook);
+          throw e;
+        }
       }
-      /** Renew what's due (expiring, or on the old account after a re-auth). Throws to retry the rest. */
-      const renewTimer = k.timer("webhooks.renew", {
-        async handle() {
-          if ((await bound.conn.read())?.state !== "active") return;
-          let cred: Credential;
+      /** The current credential, or null when the connection isn't active. */
+      const credential = () =>
+        bound.token().catch((e): null => {
+          if (e instanceof NotActive) return null;
+          throw e;
+        });
+      /** Renew what's due (expiring, or on the old account after a re-auth). One failing doesn't hold up the rest; then it throws to retry. */
+      // ponytail: "moving" a subscription after a re-auth to another account registers the same input
+      // (repo) with the new account's credential and deletes the old hook with it too; if the new
+      // account can't, the old hook stays (logged) and keeps delivering to this connection's URL.
+      async function renewDue() {
+        if ((await bound.conn.read())?.state !== "active") return;
+        // The account before the credential: a re-auth in between makes a stale label (one extra move), never a wrong one.
+        const acct = await account();
+        const cred = await credential();
+        if (!cred) return;
+        let failed: unknown;
+        for (const [id, s] of Object.entries(await all())) {
+          if (!subDue(s, acct)) continue;
           try {
-            cred = await bound.token();
-          } catch (e) {
-            if (e instanceof NotActive) return;
-            throw e;
-          }
-          const acct = await account();
-          for (const [id, s] of Object.entries(await all())) {
-            if (!subDue(s, acct)) continue;
             const reg = await registerSub(cred, s.input);
             let landed = false;
-            await subs.update((cur) => {
-              landed = !!cur && Object.hasOwn(cur, id) && cur[id]?.rev === s.rev;
-              return landed && cur ? { ...cur, [id]: { ...s, ...reg, account: acct ?? s.account } } : null;
+            await record(cred, reg.hook, (cur) => {
+              landed = !!cur && !cur.closed && Object.hasOwn(cur.by, id) && cur.by[id]?.rev === s.rev;
+              return landed && cur ? { by: { ...cur.by, [id]: { ...s, ...reg, account: acct ?? s.account } } } : null;
             });
-            // Renewed: stop the old one. Unsubscribed meanwhile: stop the new one.
+            // Renewed: stop the old one. Unsubscribed or revoked meanwhile: stop the new one.
             await unregister(cred, landed ? s.hook : reg.hook);
+          } catch (e) {
+            console.error("webhook subscription renewal failed", h.instance, id, e);
+            failed ??= e;
           }
-          await armRenew();
-        },
-        retry: RETRY,
-      });
+        }
+        await armRenew();
+        if (failed) throw failed;
+      }
+      const renewTimer = k.timer("webhooks.renew", { handle: renewDue, retry: RETRY, giveUp: armRenew });
       let subsSeen: number | null | undefined;
 
       const subscriptionMethods: Record<string, (a: Json) => Promise<Json>> = {
@@ -271,14 +285,21 @@ export function webhooks(): Extension {
           if (!subscribes || !w?.subscription) throw new Fail("bad_request", 400, `${def.id} takes no webhook subscriptions${w?.subscription ? " (settings.webhooks is not set)" : ""}`);
           const r = await w.subscription["~standard"].validate(a);
           if (r.issues) throw new Fail("bad_request", 400, "invalid subscription", issues(r.issues));
+          // The schema's output is stored as is: it must be JSON.
           const input = r.value as Json;
+          if (Object.keys(await all()).length >= MAX_SUBS) throw new Fail("too_many", 409, `at most ${MAX_SUBS} subscriptions per connection`);
+          const acct = await account();
           // Not active: the lifecycle's 409, before anything reaches the provider.
           const cred = await bound.token();
           const id = crypto.randomUUID();
-          const sub: Sub = { input, ...(await registerSub(cred, input)), account: await account() };
-          await subs.update((cur) => ({ ...cur, [id]: sub }));
-          // Revoked while registering: beforeRevoke may have run before this landed, so undo it here.
-          if ((await bound.conn.read())?.state === "revoked" && (await drop(id, sub.rev))) {
+          const sub: Sub = { input, ...(await registerSub(cred, input)), account: acct };
+          let landed = false;
+          await record(cred, sub.hook, (cur) => {
+            landed = !cur?.closed;
+            return landed ? { by: { ...cur?.by, [id]: sub } } : null;
+          });
+          // Revoked while registering: beforeRevoke closed the cell, so this one is ours to undo.
+          if (!landed) {
             await unregister(cred, sub.hook);
             throw new NotActive("revoked");
           }
@@ -286,18 +307,18 @@ export function webhooks(): Extension {
           return { id, ...sub } satisfies Subscription as unknown as Json;
         },
         "webhooks.list": async () => Object.entries(await all()).map(([id, s]) => ({ id, ...s })) satisfies Subscription[] as unknown as Json,
-        /** `{ id }`: removed here, then at the provider (best effort, with the current credential). */
+        /** `{ id }`: removed at the provider with the current credential (best effort), and here. Not active: a 409, kept for after a re-auth. */
         "webhooks.unsubscribe": async (a) => {
           const id = (a as { id?: Json } | null)?.id;
           if (typeof id !== "string") throw new Fail("bad_request", 400, "id must be a string");
-          const found = await drop(id);
-          if (!found) throw new Fail("not_found", 404, "no such subscription");
-          const cred = await bound.token().catch((e) => {
-            if (e instanceof NotActive) return null;
-            throw e;
+          const cred = await bound.token();
+          let found: Sub | undefined;
+          await subs.update((cur) => {
+            found = cur && Object.hasOwn(cur.by, id) ? cur.by[id] : undefined;
+            return found && cur ? { ...cur, by: Object.fromEntries(Object.entries(cur.by).filter(([i]) => i !== id)) } : null;
           });
-          if (cred) await unregister(cred, found.hook);
-          else console.error("webhook not unregistered: connection has no credential (not active)", h.instance, found.hook);
+          if (!found) throw new Fail("not_found", 404, "no such subscription");
+          await unregister(cred, found.hook);
           return null;
         },
       };
@@ -364,12 +385,14 @@ export function webhooks(): Extension {
 
         async beforeRevoke() {
           if (subscribes) {
-            const cred = await bound.token().catch((e) => {
-              if (e instanceof NotActive) return null;
-              throw e;
-            });
+            const cred = await credential();
             await renewTimer.cancel();
-            const taken = Object.values((await subs.take()) ?? {});
+            // Close it in the same write: a subscribe still registering finds it closed and undoes its own hook.
+            let taken: Sub[] = [];
+            await subs.update((cur) => {
+              taken = Object.values(cur?.by ?? {});
+              return { by: {}, closed: true };
+            });
             if (taken.length && !cred) return console.error("webhooks not unregistered: connection has no credential (not active)", h.instance, taken.length);
             for (const s of taken) if (cred) await unregister(cred, s.hook);
             return;

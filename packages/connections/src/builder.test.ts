@@ -185,4 +185,10 @@ test("builder: the types allow only the core's order", () => {
   authed.identity(async ({ api }) => api);
   const id: "t" = authed.id;
   expect(id).toBe("t");
+
+  // Without a subscription schema, register's input is null: it can't ask for one that never comes.
+  const hooks = { verify: async () => true, parse: () => ({ reply: null }) };
+  // @ts-expect-error input is null here
+  authed.webhooks({ ...hooks, register: async (_c, _cr, _e, input: { repo: string }) => ({ hook: input.repo }) });
+  authed.webhooks({ ...hooks, register: async (_c, _cr, _e, input) => ({ hook: input }) });
 });

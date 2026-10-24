@@ -163,7 +163,7 @@ test("github webhooks: X-Hub-Signature-256 with the connection's secret, ping is
   // Repo hooks are explicit subscriptions: the schema checks the input, register/unregister call the API.
   const sub = definitionOf(github).webhooks!;
   const v = sub.subscription!["~standard"];
-  expect(await v.validate({ repo: "nope" })).toMatchObject({ issues: [{ path: ["repo"] }] });
+  for (const repo of ["nope", "../x", "o/..", "./r", "o/r/x", 1]) expect(await v.validate({ repo })).toMatchObject({ issues: [{ path: ["repo"] }] });
   expect(await v.validate({ repo: "o/r", events: [] })).toMatchObject({ issues: [{ path: ["events"] }] });
   expect(await v.validate({ repo: "o/r" })).toEqual({ value: { repo: "o/r" } });
   const calls: { url: string; method: string; body: unknown; auth: string | null }[] = [];

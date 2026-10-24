@@ -83,7 +83,8 @@ export type Webhooks<C, S = null> = {
    * Returns what `unregister` needs, and when it lapses (Google channels) so it gets renewed. Null: nothing to register.
    * `hook` is stored unsealed and shown in the dashboard: ids only, no secrets.
    */
-  register?(ctx: Ctx<C>, cred: Credential, endpoint: { url: string; secret: string }, input: S): Promise<{ hook: Json; expiresAt?: number } | null>;
+  // NoInfer: `S` comes from `subscription` only, so without one `input` is null (what the runtime passes).
+  register?(ctx: Ctx<C>, cred: Credential, endpoint: { url: string; secret: string }, input: NoInfer<S>): Promise<{ hook: Json; expiresAt?: number } | null>;
   /** Remove what `register` created. Best effort: runs before revoke, and after a renewal for the old one. */
   unregister?(ctx: Ctx<C>, cred: Credential, hook: Json): Promise<void>;
 };

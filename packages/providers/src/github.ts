@@ -15,10 +15,13 @@ const repoHook: StandardSchemaV1<RepoHook> = {
     vendor: "openconnect",
     validate(v) {
       const o = (typeof v === "object" && v !== null ? v : {}) as { repo?: unknown; events?: unknown };
-      if (typeof o.repo !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(o.repo)) return { issues: [{ message: "owner/name", path: ["repo"] }] };
-      if (o.events !== undefined && !(Array.isArray(o.events) && o.events.length && o.events.every((e) => typeof e === "string")))
+      // It goes into API URLs with the user's token: no `.` or `..` segments.
+      const [owner, name, ...more] = typeof o.repo === "string" ? o.repo.split("/") : [];
+      const part = (p: string | undefined, max: number) => !!p && p.length <= max && /^[\w.-]+$/.test(p) && p !== "." && p !== "..";
+      if (more.length || !part(owner, 39) || !part(name, 100)) return { issues: [{ message: "owner/name", path: ["repo"] }] };
+      if (o.events !== undefined && !(Array.isArray(o.events) && o.events.length && o.events.length <= 100 && o.events.every((e) => typeof e === "string" && /^[a-z_*]{1,64}$/.test(e))))
         return { issues: [{ message: "a non-empty list of event names", path: ["events"] }] };
-      return { value: { repo: o.repo, ...(o.events ? { events: o.events as string[] } : {}) } };
+      return { value: { repo: `${owner}/${name}`, ...(o.events ? { events: o.events as string[] } : {}) } };
     },
   },
 };

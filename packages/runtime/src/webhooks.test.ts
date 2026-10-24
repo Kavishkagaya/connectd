@@ -64,7 +64,15 @@ const repoSchema: StandardSchemaV1<{ repo: string }> = {
       typeof (v as { repo?: unknown } | null)?.repo === "string" ? { value: { repo: (v as { repo: string }).repo } } : { issues: [{ message: "Expected string", path: ["repo"] }] },
   },
 };
-const subs = { registered: [] as { repo: string; key: string; url: string }[], unregistered: [] as Json[], ttl: null as number | null };
+const subs = {
+  registered: [] as { repo: string; key: string; url: string }[],
+  unregistered: [] as Json[],
+  ttl: null as number | null,
+  /** Awaited inside register (to race it). */
+  gate: null as Promise<void> | null,
+  /** Repos whose register throws. */
+  failing: new Set<string>(),
+};
 /** Like `hooked`, with explicit subscriptions: one hook per repo. */
 const subbed = defineConnection({
   ...hooked,
@@ -74,6 +82,8 @@ const subbed = defineConnection({
     subscription: repoSchema,
     async register(ctx, cred, endpoint, input: { repo: string }) {
       const key = cred.kind === "static" ? (cred.fields.key ?? "") : "";
+      if (subs.gate) await subs.gate;
+      if (subs.failing.has(input.repo)) throw new Error(`no access to ${input.repo}`);
       subs.registered.push({ repo: input.repo, key, url: endpoint.url });
       return { hook: `${input.repo}#${subs.registered.length}`, ...(subs.ttl ? { expiresAt: ctx.now() + subs.ttl } : {}) };
     },
@@ -85,7 +95,7 @@ const subbed = defineConnection({
 
 async function setup(o: { events?: boolean; down?: string } = {}) {
   Object.assign(fake, { fail: 0, ttl: null, n: 0, registered: [], unregistered: [], during: null, externalThrows: false });
-  Object.assign(subs, { registered: [], unregistered: [], ttl: null });
+  Object.assign(subs, { registered: [], unregistered: [], ttl: null, gate: null, failing: new Set() });
   const got: ConnectionEvent[] = [];
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
@@ -420,4 +430,38 @@ test("subscriptions: many per connection, input checked, renewed, moved on re-au
   // A definition without a subscription schema takes none.
   await t.api("/connections/hooked/c1/connect", { key: "k", team: "T1" });
   expect((await t.api("/connections/hooked/c1/webhooks.subscribe", { repo: "o/a" })).status).toBe(400);
+});
+
+test("subscriptions: a subscribe still registering when revoke runs undoes its own hook", async () => {
+  const t = await setup();
+  const base = "/connections/subbed/c1";
+  await t.api(`${base}/connect`, { key: "k", team: "T1" });
+  let open = () => {};
+  subs.gate = new Promise<void>((r) => (open = r));
+  const pending = t.api(`${base}/webhooks.subscribe`, { repo: "o/a" });
+  await new Promise((r) => setTimeout(r, 5));
+  await t.api(`${base}/revoke`);
+  open();
+  const r = await pending;
+  expect(r.body.error).toMatchObject({ code: "not_active", state: "revoked" });
+  expect(subs.registered.map((x) => x.repo)).toEqual(["o/a"]);
+  expect(subs.unregistered).toEqual(["o/a#1"]);
+  expect((await t.api(`${base}/webhooks.list`)).body).toEqual([]);
+});
+
+test("subscriptions: one failing renewal doesn't hold up the others", async () => {
+  const t = await setup();
+  const base = "/connections/subbed/c1";
+  await t.api(`${base}/connect`, { key: "k", team: "T1" });
+  subs.ttl = 86_400_000;
+  await t.api(`${base}/webhooks.subscribe`, { repo: "o/a" });
+  await t.api(`${base}/webhooks.subscribe`, { repo: "o/b" });
+  subs.failing.add("o/a");
+  await t.w.advance(86_400_000 - 3_600_000);
+  // o/b renewed although o/a (first) failed; o/a is retried.
+  expect(subs.registered.map((x) => x.repo)).toEqual(["o/a", "o/b", "o/b"]);
+  subs.failing.clear();
+  await t.w.advance(60_000);
+  expect(subs.registered.map((x) => x.repo)).toEqual(["o/a", "o/b", "o/b", "o/a"]);
+  expect(subs.unregistered.sort()).toEqual(["o/a#1", "o/b#2"]);
 });
