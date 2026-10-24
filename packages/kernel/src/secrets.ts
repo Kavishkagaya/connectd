@@ -13,10 +13,11 @@ export const fromBase64url = (s: string) =>
   bytes(s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "="));
 export const randomId = (n = 16) => base64url(crypto.getRandomValues(new Uint8Array(n)));
 
-export const importAesKey = (base64Key: string) =>
+// Typed: inferred, the declarations would name node:crypto's CryptoKey.
+export const importAesKey = (base64Key: string): Promise<CryptoKey> =>
   crypto.subtle.importKey("raw", bytes(base64Key), "AES-GCM", false, ["encrypt", "decrypt"]);
 
-export const importHmacKey = (base64Key: string) =>
+export const importHmacKey = (base64Key: string): Promise<CryptoKey> =>
   crypto.subtle.importKey("raw", bytes(base64Key), { name: "HMAC", hash: "SHA-256" }, false, ["sign", "verify"]);
 
 /** Keys from env-style base64 strings, e.g. `importKeys({ 1: env.KEY_V1, 2: env.KEY_V2 }, 2)`. */

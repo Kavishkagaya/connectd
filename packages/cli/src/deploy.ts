@@ -87,7 +87,7 @@ export async function deploy(o: DeployOptions): Promise<Deployed> {
   }
 
   const target = project.target;
-  if (!target) throw new Error('deploy needs a target in oc.config.ts: `target: cloudflare({ name: "my-app" })` from @connectd/cloudflare (bun add -d @connectd/cloudflare)');
+  if (!target) throw new Error('deploy needs a target in oc.config.ts: `target: cloudflare({ name: "my-app" })` from @connectd/cloudflare (npm i -D @connectd/cloudflare)');
   const adapter = await load(o.dir, target.adapter);
   const missing = unconfiguredText(project);
   const r = await adapter.deploy({
@@ -137,7 +137,7 @@ async function load(dir: string, id: string): Promise<Adapter> {
     const code = (e as { code?: string }).code;
     if (code !== "MODULE_NOT_FOUND" && code !== "ERR_MODULE_NOT_FOUND") throw e;
     const pkg = id.split("/").slice(0, id.startsWith("@") ? 2 : 1).join("/");
-    throw new Error(`the deploy target's adapter ${id} isn't installed: bun add -d ${pkg}`);
+    throw new Error(`the deploy target's adapter ${id} isn't installed: npm i -D ${pkg}`);
   }
   const m = (await import(pathToFileURL(path).href)) as Partial<Adapter>;
   if (typeof m.deploy !== "function") throw new Error(`${id} has no deploy(): not a deploy adapter`);

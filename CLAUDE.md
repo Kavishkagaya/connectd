@@ -80,15 +80,15 @@ packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /
   src/fake.ts         the real runtime + dashboard() on the memory driver and a fake DOM, for the tests and e2e
   e2e/chromium.ts     real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 
-packages/cli/         `connectd` bin (#30, #31; Bun only); `@connectd/cli` exports project.ts; runtime/kernel/connections are peer deps
+packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed); `@connectd/cli` exports project.ts; runtime/kernel/connections are peer deps
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), resolve() (connections' env config, `envNames`, `missing`), workerEnv(), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
   src/env.ts          dotenv parsing; dev's env (generated keys < .env < process env; .dev.vars refused); dev keys generated once into .connectd/dev.vars
-  src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
+  src/load.ts         findConfig, importConfig (esbuild bundle to .mjs + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `connectd dev`: memory driver on a real clock behind Bun.serve, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save (watcher skips build output, hidden dirs, generated types); `dev -- <app cmd>` runs the app with CONNECTD_URL/API_KEY/EVENTS_SECRET, APP_URL, PORT (--app-port)
+  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save (watcher skips build output, hidden dirs, generated types); `dev -- <app cmd>` runs the app with CONNECTD_URL/API_KEY/EVENTS_SECRET, APP_URL, PORT (--app-port)
   src/manifest.ts     GitHub App Manifest flow in dev (/setup/github-app, token-gated link in the banner): creates the app, writes GITHUB_APP_* to .env
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) and `connectd diff <id>` (unified diff against the catalog)
@@ -102,6 +102,9 @@ packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, ur
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
 
 examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` checks it): github as a GitHub App created by the manifest flow, oc.routes, `connectd dev -- next dev`
+
+scripts/pack.ts       `bun run pack`: every package built to JavaScript (tsc in the Node, Workers and DOM type environments), staged with exports and bin on dist/, npm-packed into .pack/
+
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers, one local, github/actions/profile.ts)
 ```
 
@@ -111,6 +114,7 @@ Kernel subpath exports: `@connectd/kernel`, `/memory`, `/do`, `/parity`. Connect
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
 - `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts`, the Cloudflare Worker template + the CLI's `project.ts`, and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect` and `packages/dashboard`
+- Packages as npm tarballs that run on Node: `bun run pack` (into .pack/; install them in a scratch project to try `npx connectd` without Bun)
 - Provider changed: `cd packages/providers && bun run registry` (rewrites registry/)
 - Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts`
 - One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`

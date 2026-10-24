@@ -1,6 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { build } from "esbuild";
 import { dirOf, type Found, foldersIn, oldLayout, writeDiscovered } from "./discover.ts";
 import type { Config, Env } from "./project.ts";
 
@@ -16,11 +17,21 @@ export function findConfig(dir: string, file?: string) {
   return join(dir, f);
 }
 
-/** Bundle the config with its local imports into one file and import that, so every load sees fresh code. Packages stay external (one copy, so `instanceof` holds). */
-export async function importConfig(entry: string, out: string, n: number | string): Promise<Config> {
-  const r = await Bun.build({ entrypoints: [entry], target: "bun", packages: "external", outdir: out, naming: `config-${n}.js`, throw: false });
-  if (!r.success) throw new Error(r.logs.map(String).join("\n") || "build failed");
-  const file = r.outputs[0]?.path as string;
+/**
+ * Bundle the config with its local imports into one file and import that, so every load sees fresh
+ * code. Packages stay external (one copy, so `instanceof` holds). esbuild, so Node runs it too; `.mjs`,
+ * so a CommonJS project imports it as a module.
+ */
+export async function importConfig(entry: string, out: string, n: number | string, inputs?: Set<string>): Promise<Config> {
+  const file = join(out, `config-${n}.mjs`);
+  try {
+    const r = await build({ entryPoints: [entry], bundle: true, platform: "node", format: "esm", packages: "external", outfile: file, logLevel: "silent", metafile: !!inputs });
+    // The project's files it read (relative to the working directory): what dev watches.
+    for (const f of Object.keys(r.metafile?.inputs ?? {})) inputs?.add(resolve(f));
+  } catch (e) {
+    const errors = (e as { errors?: { text: string; location?: { file: string; line: number; column: number } | null }[] }).errors;
+    throw new Error(errors?.map((x) => (x.location ? `${x.location.file}:${x.location.line}:${x.location.column}: ${x.text}` : x.text)).join("\n") || String(e));
+  }
   try {
     const m = (await import(pathToFileURL(file).href)) as { default?: Config };
     if (!m.default) throw new Error(`${entry} has no default export (export default defineConfig({ ... }))`);
@@ -36,11 +47,19 @@ export async function importConfig(entry: string, out: string, n: number | strin
  * `.connectd/entry.ts` and `registry.d.ts`, and import the entry. `entry` is what a deploy
  * bundles (the config itself when there are no folders).
  */
-export async function loadProject(dir: string, configPath: string, out: string, n: number, env: Env): Promise<{ config: Config; entry: string; found: Found[] }> {
-  const base = await importConfig(configPath, out, n);
-  const found = foldersIn(dirOf(base, env, configPath));
+export async function loadProject(
+  dir: string,
+  configPath: string,
+  out: string,
+  n: number,
+  env: Env,
+): Promise<{ config: Config; entry: string; found: Found[]; folders: string | null; inputs: Set<string> }> {
+  const inputs = new Set<string>();
+  const base = await importConfig(configPath, out, n, inputs);
+  const folders = dirOf(base, env, configPath);
+  const found = foldersIn(folders);
   const old = found.length ? null : oldLayout(configPath);
   if (old) throw new Error(old);
   const { entry } = writeDiscovered(dir, configPath, found);
-  return { config: entry === configPath ? base : await importConfig(entry, out, `${n}-entry`), entry, found };
+  return { config: entry === configPath ? base : await importConfig(entry, out, `${n}-entry`, inputs), entry, found, folders, inputs };
 }

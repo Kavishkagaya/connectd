@@ -43,7 +43,7 @@ connectd deploy
   --new-keys       generate fresh runtime keys although the index database exists without its Worker
   --dry-run        write .connectd/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
   --config <file>  config file (default ${CONFIG_FILES[0]})
-  Needs wrangler (bun add -d wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID).
+  Needs wrangler (npm i -D wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID).
   In CI, CONNECTD_API_KEY comes from a CI secret (connectd keys); deploy never prints one there.
   Managed deploys (--managed) wait for the managed service (#34).
 `;

@@ -50,6 +50,7 @@
       },
       "dependencies": {
         "@connectd/dashboard": "workspace:*",
+        "esbuild": "^0.28.2",
       },
       "devDependencies": {
         "@connectd/cloudflare": "workspace:*",
@@ -106,6 +107,7 @@
         "@connectd/runtime": "workspace:*",
       },
       "peerDependencies": {
+        "@connectd/kernel": "workspace:*",
         "@connectd/runtime": "workspace:*",
       },
     },

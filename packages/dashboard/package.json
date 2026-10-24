@@ -19,6 +19,7 @@
     "@connectd/runtime": "workspace:*"
   },
   "peerDependencies": {
-    "@connectd/runtime": "workspace:*"
+    "@connectd/runtime": "workspace:*",
+    "@connectd/kernel": "workspace:*"
   }
 }

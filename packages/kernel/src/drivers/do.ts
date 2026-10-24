@@ -9,7 +9,13 @@ import type { Driver, Handler, Json, Program } from "../driver.ts";
  * Every SQL statement below runs synchronously with no await in between, so each store op
  * is atomic against other events on the same DO.
  */
-export function durableObject(program: Program, opts: { binding: string; now?: () => number }) {
+/** What `durableObject()` returns, named so its declaration can be emitted (the base class has protected members). */
+export type ProgramDO = new (
+  ctx: DurableObjectState,
+  env: Record<string, unknown>,
+) => DurableObject<Record<string, unknown>> & { readonly handler: Handler; onCall(method: string, args: Json): Promise<Json> };
+
+export function durableObject(program: Program, opts: { binding: string; now?: () => number }): ProgramDO {
   const now = opts.now ?? Date.now;
 
   return class extends DurableObject<Record<string, unknown>> {
@@ -96,7 +102,7 @@ export function durableObject(program: Program, opts: { binding: string; now?: (
 
       if (ctx.id.name === undefined) throw new Error("durableObject: instances must be created with idFromName");
       this.handler = program(driver, ctx.id.name);
-      this.fire = async () => {
+      this.#fire = async () => {
         for (;;) {
           const t = sql
             .exec<{ name: string; payload: string }>(
@@ -110,7 +116,7 @@ export function durableObject(program: Program, opts: { binding: string; now?: (
       };
     }
 
-    private readonly fire: () => Promise<void>;
+    readonly #fire: () => Promise<void>;
 
     /** RPC entry point: every call into this instance comes through here. */
     onCall(method: string, args: Json): Promise<Json> {
@@ -118,7 +124,7 @@ export function durableObject(program: Program, opts: { binding: string; now?: (
     }
 
     override alarm() {
-      return this.fire();
+      return this.#fire();
     }
   };
 }

@@ -83,7 +83,7 @@ export function apiFor(ctx: Pick<Ctx<unknown>, "fetch">, proxy: NonNullable<Defi
   };
 }
 
-interface Built<Id extends string, C, M extends Json, A extends boolean = false> extends Connection<Id, C, M, A> {
+export interface Built<Id extends string, C, M extends Json, A extends boolean = false> extends Connection<Id, C, M, A> {
   /**
    * Incoming provider webhooks (#25): how to verify and read them, and optionally register one per
    * connection, or many with a `subscription` schema (#54). `S` types `webhooks.subscribe`.
