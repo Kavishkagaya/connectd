@@ -35,6 +35,9 @@ export type Connection<Id extends string = string, C = any, M extends Json = any
 
 export type AnyConnection = Connection<string, any, any, boolean>;
 
+/** A `connection(...)` builder (folder discovery picks these out of a module's exports). */
+export const isConnection = (v: unknown): v is AnyConnection => typeof v === "object" && v !== null && DEF in v;
+
 /** The definition a builder holds; a plain `Definition` as is. */
 export function definitionOf<C, M extends Json>(d: Definition<C, M> | Connection<string, C, M>): Definition<C, M> {
   return DEF in d ? d[DEF] : d;

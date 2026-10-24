@@ -56,7 +56,8 @@ packages/runtime/
   src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
-  src/client.ts       openconnect({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/call/fetch, connections.page/list, OpenConnectError
+  src/client.ts       openconnect<R = Registry>({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, OpenConnectError
+  src/registry.ts     interface Registry (filled by the CLI's generated .openconnect/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types
   src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
   src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
@@ -78,16 +79,17 @@ packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli`
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .openconnect/ dir
   src/env.ts          .env / .dev.vars parsing; dev keys generated once into .openconnect/dev.vars
-  src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan)
+  src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan), loadProject (config + folder discovery)
+  src/discover.ts     folder discovery (#54): dirs (default connections/, actions/), .openconnect/entry.ts (withModules) and registry.d.ts. Node APIs only
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   src/generate.ts     deploy's files in .openconnect/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
   src/deploy.ts       `openconnect deploy`: wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
   src/dev.ts          `openconnect dev`: memory driver on a real clock behind Bun.serve, snapshot in .openconnect/state.json, config bundled with Bun.build and swapped in place on save
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
-  src/cli.ts, args.ts commands (dev, deploy, help) and a declared-flags parser; src/bin.ts the entry
+  src/cli.ts, args.ts commands (dev, deploy, types, help) and a declared-flags parser; src/bin.ts the entry
 
-examples/basic/       a user project (workspace): openconnect.config.ts with the providers, one local definition and one action
+examples/basic/       a user project (workspace): openconnect.config.ts with the providers; connections/ (one local definition) and actions/ (one action), found by folder discovery
 ```
 
 Kernel subpath exports: `@openconnect/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@openconnect/connections`. Runtime: `@openconnect/runtime`, `/cloudflare`, `/signature`. CLI: `@openconnect/cli` (`defineConfig`, project helpers), bin `openconnect`. SDK: `@openconnect/sdk`, `/node`. Browser: `@openconnect/connect`. Dashboard: `@openconnect/dashboard`.

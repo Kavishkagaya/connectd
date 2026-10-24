@@ -2,6 +2,7 @@ import type { Credential, Device, State } from "@openconnect/connections";
 import type { Json } from "@openconnect/kernel";
 import type { Fault, Page, Query, Row, SessionArgs } from "@openconnect/runtime";
 import { events, type EventsOptions } from "./events.ts";
+import type { ActionsOf, EntryOf, IdentityOf, Known, Registry, SubscriptionOf } from "./registry.ts";
 
 // ponytail: depends on @openconnect/runtime only for types (erased) and signature.ts (no imports);
 // split signature.ts into its own package before publishing, so installing the SDK doesn't pull the runtime.
@@ -26,8 +27,11 @@ export type Options = {
   sleep?: (ms: number) => Promise<void>;
 };
 
-/** `GET /connections/:def/:id`. */
-export type Status = { state: State; reason?: string; metadata: Json };
+/** `GET /connections/:def/:id`. `M`: the connection's identity, typed from the registry. */
+export type Status<M = Json> = { state: State; reason?: string; metadata: M | null };
+
+/** One webhook subscription (`webhooks.subscribe`), as the runtime stores it. */
+export type Subscription<S = Json> = { id: string; input: S; hook: Json; renewAt: number | null; account: string | null; rev: string };
 
 /** Opt-in retry of the runtime's own `429 rate_limited` on `fetch`. */
 export type Retry = {
@@ -70,7 +74,11 @@ async function failure(res: Response): Promise<OpenConnectError> {
 
 const sleeper = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-export function openconnect(o: Options) {
+/**
+ * `R`: the project's registry (default: the generated one, `Registry`), so `connection("github", id)`
+ * takes only known ids and its actions, status and subscriptions are typed.
+ */
+export function openconnect<R = Registry>(o: Options) {
   const base = o.url.replace(/\/+$/, "");
   // Wrapped: workerd's fetch throws "Illegal invocation" when called as a method.
   const f = o.fetch ?? ((input: string, init: RequestInit) => fetch(input, init));
@@ -108,7 +116,8 @@ export function openconnect(o: Options) {
     return u.href;
   }
 
-  function connection(def: string, id: string) {
+  function connection<K extends Known<R>>(def: K, id: string) {
+    type E = EntryOf<R, K>;
     // encodeURIComponent keeps dots, and a `.` or `..` segment would collapse the path.
     for (const s of [def, id]) if (s === "" || s === "." || s === "..") throw new OpenConnectError({ code: "bad_request", status: 400, message: `bad definition or id: "${s}"` });
     const at = `${encodeURIComponent(def)}/${encodeURIComponent(id)}`;
@@ -151,7 +160,7 @@ export function openconnect(o: Options) {
     return {
       def,
       id,
-      status: () => request<Status>("GET", `/connections/${at}`),
+      status: () => request<Status<IdentityOf<E>>>("GET", `/connections/${at}`),
       /**
        * Start (or redo) authorization. `url` is where to send the user; null if it finished inline
        * (API keys: pass the fields as `args`). For a user in a browser, prefer `session()` and
@@ -164,13 +173,28 @@ export function openconnect(o: Options) {
       connect: (args: Record<string, string> = {}) => call<{ url: string | null; device?: Device }>("connect", args),
       /** A current credential, refreshed if due. Prefer `fetch`, which never hands the token out. */
       token: () => call<Credential>("token"),
-      revoke: (reason?: string) => call<Status>("revoke", reason === undefined ? null : { reason }),
+      revoke: (reason?: string) => call<Status<IdentityOf<E>>>("revoke", reason === undefined ? null : { reason }),
       /**
        * A short-lived token for the browser (#29, `@openconnect/connect`): it can start this
        * connection's authorization from `origin` (or `returnUrl`'s), and nothing else. Both must be in
        * the runtime's `settings.sessions.origins`; `returnUrl` is where a redirect-mode flow ends.
        */
       session: (o: SessionArgs) => call<{ token: string; expiresAt: number }>("session", o),
+      /**
+       * The connection's actions (#54): `gh.actions.star({ repo })` runs `star` in this connection's
+       * instance (`POST /connections/:def/:id/actions/star`). Input is checked by the action's schema
+       * on the server (`bad_request` with `issues`); the connection must be active (`not_active`).
+       */
+      actions: new Proxy({} as ActionsOf<E>, {
+        // Not thenable (`await gh.actions` stays the proxy), no symbols.
+        get: (_t, name) => (typeof name !== "string" || name === "then" ? undefined : (input?: Json) => call(`actions.${name}`, input ?? null)),
+      }),
+      /** Webhook subscriptions (#54), for definitions with a `subscription` schema (GitHub: `{ repo, events? }`). */
+      webhooks: {
+        subscribe: (input: SubscriptionOf<E>) => call<Subscription<SubscriptionOf<E>>>("webhooks.subscribe", input as Json),
+        list: () => call<Subscription<SubscriptionOf<E>>[]>("webhooks.list"),
+        unsubscribe: (subscription: string) => call<null>("webhooks.unsubscribe", { id: subscription }),
+      },
       /** Any other connection method (extensions': `index.sync`, `webhooks.endpoint`, ...). */
       call,
       fetch: proxied,
@@ -192,10 +216,11 @@ export function openconnect(o: Options) {
       },
     },
     /** The receiving end of event delivery (#24); handlers get the event's connection as a client. */
-    events: (e: EventsOptions) => events(e, connection),
+    events: (e: EventsOptions) => events(e, (def, id) => connection(def as Known<R>, id) as unknown as Connection),
   };
   return client;
 }
 
 export type Client = ReturnType<typeof openconnect>;
-export type Connection = ReturnType<Client["connection"]>;
+/** A connection client, untyped (events hand these out: any definition). */
+export type Connection = ReturnType<ReturnType<typeof openconnect<{}>>["connection"]>;

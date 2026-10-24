@@ -30,9 +30,8 @@ const NEW_WORKER = /\[code: 10007\]|does not exist on your account/;
 
 export type DeployOptions = {
   dir: string;
-  config: string;
-  /** The loaded config (the caller imports it). */
-  load: () => Promise<import("./project.ts").Config>;
+  /** The config and the entry to bundle (`loadProject`: the config plus folder discovery). */
+  load: (env: import("./project.ts").Env) => Promise<{ config: import("./project.ts").Config; entry: string }>;
   name?: string;
   url?: string;
   /** Provider secrets (client ids and secrets, OPENCONNECT_EVENTS_SECRET, optionally OPENCONNECT_API_KEY), pushed as Worker secrets. */
@@ -77,7 +76,7 @@ export async function deploy(o: DeployOptions) {
     if (r === "api-key" && secrets[ENV.apiKey]) throw new Error(`${ENV.apiKey} is set in ${o.envFile}; change it there`);
   }
 
-  const config = await o.load();
+  const { config, entry } = await o.load({ ...secrets });
   const project: Project = resolve(config, { ...secrets });
   const name = workerName(o.name ?? project.deploy?.name ?? state.name ?? basename(resolvePath(o.dir)));
   const fixed = o.url ?? project.deploy?.url;
@@ -96,7 +95,7 @@ export async function deploy(o: DeployOptions) {
   );
 
   if (o.dryRun) {
-    const g = generate({ dir: o.dir, config: o.config, name, ...(url ? { url } : {}), ...(state.databaseId && state.name === name ? { databaseId: state.databaseId } : {}) });
+    const g = generate({ dir: o.dir, config: entry, name, ...(url ? { url } : {}), ...(state.databaseId && state.name === name ? { databaseId: state.databaseId } : {}) });
     log(`  wrote        ${relative(o.dir, g.entry)}, ${relative(o.dir, g.wrangler)}, ${relative(o.dir, g.migrations)}/`);
     return { name, url, dryRun: true as const, generated: g };
   }
@@ -142,7 +141,7 @@ export async function deploy(o: DeployOptions) {
     if (!databaseId) throw new Error(`created D1 database ${db} but can't find it in wrangler d1 list`);
   }
 
-  let g = generate({ dir: o.dir, config: o.config, name, ...(url ? { url } : {}), databaseId });
+  let g = generate({ dir: o.dir, config: entry, name, ...(url ? { url } : {}), databaseId });
   await w(["d1", "migrations", "apply", db, "--remote", "--config", g.wrangler]);
 
   // Secrets go up with the version (`--secrets-file`), so new code never runs without them. Wrangler
@@ -182,7 +181,7 @@ export async function deploy(o: DeployOptions) {
     const deployed = /https:\/\/[a-z0-9.-]+\.workers\.dev/.exec(out)?.[0];
     if (!deployed) throw new Error("wrangler deploy printed no workers.dev URL; pass --url");
     url = deployed;
-    g = generate({ dir: o.dir, config: o.config, name, url, databaseId });
+    g = generate({ dir: o.dir, config: entry, name, url, databaseId });
     await w(["deploy", "--config", g.wrangler]);
   }
   writeFileSync(statePath, `${JSON.stringify({ name, url, databaseId } satisfies State, null, 2)}\n`);

@@ -1,4 +1,4 @@
-import { type AnyAction, type AnyConnection, definitionOf } from "@openconnect/connections";
+import { type AnyAction, type AnyConnection, definitionOf, isAction, isConnection } from "@openconnect/connections";
 import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
@@ -32,6 +32,11 @@ export type Project = {
   definitions: (AnyConnection | AnyDefinition)[];
   /** `action(id, connection)` builders (#54), each on one of `definitions`. */
   actions?: AnyAction[];
+  /**
+   * Folders whose files' exported connections and actions join `definitions` and `actions` (#54),
+   * relative to the config. Default: `connections/` and `actions/`, where they exist. `[]`: none.
+   */
+  dirs?: string[];
   /** Connector config by definition id (client id/secret). Definitions with no callback step (`apiKey`) default to null. */
   config?: Record<string, unknown>;
   /** Where lifecycle and webhook events are POSTed (#24); signed with `OPENCONNECT_EVENTS_SECRET`. */
@@ -56,6 +61,23 @@ export type Config = Project | ((env: Env) => Project);
 export const defineConfig = <T extends Config>(c: T) => c;
 
 export { ENV, generateKeys } from "./keys.ts";
+
+/**
+ * The config plus what folder discovery found (the generated entry calls this): every exported
+ * connection and action of `modules` not already listed. A connection whose id is listed already
+ * (a provider extended under the same id) stays as listed.
+ */
+export function withModules(config: Config, modules: Record<string, unknown>[]): Config {
+  return (env) => {
+    const p = typeof config === "function" ? config(env) : config;
+    const found = modules.flatMap((m) => Object.values(m));
+    const definitions = [...p.definitions];
+    for (const c of found.filter(isConnection)) if (!definitions.some((d) => d === c || d.id === c.id)) definitions.push(c);
+    const actions = [...(p.actions ?? [])];
+    for (const a of found.filter(isAction)) if (!actions.includes(a)) actions.push(a);
+    return { ...p, definitions, ...(actions.length ? { actions } : {}) };
+  };
+}
 
 /** The project with definitions checked: unique, non-empty ids. */
 export function resolve(config: Config, env: Env): Project & { registry: Record<string, AnyDefinition> } {

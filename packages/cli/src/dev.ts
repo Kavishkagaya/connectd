@@ -5,7 +5,7 @@ import { memory, type Snapshot } from "@openconnect/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@openconnect/runtime";
 import { devKeys, loadEnv, workdir } from "./env.ts";
 import { ENV, type Env, options, type Project, unconfigured } from "./project.ts";
-import { findConfig, importConfig } from "./load.ts";
+import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 
 export const PORT = 8787;
@@ -117,8 +117,8 @@ export async function dev(o: DevOptions) {
   let loaded: Loaded | undefined;
   /** Build, import and validate; swap only if all of it worked. */
   async function load(): Promise<Loaded> {
-    const config = await importConfig(entry, build, ++n);
     const env = loadEnv(dir, keys.keys, o.env);
+    const { config } = await loadProject(dir, entry, build, ++n, env);
     const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
     const opts = options(config, { ...env, [ENV.url]: publicUrl }, index);
