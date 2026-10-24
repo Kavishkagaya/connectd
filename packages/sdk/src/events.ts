@@ -1,6 +1,7 @@
 import type { ConnectionEvent } from "@openconnect/runtime";
 import { verify } from "@openconnect/runtime/signature";
 import type { Connection } from "./client.ts";
+import type { EventFor, EventsOf, Registry } from "./registry.ts";
 
 /**
  * The receiving end of event delivery (#24): verify the Standard Webhooks signature, parse the
@@ -9,13 +10,15 @@ import type { Connection } from "./client.ts";
  *
  *   const ev = oc.events({ secret: process.env.OPENCONNECT_EVENTS_SECRET });
  *   ev.on("connection.reauth_required", async (e, conn) => notify(e.connection.id));
+ *   ev.on("webhook.push", (e) => ...); ev.on("syncIssues.completed", (e) => e.data.output);
  *   export const POST = (req: Request) => ev.handle(req); // Next, Hono `c.req.raw`, Bun, Workers, Deno
  */
 
-export type EventType = ConnectionEvent["type"];
-/** The event for one `type`: `connection.active` gives a `LifecycleEvent`, `webhook` a `WebhookEvent`. */
-export type EventOf<T extends EventType> = ConnectionEvent & { type: T };
-export type Handler<E extends ConnectionEvent> = (event: E, connection: Connection) => unknown;
+/** The event types the app can get: the registry's (`connection.active`, `webhook.push`, `syncIssues.completed`, own events). */
+export type EventType<R = Registry> = EventsOf<R>["type"];
+/** The event for one `type`: `connection.active` gives a `LifecycleEvent`, `webhook.push` a `WebhookEvent`, typed from the registry. */
+export type EventOf<T extends string, R = Registry> = EventFor<R, T>;
+export type Handler<E> = (event: E, connection: Connection) => unknown;
 
 /** Remembers handled `webhook-id`s. A `Set<string>` will do in dev; use a shared store with a TTL in production. */
 export type Dedupe = { has(id: string): boolean | Promise<boolean>; add(id: string): unknown };
@@ -31,13 +34,13 @@ export type EventsOptions = {
   now?: () => number;
 };
 
-export function events(o: EventsOptions, connection: (def: string, id: string) => Connection) {
+export function events<R = Registry>(o: EventsOptions, connection: (def: string, id: string) => Connection) {
   const handlers = new Map<string, Handler<ConnectionEvent>[]>();
   const answer = (status: number, message?: string) => (message ? Response.json({ error: message }, { status }) : new Response(null, { status }));
 
   return {
     /** Run `handler` for every event of `type` (`"*"`: all events). Several per type run in order. */
-    on<T extends EventType | "*">(type: T, handler: Handler<T extends EventType ? EventOf<T> : ConnectionEvent>) {
+    on<T extends EventType<R> | "*">(type: T, handler: Handler<T extends "*" ? EventsOf<R> : EventFor<R, T>>) {
       handlers.set(type, [...(handlers.get(type) ?? []), handler as Handler<ConnectionEvent>]);
       return this;
     },
@@ -71,4 +74,4 @@ export function events(o: EventsOptions, connection: (def: string, id: string) =
   };
 }
 
-export type Events = ReturnType<typeof events>;
+export type Events<R = Registry> = ReturnType<typeof events<R>>;

@@ -105,7 +105,7 @@ test("one connection: status, external ids, the events outbox and webhooks, neve
     events: { ok: { enabled: true, pending: 2, attempt: 1, error: "HTTP 500", recent: [] } },
     webhooks: { ok: { supported: true, registers: false, url: `${OC}/webhooks/keyed/k1`, registration: null, pending: false, subscriptions: null } },
   });
-  expect(d.events.ok.queued.map((e: { type: string }) => e.type)).toEqual(["connection.active", "webhook"]);
+  expect(d.events.ok.queued.map((e: { type: string }) => e.type)).toEqual(["connection.active", "webhook.push"]);
   expect(JSON.stringify(d)).not.toContain(secret);
 
   // The actions it uses are the runtime's own routes.

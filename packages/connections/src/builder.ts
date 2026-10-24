@@ -2,6 +2,7 @@ import type { Json, Limit, Observed } from "@openconnect/kernel";
 import { BEARER, type ConfigFrom, type Ctx, type Definition, type Inject, inject, type Webhooks } from "./define.ts";
 import { type Flow, type Flows, flows, IDENTITY, STEPS } from "./flows.ts";
 import type { Credential } from "./lifecycle.ts";
+import { badEventName, type StandardSchemaV1 } from "./action.ts";
 
 /**
  * The connection builder (#54): an ordered, typed core.
@@ -17,6 +18,8 @@ import type { Credential } from "./lifecycle.ts";
  * builder is the definition, and the runtime reads it with `definitionOf`. Each step sees the types
  * of the ones before it, and the types allow only this order.
  */
+// ponytail: `.webhooks()` and `.events()` carry their types on `this`: a later stage (`.api()`,
+// `.identity()`) drops them, so call them last. Carry them as type parameters if that order bites.
 // ponytail: compiles to #17's `Definition`, so the runtime is unchanged. What a connection does lives outside it, in actions (action.ts).
 
 // `Symbol.for`: a config bundled with its own copy of this package (`openconnect dev`) still matches.
@@ -85,7 +88,13 @@ interface Built<Id extends string, C, M extends Json, A extends boolean = false>
    * Incoming provider webhooks (#25): how to verify and read them, and optionally register one per
    * connection, or many with a `subscription` schema (#54). `S` types `webhooks.subscribe`.
    */
-  webhooks<S = null>(webhooks: Webhooks<C, S>): this & { readonly "~subscription"?: S };
+  webhooks<S = null, const T extends string = string>(webhooks: Webhooks<C, S, T>): this & { readonly "~subscription"?: S; readonly "~topics"?: T };
+  /**
+   * Its own events, by name (#54): `.events({ synced: z.object({ count: z.number() }) })`. Actions
+   * send them with `conn.emit("synced", { count })`, checked against the schema; the app gets them as
+   * events of type `synced`. Names: letters, digits, _ and -.
+   */
+  events<E extends Record<string, StandardSchemaV1>>(events: E): this & { readonly "~events"?: E };
 }
 
 /** `external` straight after auth, when the flow brings its own identity (OIDC claims). */
@@ -121,6 +130,14 @@ function make(def: Definition<any, any>): any {
     id: def.id,
     [DEF]: def,
     webhooks: (webhooks: Webhooks<unknown, unknown>) => next({ webhooks }),
+    events: (events: Record<string, StandardSchemaV1>) => {
+      for (const [name, schema] of Object.entries(events ?? {})) {
+        const bad = badEventName(name);
+        if (bad) throw new Error(`${def.id || "connection"}: event ${name}: the name is ${bad}`);
+        if (typeof schema?.["~standard"]?.validate !== "function") throw new Error(`${def.id || "connection"}: event ${name} needs a schema (zod, valibot, arktype: Standard Schema)`);
+      }
+      return next({ events: { ...def.events, ...events } });
+    },
     api: (s: ApiSpec) => {
       const headers = Object.entries(s.headers ?? {});
       const key = s.key ?? BEARER;

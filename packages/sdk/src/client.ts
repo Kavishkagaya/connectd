@@ -223,7 +223,7 @@ export function openconnect<R = Registry>(o: Options) {
       },
     },
     /** The receiving end of event delivery (#24); handlers get the event's connection as a client. */
-    events: (e: EventsOptions) => events(e, (def, id) => connection(def as Known<R>, id) as unknown as Connection),
+    events: (e: EventsOptions) => events<R>(e, (def, id) => connection(def as Known<R>, id) as unknown as Connection),
   };
   return client;
 }

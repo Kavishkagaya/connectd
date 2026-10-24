@@ -229,7 +229,7 @@ export function start(win: Win) {
       e.id,
       e.type,
       time(e.at),
-      e.type === "webhook" ? `${(e.data as { topic?: string }).topic ?? ""}` : JSON.stringify(e.data),
+      e.type.startsWith("webhook.") ? `${(e.data as { topic?: string }).topic ?? ""}` : JSON.stringify(e.data),
       `${e.size} B${e.copy ? ", redelivered copy" : ""}${e.dropped ? ", dropped" : e.deliveredAt ? `, delivered ${time(e.deliveredAt)}` : ""}`,
       redeliver && e.redeliverable ? h("button", { type: "button", onclick: redeliver(e.slot) }, "Redeliver") : redeliver ? "body not kept" : "",
     ]);

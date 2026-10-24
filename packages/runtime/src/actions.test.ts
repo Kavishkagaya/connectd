@@ -106,7 +106,7 @@ async function setup() {
     expect(res.status).toBe(200);
   };
   const store = async (id: string) => (await req(`/connections/gh/${id}/actions/last`)).body;
-  const actionEvents = () => sent.filter((e) => e.type.startsWith("action.")).map((e) => ({ type: e.type, ...(e.data as object) }) as Record<string, unknown>);
+  const actionEvents = () => sent.filter((e) => /\.(completed|failed)$/.test(e.type)).map((e) => ({ type: e.type, ...(e.data as object) }) as Record<string, unknown>);
   return { w, req, login, store, actionEvents, p, sent };
 }
 
@@ -144,20 +144,20 @@ test("every: runs while active, reports as events, retries a failure, stops on r
   await login("u1");
   await w.advance(1); // the on("active") run, then the events drain
   await w.advance(1);
-  expect(actionEvents()).toEqual([{ type: "action.completed", action: "welcome", trigger: "on", output: null }]);
+  expect(actionEvents()).toEqual([{ type: "welcome.completed", action: "welcome", trigger: "on", output: null }]);
 
   await w.advance(10 * MIN);
   await w.advance(1);
-  expect(actionEvents().at(-1)).toEqual({ type: "action.completed", action: "sync", trigger: "every", output: { n: 1, user: "octo" } });
+  expect(actionEvents().at(-1)).toEqual({ type: "sync.completed", action: "sync", trigger: "every", output: { n: 1, user: "octo" } });
 
   // A failure is reported and retried (backoff), then the schedule goes on.
   failing = 1;
   await w.advance(10 * MIN);
   await w.advance(1);
-  expect(actionEvents().at(-1)).toMatchObject({ type: "action.failed", action: "sync", trigger: "every", error: "provider down", attempt: 1 });
+  expect(actionEvents().at(-1)).toMatchObject({ type: "sync.failed", action: "sync", trigger: "every", error: "provider down", attempt: 1 });
   await w.advance(2 * MIN);
   await w.advance(1);
-  expect(actionEvents().at(-1)).toMatchObject({ type: "action.completed", action: "sync", output: { n: 2 } });
+  expect(actionEvents().at(-1)).toMatchObject({ type: "sync.completed", action: "sync", output: { n: 2 } });
 
   // Revoked: no more runs.
   await req("/connections/gh/u1/revoke");
@@ -194,7 +194,7 @@ test("revoked while a scheduled run is in flight: no failure reported, not armed
   await w.advance(1);
   const after = actionEvents().filter((e) => e.action === "sync");
   // The run finished with the connection revoked (its api call refused): nothing failed, nothing re-armed.
-  expect(after.filter((e) => e.type === "action.failed")).toEqual([]);
+  expect(after.filter((e) => String(e.type).endsWith(".failed"))).toEqual([]);
   const n = actionEvents().length;
   await w.advance(30 * MIN);
   expect(actionEvents().length).toBe(n);

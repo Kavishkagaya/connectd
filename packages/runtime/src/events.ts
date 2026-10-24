@@ -17,17 +17,19 @@ import type { WebhookData } from "./webhooks.ts";
 type Base = { id: string; seq: number; at: number; connection: { definition: string; id: string } };
 /** `connection.<to>` on every state change, from the lifecycle's record outbox. */
 export type LifecycleEvent = Base & { type: `connection.${State}`; data: { from: State | null; to: State; reason?: string } };
-/** A provider webhook routed to this connection (#25), shaped by the webhooks extension. */
-export type WebhookEvent = Base & { type: "webhook"; data: WebhookData };
-/** A scheduled or `.on(state)` action run (#54): its output, or why it failed. App calls get their result directly instead. */
+/** A provider webhook routed to this connection (#25), shaped by the webhooks extension: `webhook.<topic>` (`webhook.push`). */
+export type WebhookEvent = Base & { type: `webhook.${string}`; data: WebhookData };
+/** A scheduled or `.on(state)` action run (#54), `<action>.completed` / `.failed`: its output, or why it failed. App calls get their result directly instead. */
 export type ActionEvent =
-  | (Base & { type: "action.completed"; data: { action: string; trigger: "every" | "on"; output: Json } })
-  | (Base & { type: "action.failed"; data: { action: string; trigger: "every" | "on"; error: string; attempt: number } });
+  | (Base & { type: `${string}.completed`; data: { action: string; trigger: "every" | "on"; output: Json } })
+  | (Base & { type: `${string}.failed`; data: { action: string; trigger: "every" | "on"; error: string; attempt: number } });
+/** One of the connection's own events (`.events({ ... })`, sent with `conn.emit`): its name, no dots, and the schema's output. */
+export type CustomEvent = Base & { type: string; data: Json };
 /** The POST body. `id` = `<instance>:<seq>`, the same on every retry: dedupe on it. */
-export type ConnectionEvent = LifecycleEvent | WebhookEvent | ActionEvent;
+export type ConnectionEvent = LifecycleEvent | WebhookEvent | ActionEvent | CustomEvent;
 
 /** What the queue holds: the body without what the queue and the connection add (`id`, `seq`, `connection`). */
-type Msg = { type: ConnectionEvent["type"]; at: number; data: Json };
+type Msg = { type: string; at: number; data: Json };
 
 const MAX = 1000;
 /**
@@ -45,7 +47,7 @@ export type EventSummary = {
   slot: number;
   id: string;
   seq: number;
-  type: ConnectionEvent["type"];
+  type: string;
   at: number;
   /** Lifecycle: `{ from, to, reason? }`. Webhook: `{ topic, delivery, truncated? }`. */
   data: Json;
@@ -82,10 +84,11 @@ export type EventsStatus = {
 const queues = new WeakMap<Kernel, { q: Queue<Msg>; relay(): Promise<void> }>();
 
 /**
- * Queue a non-lifecycle event on this connection: webhooks (#25) and action runs (#54). Ordered
- * after every transition so far. No-op without `settings.events` or the events extension.
+ * Queue a non-lifecycle event on this connection: webhooks (#25), action runs and the connection's
+ * own events (#54). Ordered after every transition so far. No-op without `settings.events` or the
+ * events extension.
  */
-export async function emit(h: Hosted, data: Json, type: Exclude<ConnectionEvent["type"], LifecycleEvent["type"]> = "webhook") {
+export async function emit(h: Hosted, data: Json, type: string) {
   const e = queues.get(h.k);
   if (!h.settings.events || !e) return;
   await e.relay();
@@ -95,7 +98,7 @@ export async function emit(h: Hosted, data: Json, type: Exclude<ConnectionEvent[
 /** What status lists for a stored event: webhook payloads left out. */
 function summarize(m: Msg): Json {
   const w = m.data as unknown as WebhookData;
-  const data = m.type === "webhook" ? { topic: w.topic, delivery: w.delivery, ...(w.truncated ? { truncated: w.truncated } : {}) } : m.data;
+  const data = m.type.startsWith("webhook.") ? { topic: w.topic, delivery: w.delivery, ...(w.truncated ? { truncated: w.truncated } : {}) } : m.data;
   return { type: m.type, at: m.at, data } as unknown as Json;
 }
 

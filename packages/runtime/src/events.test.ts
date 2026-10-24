@@ -11,7 +11,7 @@ const URL_ = "https://app.test/events";
 const keyed = defineConnection({ id: "keyed", auth: apiKey(["key"]) });
 
 // A webhook extension stand-in (#25): a method that emits a non-lifecycle event.
-const hook: Extension = { connection: (h) => ({ methods: { hook: async (a) => (await emit(h, a), null) } }) };
+const hook: Extension = { connection: (h) => ({ methods: { hook: async (a) => (await emit(h, a, `webhook.${(a as { topic?: string } | null)?.topic ?? "push"}`), null) } }) };
 
 /** The DO limit on one stored value, plus a count of live event keys and of credential-record reads. */
 const LIMIT = 2 * 1024 * 1024;
@@ -120,8 +120,8 @@ test("5xx and timeouts retry with backoff; order holds across retries", async ()
   await t.w.advance(6_000); // retry 1 times out (not recorded)
   t.set(200);
   await t.w.advance(20_000); // retry 2 in [10s, 20s] later
-  expect(t.got.map((g) => JSON.parse(g.body).type)).toEqual(["connection.active", "connection.active", "webhook"]);
-  expect(t.types()).toEqual(["connection.active", "webhook"]);
+  expect(t.got.map((g) => JSON.parse(g.body).type)).toEqual(["connection.active", "connection.active", "webhook.push"]);
+  expect(t.types()).toEqual(["connection.active", "webhook.push"]);
   expect(t.bodies()[1]).toMatchObject({ seq: 2, id: "conn:keyed:k1:2", data: { n: 1 } });
 });
 
@@ -152,7 +152,7 @@ test("webhook events from another extension ride the same ordered outbox", async
   await t.w.advance(0);
   expect(t.bodies().map((e) => [e.seq, e.type])).toEqual([
     [1, "connection.active"],
-    [2, "webhook"],
+    [2, "webhook.push"],
     [3, "connection.revoked"],
   ]);
 });
@@ -212,7 +212,7 @@ test("large payloads: each event is its own stored value, so a backlog past 2 MB
   for (let n = 0; n < 20; n++) expect(await t.call("hook", { n, big })).toEqual({ ok: null }); // ~10 MB in total
   t.set(200);
   await t.w.advance(3_600_000);
-  expect(t.bodies().map((e) => (e.type === "webhook" ? (e.data as unknown as { n: number }).n : e.type))).toEqual([
+  expect(t.bodies().map((e) => (e.type === "webhook.push" ? (e.data as unknown as { n: number }).n : e.type))).toEqual([
     "connection.active",
     ...Array.from({ length: 20 }, (_, i) => i),
   ]);
@@ -280,7 +280,7 @@ test("events.status: pending, the parked head's attempt, retry time and error; r
   expect(parked.queued).toEqual([
     { slot: 1, id: "conn:keyed:k1:1", seq: 1, type: "connection.active", at: t.w.now(), data: { from: null, to: "active" }, size: expect.any(Number), ...pend },
     // Webhook payloads aren't listed: topic and delivery only.
-    { slot: 2, id: "conn:keyed:k1:2", seq: 2, type: "webhook", at: t.w.now(), data: { topic: "push", delivery: "d1" }, size: expect.any(Number), ...pend },
+    { slot: 2, id: "conn:keyed:k1:2", seq: 2, type: "webhook.push", at: t.w.now(), data: { topic: "push", delivery: "d1" }, size: expect.any(Number), ...pend },
   ]);
   t.set(200, true);
   await t.w.advance(parked.retryAt! - t.w.now());
@@ -291,7 +291,7 @@ test("events.status: pending, the parked head's attempt, retry time and error; r
   const flushed = ((await t.call("events.flush")) as { ok: EventsStatus }).ok;
   expect(flushed.retryAt).toBeNull();
   await t.w.advance(0);
-  expect(t.types()).toEqual(["connection.active", "webhook"]);
+  expect(t.types()).toEqual(["connection.active", "webhook.push"]);
   const done = await status();
   expect(done).toMatchObject({ pending: 0, attempt: 0, retryAt: null, error: null, queued: [] });
   expect(done.recent.map((e) => [e.slot, e.deliveredAt, e.redeliverable])).toEqual([

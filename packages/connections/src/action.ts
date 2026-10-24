@@ -17,8 +17,8 @@ import type { Credential, State } from "./lifecycle.ts";
  *
  * Each runs inside its connection's instance, so `conn.api` is that one user's, already
  * authenticated. The app calls one with `oc.connection("github", id).actions.starRepo(input)`;
- * `every` and `on` runs have no caller, so their results go out as `action.completed` /
- * `action.failed` events (with the action's name).
+ * `every` and `on` runs have no caller, so their results go out as `<name>.completed` /
+ * `<name>.failed` events (`syncIssues.completed`).
  */
 
 /** Standard Schema v1 (standardschema.dev): zod, valibot and arktype implement it, so we depend on none. */
@@ -60,8 +60,21 @@ export type ActionCtx<Conn = Connection> =
         /** The current credential, refreshed if it's due. */
         token(): Promise<Credential>;
         store: Store;
+        /**
+         * Send one of the connection's own events (`.events({ ... })`) to the app: checked against its
+         * schema (a throw otherwise), delivered after this connection's earlier events.
+         */
+        emit: EmitOf<Conn>;
       } & (true extends A ? { api: Api } : unknown)
     : never;
+
+type Emit = { emit(name: string, data?: Json): Promise<void> }["emit"];
+/** Typed from `.events()`; any name and Json without it. */
+export type EmitOf<Conn> = Conn extends { readonly "~events"?: infer E }
+  ? unknown extends E
+    ? Emit
+    : <N extends Extract<keyof NonNullable<E>, string>>(name: N, data: InputOf<NonNullable<E>[N]>) => Promise<void>
+  : Emit;
 
 /** How a run started: an app call, the `every` timer, or the `on` state. */
 export type Trigger = "call" | "every" | "on";
@@ -97,9 +110,15 @@ type Out<O> = O extends undefined | void ? null : O;
 // Names end up in stored names (`actions.<name>.*`), URLs and the SDK's `actions` proxy, which
 // never calls these (promises, JSON.stringify and String() probe them).
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
-/** Why `name` can't name an action, or null. */
+/** Why `name` can't name an action, or null. `connection` and `webhook` start other events' types (`connection.active`, `webhook.push`). */
 export const badActionName = (name: string): string | null =>
-  !NAME.test(name) ? "letters, digits, _ and - only" : name === "then" || name === "toJSON" || name in Object.prototype ? "reserved" : null;
+  !NAME.test(name)
+    ? "letters, digits, _ and - only"
+    : name === "then" || name === "toJSON" || name === "connection" || name === "webhook" || name in Object.prototype
+      ? "reserved"
+      : null;
+/** Why `name` can't name a connection's own event, or null. No dots, so it never meets `connection.*`, `webhook.*` or `<action>.completed`. */
+export const badEventName = (name: string): string | null => (!NAME.test(name) ? "letters, digits, _ and - only" : name in Object.prototype ? "reserved" : null);
 
 /** An action the app calls with input, checked by the runtime before `run` (a 400 with the schema's issues otherwise). No triggers. */
 export function action<S extends StandardSchemaV1, O extends Json | void>(spec: {

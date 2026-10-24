@@ -108,6 +108,8 @@ export function webhooks(): Extension {
             throw new Fail("bad_request", 400, `unreadable webhook: ${e instanceof Error ? e.message : String(e)}`);
           }
           if ("reply" in inc) return Response.json(inc.reply);
+          // A topic the definition doesn't list: not an event the app can be typed for. Acknowledged, so the provider doesn't retry it.
+          if (def.webhooks.topics && !def.webhooks.topics.includes(inc.topic)) return Response.json({ delivered: 0, ignored: inc.topic });
           // Accepting and dropping would lose it silently; a 503 makes the provider retry or flag it.
           if (!api.settings.events) throw new Fail("not_configured", 503, "settings.events is not set: nowhere to deliver webhooks");
           const msg = { data: data(inc), ...(inc.external ? { external: inc.external } : {}) } satisfies Receive;
@@ -339,7 +341,7 @@ export function webhooks(): Extension {
               const ids = meta !== null && def.external ? def.external(meta) : {};
               if (ids[m.external.key] !== m.external.value) throw new Fail("forbidden", 403, "webhook is for another account");
             }
-            await emit(h, m.data as unknown as Json);
+            await emit(h, m.data as unknown as Json, `webhook.${m.data.topic}`);
             return null;
           },
           /**

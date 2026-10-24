@@ -30,7 +30,7 @@ test("real deliveries: typed dispatch, the connection as a client, ack ends deli
       expect((await conn.status()).state).toBe("revoked");
       expect([conn.def, conn.id]).toEqual(["keyed", "k1"]);
     })
-    .on("webhook", (e) => void seen.push(`webhook ${JSON.stringify(e.data)}`))
+    .on("webhook.push", (e) => void seen.push(`webhook ${JSON.stringify(e.data)}`))
     .on("*", (e: ConnectionEvent) => void seen.push(`* ${e.id}`));
 
   await t.oc.connection("keyed", "k1").connect({ key: "sk" });

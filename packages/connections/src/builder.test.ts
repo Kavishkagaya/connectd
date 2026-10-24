@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { type Connection, connection, definitionOf } from "./builder.ts";
+import { badActionName, badEventName, type StandardSchemaV1 } from "./action.ts";
 import type { Flows } from "./flows.ts";
 import { defineConnection } from "./define.ts";
 import type { OAuth2 } from "./lifecycle.ts";
@@ -202,4 +203,15 @@ test("config from the environment: env() required, env.optional() not; every nam
   // Typed from what it returns.
   const id: string = (envConfig(from, { T_ID: "a" }).value as { id: string }).id;
   expect(id).toBe("a");
+});
+
+test("events and names (#54): .events() needs schemas and dotless names; actions can't be named after event prefixes", () => {
+  const s: StandardSchemaV1<{ n: number }> = { "~standard": { version: 1, vendor: "t", validate: (v) => ({ value: v as { n: number } }) } };
+  const base = connection("x").config().auth((f) => f.apiKey("key"));
+  expect(definitionOf(base.events({ synced: s })).events).toEqual({ synced: s });
+  expect(() => base.events({ "a.b": s })).toThrow("event a.b: the name is letters, digits, _ and - only");
+  expect(() => base.events({ synced: {} as StandardSchemaV1 })).toThrow("event synced needs a schema");
+  expect(badActionName("connection")).toBe("reserved");
+  expect(badActionName("webhook")).toBe("reserved");
+  expect(badEventName("synced")).toBeNull();
 });

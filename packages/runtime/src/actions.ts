@@ -8,7 +8,8 @@ import type { Extension } from "./runtime.ts";
  * Actions (#54) on the connection's instance: `actions.<id>` methods (HTTP
  * `POST /connections/:def/:id/actions/:id`), the input checked against the action's Standard Schema
  * first; `.every(ms)` on a timer while the connection is active; `.on(state)` once per entry into
- * that state. Scheduled runs report as `action.completed` / `action.failed` events.
+ * that state. Scheduled runs report as `<action>.completed` / `<action>.failed` events; `conn.emit`
+ * sends the connection's own (`.events({ ... })`), checked against their schemas.
  */
 
 /** Retries of a failed scheduled run, before it waits for the next one. */
@@ -62,6 +63,13 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
       identity: await h.bound.metadata(),
       token,
       store,
+      emit: async (name: string, data?: Json) => {
+        const schema = h.def.events && Object.hasOwn(h.def.events, name) ? h.def.events[name] : undefined;
+        if (!schema) throw new Error(`${h.def.id} has no event ${name}: declare it with .events({ ${name}: schema })`);
+        const r = await schema["~standard"].validate(data);
+        if (r.issues) throw new Error(`event ${name}: ${r.issues.map((i) => i.message).join("; ")}`);
+        await emit(h, (r.value ?? null) as Json, name);
+      },
     };
     // A getter that throws, not a missing field: `conn.api.get` would otherwise fail as "undefined is not an object".
     const proxy = h.def.proxy;
@@ -92,11 +100,11 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
     } catch (e) {
       if (e instanceof NotActive) return false;
       console.error("action failed", h.instance, a.id, trigger, attempt, e);
-      await emit(h, { action: a.id, trigger, error: message(e), attempt: attempt + 1 }, "action.failed");
+      await emit(h, { action: a.id, trigger, error: message(e), attempt: attempt + 1 }, `${a.id}.failed`);
       throw e;
     }
     // Outside the try: a failed emit must not run the action again.
-    await emit(h, { action: a.id, trigger, output }, "action.completed");
+    await emit(h, { action: a.id, trigger, output }, `${a.id}.completed`);
     return true;
   }
 
