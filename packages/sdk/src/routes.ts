@@ -27,7 +27,7 @@ type Deps = {
   base: () => string;
   fetch: (input: string, init: RequestInit) => Promise<Response>;
   // Structural, not the client's types: those include `routes` itself.
-  connection: (def: string, id: string) => { session(a: SessionArgs): Promise<{ token: string }>; link(o: { next?: string }): Promise<{ url: string }> };
+  connection: (def: string, id: string) => { session(a: SessionArgs): Promise<{ token: string; flow?: string }>; link(o: { next?: string; confirm?: boolean }): Promise<{ url: string }> };
   events: () => { handle(req: Request): Promise<Response> };
   user?: User;
   /** The app's public origin, if `req.url` doesn't show it (behind a proxy). */
@@ -148,11 +148,12 @@ export function routes(d: Deps) {
     if (account !== null && !ACCOUNT.test(account)) return fail(400, "bad_request", "account: letters, digits, _ and - only");
     const id = account ? `${user}:${account}` : user;
     const to = local(m.url.searchParams.get("return"), origin);
-    const { token } = await session(m.def, id, { returnUrl: `${origin}${m.base}/return?return=${encodeURIComponent(to)}` });
-    // An API-key form: the runtime's hosted page asks for it, then sends the user back to `return`.
-    const info = await browser(origin, token, "");
-    if (info.ok && info.r?.flow === "form") {
-      const { url } = await d.connection(m.def, id).link({ next: `${origin}${to}` });
+    const back = `${origin}${m.base}/return?return=${encodeURIComponent(to)}`;
+    const { token, flow } = await session(m.def, id, { returnUrl: back });
+    // An API-key form: the runtime's hosted page asks for it, then hands it to the return page, which
+    // confirms it for the signed-in user (a forwarded link can't connect someone else's key).
+    if (flow === "form") {
+      const { url } = await d.connection(m.def, id).link({ next: back, confirm: true });
       return new Response(null, { status: 303, headers: { location: url, "cache-control": "no-store" } });
     }
     // ponytail: device codes aren't shown by any page yet; connect those from the server.
