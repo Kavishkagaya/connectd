@@ -1,3 +1,4 @@
+import { parseEnv } from "./env.ts";
 import { afterAll, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -158,9 +159,10 @@ test("re-deploy: no new keys, one deploy, same database; --rotate key adds V2; -
   expect(s.account().workers[first.name]!.secrets).toEqual(before);
   expect(s.account().dbs.length).toBe(1);
 
-  // No env file and nothing missing: no secrets sent at all.
+  // An empty env file and nothing missing: no secrets sent at all.
   s.reset();
-  await s.run({ envFile: undefined });
+  writeFileSync(join(s.dir, ".empty"), "");
+  await s.run({ envFile: ".empty" });
   expect(s.calls().some((c) => c.secrets)).toBe(false);
 
   const rot = await s.run({ rotate: ["key"] });
@@ -331,16 +333,33 @@ test("one env: .env.production by default, only the names the project reads are 
   expect(out).toContain("secrets      GH_ID, GH_SECRET from .env.production");
   expect(out).toContain("not sent     DATABASE_URL");
 
-  // No file: the shell's environment, still only the names read.
+  // Manual deploy: the app's env lines, the new API key once.
+  expect(out).toContain(`OPENCONNECT_URL=${r.url}`);
+  expect(out).toContain(`OPENCONNECT_API_KEY=${r.apiKey}   (shown once`);
+
+  // No file outside CI: refused (a local shell holds dev's .env too).
   const t = setup({ vars: "" });
-  const shell = { ...t.env, GH_ID: "shell-id", GH_SECRET: "shell-secret", DATABASE_URL: "postgres://prod" };
-  const r2 = await t.run({ envFile: undefined, env: shell });
+  await expect(t.run({ envFile: undefined })).rejects.toThrow("no .env.production");
+  // CI: the shell's environment (CI secrets), still only the names read; the API key must come from it.
+  const shell = { ...t.env, CI: "true", GH_ID: "shell-id", GH_SECRET: "shell-secret", DATABASE_URL: "postgres://prod" };
+  await expect(t.run({ envFile: undefined, env: shell })).rejects.toThrow("CI: set OPENCONNECT_API_KEY");
+  const r2 = await t.run({ envFile: undefined, env: { ...shell, OPENCONNECT_API_KEY: "oc_from_ci" } });
   const w2 = t.account().workers[r2.name]!;
   expect(w2.secrets.GH_ID).toBe("shell-id");
+  expect(w2.secrets.OPENCONNECT_API_KEY).toBe("oc_from_ci");
+  expect(r2.apiKey).toBeUndefined();
   expect(Object.keys(w2.secrets)).not.toContain("DATABASE_URL");
   expect(Object.keys(w2.secrets)).not.toContain("PATH");
+  expect(Object.keys(w2.secrets)).not.toContain("CI");
   expect(t.lines.join("\n")).toContain("from the shell environment");
+  expect(t.lines.join("\n")).not.toContain("oc_from_ci");
 
-  writeFileSync(join(t.dir, ".env"), "GH_ID=dev\n");
+  // Dev's values never go out: .env as the file, or a value equal to .env's.
+  writeFileSync(join(t.dir, ".env"), "GH_ID=dev-id\n");
   await expect(t.run({ envFile: ".env" })).rejects.toThrow(".env is dev's");
+  await expect(t.run({ envFile: undefined, env: { ...shell, GH_ID: "dev-id", OPENCONNECT_API_KEY: "oc_from_ci" } })).rejects.toThrow("GH_ID in the shell environment is the dev value from .env");
+});
+
+test("parseEnv: a double-quoted value may span lines (a PEM key)", () => {
+  expect(parseEnv('K="-----BEGIN KEY-----\nabc\n-----END KEY-----"\nB=plain # c\nE="say \\"hi\\""')).toEqual({ K: "-----BEGIN KEY-----\nabc\n-----END KEY-----", B: "plain", E: 'say "hi"' });
 });

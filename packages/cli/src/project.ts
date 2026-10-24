@@ -23,9 +23,10 @@ import {
  *   src/oc/github/connection.ts        export default github   (or connection().config().auth(...))
  *   src/oc/github/actions/starRepo.ts  export default action({ input, run })
  *
+ * Each connection reads its own env names (`.config((env) => ...)`; the providers' GITHUB_CLIENT_ID and so on).
+ *
  *   export default defineConfig((env) => ({
  *     dir: "src/oc",
- *     config: { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } },
  *     events: { url: "http://localhost:3000/api/oc" },
  *     sessions: { origins: ["http://localhost:3000"] },
  *   }));
@@ -58,7 +59,7 @@ export type Project = {
 };
 
 export type Env = Record<string, string | undefined>;
-/** A project, or a function of the environment (`.dev.vars` and the process env in dev, Worker vars and secrets deployed). */
+/** A project, or a function of the environment (`.env` and the process env in dev, Worker vars and secrets deployed), read one name at a time. */
 export type Config = Project | ((env: Env) => Project);
 
 export const defineConfig = <T extends Config>(c: T) => c;
@@ -107,7 +108,14 @@ export type Resolved = Project & {
 export function resolve(config: Config, env: Env): Resolved {
   const names = new Set<string>();
   // The names a function config reads, as connections' are counted.
-  const seen = new Proxy(env, { get: (t, n) => (typeof n === "string" && names.add(n), Reflect.get(t, n)) });
+  const seen = new Proxy(env, {
+    get: (t, n) => (typeof n === "string" && names.add(n), Reflect.get(t, n)),
+    has: (t, n) => (typeof n === "string" && names.add(n), Reflect.has(t, n)),
+    // Listing or spreading env would count every name (PATH, tokens) as read, and send them all to the Worker.
+    ownKeys: () => {
+      throw new Error("the config reads env names one at a time (env.NAME): spreading or listing env isn't supported, since only the names read reach the Worker");
+    },
+  });
   const raw = typeof config === "function" ? config(seen) : config;
   if (!raw || typeof raw !== "object") throw new Error("the config must export defineConfig({ ... })");
   if (raw.definitions !== undefined && !Array.isArray(raw.definitions)) throw new Error("definitions must be a list");
@@ -121,7 +129,8 @@ export function resolve(config: Config, env: Env): Resolved {
     const def = definitionOf(d);
     registry[d.id] = def;
     if (!def.configFrom) continue;
-    if (p.config && Object.hasOwn(p.config, d.id)) throw new Error(`${d.id} reads its config from the environment (.config((env) => ...)); remove config.${d.id} from the config file`);
+    if (p.config && Object.hasOwn(p.config, d.id))
+      throw new Error(`${d.id} reads its own config from the environment (.config((env) => ...), e.g. a provider's GITHUB_CLIENT_ID); remove config.${d.id} from the config file`);
     const r = envConfig(def.configFrom, env);
     for (const n of r.read) names.add(n);
     own[d.id] = r.value;
@@ -175,13 +184,16 @@ export async function settings(p: Project, env: Env): Promise<Settings> {
  * dashboard is on unless `dashboard: false`.
  */
 export function options(config: Config, env: Env, index: Index): RuntimeOptions & { project: Resolved } {
-  const project = resolve(config, env);
+  // Resolved against only what it reads, in dev and in the Worker alike (a Worker also holds
+  // secrets from earlier deploys and `wrangler secret put`).
+  const own = workerEnv(env, resolve(config, env).envNames);
+  const project = resolve(config, own);
   let loaded: Promise<Settings> | undefined;
   return {
     project,
     definitions: project.registry,
     ...(project.actions ? { actions: project.actions } : {}),
-    settings: () => (loaded ??= settings(project, env)),
+    settings: () => (loaded ??= settings(project, own)),
     extensions: [proxy(), events(), webhooks(), sessions(), directory(index), ...(project.dashboard === false ? [] : [dashboard()]), ...(project.extensions ?? [])],
   };
 }

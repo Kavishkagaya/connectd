@@ -57,17 +57,23 @@ export async function deploy(o: DeployOptions) {
   const statePath = join(work, "deploy", "state.json");
   const state: State = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, "utf8")) as State) : {};
 
-  // The production environment: --env-file, else .env.production, else the shell's. Never the dev
-  // keys: generated keys only ever come from generateKeys() here.
+  // The production environment: --env-file, else .env.production, else (in CI only) the shell's:
+  // a local shell holds dev's .env too (Bun loads it). Never the dev keys: generated keys only ever
+  // come from generateKeys() here.
+  const ci = !!env.CI && env.CI !== "false" && env.CI !== "0";
   const prod = join(o.dir, ".env.production");
   const file = o.envFile ? resolvePath(o.dir, o.envFile) : existsSync(prod) ? prod : undefined;
   const from = file ? relative(o.dir, file) : "the shell environment";
   if (file && !existsSync(file)) throw new Error(`no env file ${o.envFile}`);
+  if (!file && !ci)
+    throw new Error("no .env.production: put the production values there (see .env.production.example), or pass --env-file. In CI (CI=true) deploy reads the shell environment (your CI secrets) instead.");
   const devVars = join(work, "dev.vars");
   if (file === devVars) throw new Error(".openconnect/dev.vars holds dev keys; deploy generates its own. Put production values in .env.production");
   if (file === join(o.dir, ".env")) throw new Error(".env is dev's; put production values in .env.production (or the shell environment)");
   const source: Env = file ? parseEnv(readFileSync(file, "utf8")) : env;
-  const dev = existsSync(devVars) ? parseEnv(readFileSync(devVars, "utf8")) : {};
+  // Dev's values, by file: none of them may go to production (a dev OAuth app, a dev key).
+  const devFiles = [devVars, ...[".env", ".env.local", ".env.development"].map((f) => join(o.dir, f))].filter((f) => existsSync(f));
+  const devValues = devFiles.flatMap((f) => Object.entries(parseEnv(readFileSync(f, "utf8"))).map(([k, v]) => ({ k, v, f: relative(o.dir, f) })));
   if (file)
     for (const k of Object.keys(source)) {
       if (k === ENV.url) throw new Error(`${ENV.url} comes from --url (or the workers.dev URL), not the env file`);
@@ -79,7 +85,12 @@ export async function deploy(o: DeployOptions) {
   // Only what the project reads (and the two OPENCONNECT_ values that are yours) becomes a Worker secret.
   const secrets: Record<string, string> = {};
   for (const [k, v] of Object.entries(source)) if (v && (project.envNames.includes(k) || (USER_SET as readonly string[]).includes(k))) secrets[k] = v;
-  for (const k of Object.keys(secrets)) if (dev[k] && dev[k] === secrets[k]) throw new Error(`${k} in ${from} is the dev value from .openconnect/dev.vars; use a production one`);
+  for (const [k, v] of Object.entries(secrets)) {
+    const d = devValues.find((x) => x.k === k && x.v && x.v === v);
+    if (d) throw new Error(`${k} in ${from} is the dev value from ${d.f}; use a production one`);
+  }
+  // In CI nobody reads the log for a one-time key: it comes from a CI secret, like the app's copy.
+  if (ci && !secrets[ENV.apiKey]) throw new Error(`CI: set ${ENV.apiKey} as a CI secret (\`openconnect keys\` makes one) and give your app the same value; deploy doesn't generate or print it in CI`);
   const unsent = file ? Object.keys(source).filter((k) => !Object.hasOwn(secrets, k)) : [];
 
   const rotate = (o.rotate ?? []).filter(Boolean);
@@ -87,7 +98,7 @@ export async function deploy(o: DeployOptions) {
     if (r === "webhooks") throw new Error("--rotate webhooks would break every registered webhook (#25: no key versions yet); not supported");
     if (r === "events") throw new Error(`${ENV.events} is yours: change it in .env.production (and in your app)`);
     if (!Object.hasOwn(ROTATABLE, r)) throw new Error(`--rotate takes ${Object.keys(ROTATABLE).join(", ")}`);
-    if (r === "api-key" && secrets[ENV.apiKey]) throw new Error(`${ENV.apiKey} is set in ${from}; change it there`);
+    if (r === "api-key" && secrets[ENV.apiKey]) throw new Error(`${ENV.apiKey} is set in ${from}; change it there (\`openconnect keys\` makes a new one)`);
   }
 
   const name = workerName(o.name ?? project.deploy?.name ?? state.name ?? basename(resolvePath(o.dir)));
@@ -207,7 +218,13 @@ export async function deploy(o: DeployOptions) {
       `  webhooks      ${url}/webhooks/:def[/:id]`,
       ...(project.dashboard === false ? [] : [`  dashboard     ${url}/dashboard   (sign in with the API key)`]),
       `  secrets set   ${Object.keys(push).sort().join(", ") || "none (all present)"}`,
-      ...(newApiKey ? [`  API key       ${newApiKey}`, "                shown once: store it now (your app's OPENCONNECT_API_KEY). It can't be read back; --rotate api-key makes a new one."] : []),
+      "",
+      "your app's env (where it calls openconnect):",
+      `  OPENCONNECT_URL=${url}`,
+      newApiKey
+        ? `  ${ENV.apiKey}=${newApiKey}   (shown once: store it now. It can't be read back; --rotate api-key makes a new one)`
+        : `  ${ENV.apiKey}=${secrets[ENV.apiKey] ? `the one in ${from}` : "unchanged (the one you stored at the first deploy)"}`,
+      ...(project.events ? [`  ${ENV.events}=the one in ${from}`] : []),
     ].join("\n"),
   );
   return { name, url, dryRun: false as const, generated: g, pushed: Object.keys(push), apiKey: newApiKey };

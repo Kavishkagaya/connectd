@@ -361,3 +361,14 @@ test("state.json: owner-only, its writes don't trigger reloads, stop is idempote
   await Promise.all([d.stop(), d.stop()]);
   await d.stop();
 });
+
+test("env reads are by name: a config spreading env is refused; `openconnect keys` prints fresh values", async () => {
+  const { resolve } = await import("./project.ts");
+  expect(() => resolve((env) => ({ ...env, definitions: [] }), { PATH: "/bin", CLOUDFLARE_API_TOKEN: "t" })).toThrow("spreading or listing env isn't supported");
+  expect(resolve((env) => ({ definitions: [], ...(env.EVENTS_URL ? { events: { url: env.EVENTS_URL } } : {}) }), { EVENTS_URL: "https://a.test", PATH: "/bin" }).envNames).toEqual(["EVENTS_URL"]);
+  const out: string[] = [];
+  expect(await main(["keys"], { log: (l) => void out.push(l), dir: TMP })).toBe(0);
+  const k = parseEnv(out.join("\n"));
+  expect(k.OPENCONNECT_API_KEY).toMatch(/^oc_[A-Za-z0-9]{32}$/);
+  expect(k.OPENCONNECT_EVENTS_SECRET).toStartWith("whsec_");
+});

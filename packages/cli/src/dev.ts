@@ -4,7 +4,7 @@ import type { Handler, Json, Program } from "@openconnect/kernel";
 import { memory, type Snapshot } from "@openconnect/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@openconnect/runtime";
 import { devKeys, loadEnv, workdir } from "./env.ts";
-import { ENV, type Env, options, type Resolved, resolve, unconfigured, unconfiguredText, workerEnv } from "./project.ts";
+import { ENV, type Env, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 import { sdkNote } from "./discover.ts";
@@ -122,9 +122,8 @@ export async function dev(o: DevOptions) {
     const { config } = await loadProject(dir, entry, build, ++n, env);
     const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
-    const all = { ...env, [ENV.url]: publicUrl };
-    // Only what the project reads, as deployed: a connection that works here works there.
-    const opts = options(config, workerEnv(all, resolve(config, all).envNames), index);
+    // options() keeps only what the project reads, as deployed: a connection that works here works there.
+    const opts = options(config, { ...env, [ENV.url]: publicUrl }, index);
     await opts.settings(); // missing keys or a bad one fail here, not on the first request
     const next = runtime({ ...opts, now: () => (w as ReturnType<typeof memory>).now() });
     rt = next;

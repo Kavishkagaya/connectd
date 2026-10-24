@@ -83,11 +83,11 @@ packages/cli/         `openconnect` bin (#30, #31; Bun only); `@openconnect/cli`
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts (events.ts never in the Worker), .openconnect/entry.ts (withFolders) and registry.d.ts. Node APIs only
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   src/generate.ts     deploy's files in .openconnect/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
-  src/deploy.ts       `openconnect deploy`: wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
+  src/deploy.ts       `openconnect deploy`: production env (--env-file, .env.production, the shell in CI; only names read are sent), wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
   src/dev.ts          `openconnect dev`: memory driver on a real clock behind Bun.serve, snapshot in .openconnect/state.json, config bundled with Bun.build and swapped in place on save
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
-  src/cli.ts, args.ts commands (dev, deploy, types, help) and a declared-flags parser; src/bin.ts the entry
+  src/cli.ts, args.ts commands (dev, deploy, types, keys, help) and a declared-flags parser; src/bin.ts the entry
 
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers, one local, github/actions/profile.ts)
 ```
