@@ -71,19 +71,3 @@ export function loadEnv(dir: string, generated: Record<string, string>, processE
   if (existsSync(join(dir, ".dev.vars"))) throw new Error(".dev.vars isn't read any more: move its lines into .env (one file for the app and connectd)");
   return { ...generated, ...read(join(dir, ".env")), ...processEnv };
 }
-
-/**
- * The app's dev values in `.env`, the one file the app and connectd share (Next, Vite and the rest
- * read it), so the app needs no copy of `.connectd/dev.vars`: the names it lacks are appended,
- * existing lines are never changed. Returns the names written.
- */
-export function appEnv(dir: string, values: Record<string, string>): string[] {
-  const path = join(dir, ".env");
-  const text = existsSync(path) ? readFileSync(path, "utf8") : "";
-  const have = parseEnv(text);
-  const add = Object.entries(values).filter(([k, v]) => v && !have[k]);
-  if (!add.length) return [];
-  const lines = add.map(([k, v]) => `${k}=${v}`).join("\n");
-  writeFileSync(path, `${text}${text && !text.endsWith("\n") ? "\n" : ""}# Added by connectd dev for your app (dev values; connectd deploy prints production's)\n${lines}\n`, { mode: 0o600 });
-  return add.map(([k]) => k);
-}

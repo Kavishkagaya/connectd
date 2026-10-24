@@ -110,16 +110,10 @@ test("keys: generated once into .connectd/dev.vars, gitignored, kept across runs
   );
   expect(vars.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
   expect(readFileSync(join(dir, ".connectd", ".gitignore"), "utf8")).toBe("*\n");
-  // The app's three values land in .env (appended: the project's lines stay), once.
-  const appEnv = parseEnv(readFileSync(join(dir, ".env"), "utf8"));
-  expect(appEnv).toEqual({ CLIENT_ID: "cid", CONNECTD_URL: a.d.url, CONNECTD_API_KEY: a.d.apiKey, CONNECTD_EVENTS_SECRET: vars.CONNECTD_EVENTS_SECRET as string });
-  expect(a.lines.join("\n")).toContain("wrote CONNECTD_URL, CONNECTD_API_KEY, CONNECTD_EVENTS_SECRET to .env for your app");
-  const once = readFileSync(join(dir, ".env"), "utf8");
   await a.d.stop();
   const b = await start(dir, w.env);
   expect(b.d.created).toBe(false);
   expect(b.d.apiKey).toBe(a.d.apiKey);
-  expect(readFileSync(join(dir, ".env"), "utf8")).toBe(once);
   // The project's own env wins over generated keys.
   writeFileSync(join(dir, ".env"), "CLIENT_ID=cid\nCONNECTD_API_KEY=mine\n");
   await b.d.stop();

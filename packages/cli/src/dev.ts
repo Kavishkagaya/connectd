@@ -8,7 +8,7 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@connectd/kernel";
 import { memory, type Snapshot } from "@connectd/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@connectd/runtime";
-import { appEnv, devKeys, loadEnv, parseEnv, workdir } from "./env.ts";
+import { devKeys, loadEnv, workdir } from "./env.ts";
 import { ENV, type Env, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
@@ -80,7 +80,6 @@ export function ignored(path: string) {
  * picks a free one.
  */
 const IGNORED = /(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/;
-
 const HOP = ["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-connection"];
 
 export async function serve(port: number, handle: (req: Request) => Promise<Response>) {
@@ -227,16 +226,6 @@ export async function dev(o: DevOptions) {
     log(`config failed to load (fix it and save; serving 503 until then):\n${e instanceof Error ? e.message : String(e)}`);
   }
 
-  // The app's side: its runtime URL and the two keys it shares with the runtime, into .env.
-  {
-    const env = loadEnv(dir, keys.keys, o.env);
-    const url = loaded?.publicUrl ?? local;
-    const wrote = appEnv(dir, { CONNECTD_URL: url, [ENV.apiKey]: env[ENV.apiKey] ?? "", [ENV.events]: env[ENV.events] ?? "" });
-    if (wrote.length) log(`wrote ${wrote.join(", ")} to .env for your app`);
-    const set = parseEnv(existsSync(join(dir, ".env")) ? readFileSync(join(dir, ".env"), "utf8") : "").CONNECTD_URL;
-    if (set && set !== url) log(`note: .env has CONNECTD_URL=${set}, but this dev server is ${url}`);
-  }
-
   let watchers: FSWatcher[] = [];
   if (o.watch !== false) {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -316,7 +305,7 @@ export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" |
     rows.push(["public URL", pub === d.url ? `${pub}   (https-only providers like Slack need --tunnel or --url)` : pub]);
     rows.push(["callback URL", `${pub}/callback   (register this redirect URI with each OAuth provider)`]);
     rows.push(["webhooks", `${pub}/webhooks/:def[/:id]`]);
-    rows.push(["events", l.project.events ? `${l.project.events.url}   (your app verifies with ${ENV.events}, in .env)` : "off (set events: { url } in the config)"]);
+    rows.push(["events", l.project.events ? `${l.project.events.url}   (verify with ${ENV.events} from .connectd/dev.vars)` : "off (set events: { url } in the config)"]);
     rows.push(["sessions", l.project.sessions ? l.project.sessions.origins.join(", ") || "no origins" : "off (set sessions: { origins } in the config)"]);
     rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (sign in with the API key)`]);
     rows.push(["definitions", l.project.definitions.map((x) => x.id).join(", ") || "none"]);

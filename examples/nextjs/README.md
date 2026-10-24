@@ -17,12 +17,12 @@ bun run dev:connectd        # connectd dev on :8787
 bun run dev                 # next dev on :3000
 ```
 
-On its first run, `connectd dev` appends `CONNECTD_URL`, `CONNECTD_API_KEY` and
-`CONNECTD_EVENTS_SECRET` to `.env`, which Next reads too: nothing to copy. Start `connectd dev`
-first, or restart `next dev` once those lines are there.
+The app needs `CONNECTD_URL=http://localhost:8787`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET`
+in `.env`. `connectd init` will write them; until it lands, copy the two keys from
+`.connectd/dev.vars` (created by the first `connectd dev`) into `.env`.
 
 3. Open http://localhost:3000, sign in with any name, click **Connect GitHub**, and approve.
-   The dashboard is at http://localhost:8787/dashboard (the API key is in `.env`).
+   The dashboard is at http://localhost:8787/dashboard (sign in with the API key).
 
 `APP_URL` in `.env` is the app's origin; `oc.config.ts` builds `sessions.origins` and `events.url`
 from it, so it's written once.

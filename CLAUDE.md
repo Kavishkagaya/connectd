@@ -83,12 +83,12 @@ packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /
 packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed); `@connectd/cli` exports project.ts; runtime/kernel/connections are peer deps
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), resolve() (connections' env config, `envNames`, `missing`), workerEnv(), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
-  src/env.ts          dotenv parsing; dev's env (generated keys < .env < process env; .dev.vars refused); dev keys generated once into .connectd/dev.vars; appEnv: the app's CONNECTD_URL/API_KEY/EVENTS_SECRET appended to .env when missing
+  src/env.ts          dotenv parsing; dev's env (generated keys < .env < process env; .dev.vars refused); dev keys generated once into .connectd/dev.vars
   src/load.ts         findConfig, importConfig (esbuild bundle to .mjs + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save (watcher skips build output, hidden dirs, generated types); writes the app's values to .env (appEnv)
+  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save (watcher skips build output, hidden dirs, generated types)
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) and `connectd diff <id>` (unified diff against the catalog)
   src/cli.ts, args.ts commands (dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
