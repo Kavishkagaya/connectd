@@ -103,7 +103,7 @@ test("one connection: status, external ids, the events outbox and webhooks, neve
     status: { ok: { state: "active", metadata: { account: "sk_live_1" } } },
     external: { account: "sk_live_1" },
     events: { ok: { enabled: true, pending: 2, attempt: 1, error: "HTTP 500", recent: [] } },
-    webhooks: { ok: { supported: true, registers: false, url: `${OC}/webhooks/keyed/k1`, registration: null, pending: false } },
+    webhooks: { ok: { supported: true, registers: false, url: `${OC}/webhooks/keyed/k1`, registration: null, pending: false, subscriptions: null } },
   });
   expect(d.events.ok.queued.map((e: { type: string }) => e.type)).toEqual(["connection.active", "webhook"]);
   expect(JSON.stringify(d)).not.toContain(secret);

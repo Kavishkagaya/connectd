@@ -1,9 +1,29 @@
-import { connection, hmacHex, type OAuth2Config, rateHeaders, safeEqual } from "@openconnect/connections";
+import { connection, type Credential, hmacHex, type OAuth2Config, rateHeaders, safeEqual, type StandardSchemaV1 } from "@openconnect/connections";
 import type { Json } from "@openconnect/kernel";
 
 const API = "https://api.github.com";
 // The REST API rejects requests without a User-Agent.
 const headers = (auth: string) => ({ authorization: auth, accept: "application/vnd.github+json", "user-agent": "openconnect" });
+
+/** A repo hook subscription: `owner/name`, and the events (default `["push"]`). */
+export type RepoHook = { repo: string; events?: string[] };
+
+// A Standard Schema by hand, so the provider depends on no validation library.
+const repoHook: StandardSchemaV1<RepoHook> = {
+  "~standard": {
+    version: 1,
+    vendor: "openconnect",
+    validate(v) {
+      const o = (typeof v === "object" && v !== null ? v : {}) as { repo?: unknown; events?: unknown };
+      if (typeof o.repo !== "string" || !/^[\w.-]+\/[\w.-]+$/.test(o.repo)) return { issues: [{ message: "owner/name", path: ["repo"] }] };
+      if (o.events !== undefined && !(Array.isArray(o.events) && o.events.length && o.events.every((e) => typeof e === "string")))
+        return { issues: [{ message: "a non-empty list of event names", path: ["events"] }] };
+      return { value: { repo: o.repo, ...(o.events ? { events: o.events as string[] } : {}) } };
+    },
+  },
+};
+
+const bearer = (cred: Credential) => headers(`Bearer ${cred.kind === "oauth2" ? cred.accessToken : ""}`);
 
 /**
  * GitHub OAuth Apps (tokens don't expire) and GitHub Apps (8h access token, rotating refresh token).
@@ -31,10 +51,10 @@ export const github = connection("github")
   .limit({ connection: { count: 5000, periodMs: 3_600_000 } })
   .observe((res, now) => rateHeaders(res, now, { remaining: "x-ratelimit-remaining", reset: "x-ratelimit-reset" }))
   /**
-   * Repo and org hooks (`X-Hub-Signature-256`), on the per-connection route with the connection's
-   * own secret. Not auto-registered: GitHub has no account-wide hooks, so which repos or orgs to
-   * hook is the app's call. It creates them through the proxy (`POST /repos/{o}/{r}/hooks`,
-   * `content_type: "json"`) with the URL and secret from `webhooks.endpoint`.
+   * Repo hooks (`X-Hub-Signature-256`), on the per-connection route with the connection's own
+   * secret. GitHub has no account-wide hooks, so the app subscribes per repo:
+   * `webhooks.subscribe { repo: "o/r", events: ["push"] }` creates the hook (`admin:repo_hook` scope),
+   * `webhooks.unsubscribe` deletes it. Org hooks: create them through the proxy with `webhooks.endpoint`.
    */
   // ponytail: no app-level route; GitHub App webhooks route by installation id, which the index doesn't hold yet.
   .webhooks({
@@ -46,6 +66,21 @@ export const github = connection("github")
       if (topic === "ping") return { reply: null };
       const delivery = req.headers.get("x-github-delivery");
       return { topic, payload: JSON.parse(req.body) as Json, ...(delivery ? { delivery } : {}) };
+    },
+    subscription: repoHook,
+    async register(ctx, cred, { url, secret }, { repo, events = ["push"] }) {
+      const res = await ctx.fetch(`${API}/repos/${repo}/hooks`, {
+        method: "POST",
+        headers: { ...bearer(cred), "content-type": "application/json" },
+        body: JSON.stringify({ name: "web", active: true, events, config: { url, secret, content_type: "json" } }),
+      });
+      if (!res.ok) throw new Error(`github create hook on ${repo}: ${res.status}`);
+      return { hook: { repo, id: ((await res.json()) as { id: number }).id } };
+    },
+    async unregister(ctx, cred, hook) {
+      const { repo, id } = hook as { repo: string; id: number };
+      const res = await ctx.fetch(`${API}/repos/${repo}/hooks/${id}`, { method: "DELETE", headers: bearer(cred) });
+      if (!res.ok && res.status !== 404) throw new Error(`github delete hook ${res.status}`);
     },
   })
   .identity(async ({ api }) => {
