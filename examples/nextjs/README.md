@@ -13,13 +13,14 @@ account, and a call through the connection (the user's repositories).
 bun install                 # at the repo root
 cd examples/nextjs
 cp .env.example .env        # fill GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET
+bunx connectd init          # once: dev's keys and CONNECTD_URL into .env
 bun run dev:connectd        # connectd dev on :8787
 bun run dev                 # next dev on :3000
 ```
 
-The app needs `CONNECTD_URL=http://localhost:8787`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET`
-in `.env`. `connectd init` will write them; until it lands, copy the two keys from
-`.connectd/dev.vars` (created by the first `connectd dev`) into `.env`.
+The app reads `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` from `.env`, where
+`connectd init` wrote them with the runtime's other dev keys. A new app gets the rest from it too:
+`oc.config.ts`, `src/lib/oc.ts` and the route.
 
 3. Open http://localhost:3000, sign in with any name, click **Connect GitHub**, and approve.
    The dashboard is at http://localhost:8787/dashboard (sign in with the API key).

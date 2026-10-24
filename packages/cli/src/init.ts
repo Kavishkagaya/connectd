@@ -1,0 +1,180 @@
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+import { parseEnv } from "./env.ts";
+import { ENV, generateKeys } from "./keys.ts";
+import { CONFIG_FILES, loadProject } from "./load.ts";
+import { workdir } from "./workdir.ts";
+
+/** dev's default port (dev.ts imports the runtime; this file stays light). */
+const PORT = 8787;
+
+/**
+ * `connectd init` (#54): sets up dev, the one explicit step that makes its keys. In the app's
+ * directory it writes, never overwriting what's there:
+ *
+ *   .env               the runtime's generated keys, CONNECTD_URL (where dev runs) and APP_URL (the
+ *                      app's origin): the one file the app and connectd share
+ *   .gitignore         `.env`, since it holds the keys now
+ *   oc.config.ts       sessions.origins and events.url from env.APP_URL; connections in <src>/oc/
+ *   <src>/lib/oc.ts    the client: connectd({ user, listeners })
+ *   app/api/connectd/[...path]/route.ts   oc.routes, for a Next.js app (App Router)
+ *
+ * Keys a `connectd dev` from before kept in .connectd/dev.vars are moved over, so sealed
+ * credentials stay readable. `dev` only reads .env; each deployed environment gets its own keys from
+ * `deploy`.
+ */
+
+export type InitOptions = { dir: string; port?: number; appUrl?: string; log?: (line: string) => void };
+
+/** The generated keys this project needs: .connectd/dev.vars's (an older dev made them), else fresh ones. Names .env already has are kept. */
+function keysFor(dir: string, have: Record<string, string>): Record<string, string> {
+  const legacy = join(workdir(dir), "dev.vars");
+  const old = existsSync(legacy) ? parseEnv(readFileSync(legacy, "utf8")) : {};
+  const fresh = generateKeys();
+  const out: Record<string, string> = {};
+  const versioned = (k: string) => k.startsWith(ENV.key);
+  // A key version already set (or kept from dev.vars) means the encryption keys exist: no V1 next to them.
+  const hasKeys = Object.keys(have).some(versioned);
+  for (const [k, v] of Object.entries(old)) if (versioned(k) && !hasKeys && !have[k]) out[k] = v;
+  for (const [k, v] of Object.entries(fresh)) {
+    if (have[k] || out[k]) continue;
+    if (versioned(k)) {
+      if (!hasKeys && !Object.keys(out).some(versioned)) out[k] = v;
+    } else out[k] = old[k] ?? v;
+  }
+  return out;
+}
+
+const pkg = (dir: string) => {
+  try {
+    return JSON.parse(readFileSync(join(dir, "package.json"), "utf8")) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+  } catch {
+    return null;
+  }
+};
+const uses = (dir: string, name: string) => {
+  const p = pkg(dir);
+  return !!(p?.dependencies?.[name] ?? p?.devDependencies?.[name]);
+};
+
+/** `import x from "<from → to>"`, without the extension (as Next and TS resolve it). */
+const spec = (from: string, to: string) => {
+  const r = relative(dirname(from), to).split("\\").join("/").replace(/\.ts$/, "");
+  return r.startsWith(".") ? r : `./${r}`;
+};
+
+export async function init(o: InitOptions): Promise<void> {
+  const log = o.log ?? console.log;
+  const dir = o.dir;
+  const port = o.port ?? PORT;
+  const wrote: string[] = [];
+  const kept: string[] = [];
+  const write = (file: string, text: string) => {
+    const rel = relative(dir, file);
+    if (existsSync(file)) return void kept.push(rel);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+    wrote.push(rel);
+  };
+
+  // .env: what dev and the app read. Appended, never rewritten: the app's own lines stay as they are.
+  const envFile = join(dir, ".env");
+  const before = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
+  const have = parseEnv(before);
+  const appUrl = (o.appUrl ?? have.APP_URL ?? "http://localhost:3000").replace(/\/+$/, "");
+  if (!/^https?:\/\/[^/]+$/.test(appUrl)) throw new Error(`--app-url must be an origin like http://localhost:3000 (${appUrl})`);
+  const keys = keysFor(dir, have);
+  const lines = [
+    ...(have.APP_URL ? [] : ["# Your app's origin: oc.config.ts builds sessions.origins and events.url from it.", `APP_URL=${appUrl}`]),
+    ...(have.CONNECTD_URL ? [] : ["# Where `connectd dev` runs: the app's client calls it.", `CONNECTD_URL=http://localhost:${port}`]),
+    ...(Object.keys(keys).length
+      ? ["# connectd's dev keys (connectd init): local only, never commit. Deployed environments get their own.", ...Object.entries(keys).map(([k, v]) => `${k}=${v}`)]
+      : []),
+  ];
+  if (lines.length) {
+    if (before) appendFileSync(envFile, `${before.endsWith("\n") ? "" : "\n"}\n${lines.join("\n")}\n`);
+    else writeFileSync(envFile, `${lines.join("\n")}\n`, { mode: 0o600 });
+    wrote.push(".env");
+  } else kept.push(".env");
+
+  // .env holds the keys now: never committed.
+  const gi = join(dir, ".gitignore");
+  const ignores = existsSync(gi) ? readFileSync(gi, "utf8") : "";
+  if (!ignores.split(/\r?\n/).some((l) => /^\/?\.env(\*|\.\*)?$/.test(l.trim()))) {
+    appendFileSync(gi, `${ignores && !ignores.endsWith("\n") ? "\n" : ""}.env\n`);
+    wrote.push(".gitignore");
+  }
+
+  // src/ when the app has one (Next's src/app), else the root.
+  const src = existsSync(join(dir, "src")) ? join(dir, "src") : dir;
+  const folders = relative(dir, join(src, "oc")).split("\\").join("/");
+  const cloudflare = uses(dir, "@connectd/cloudflare");
+  const name = (pkg(dir) as { name?: string } | null)?.name?.replace(/^@[^/]+\//, "") ?? "connectd";
+  const config = CONFIG_FILES.map((f) => join(dir, f)).find((f) => existsSync(f));
+  if (config) kept.push(relative(dir, config));
+  else
+    write(
+      join(dir, CONFIG_FILES[0] as string),
+      `import { defineConfig } from "@connectd/cli";
+${cloudflare ? 'import { cloudflare } from "@connectd/cloudflare";\n' : ""}
+// Your connections are the folders in ${folders}/ (\`connectd add github\` adds one). APP_URL, in .env, is
+// your app's origin: where the connect flow returns and where events are posted (oc.routes).
+export default defineConfig((env) => ({
+  dir: "${folders}",
+${cloudflare ? `  target: cloudflare({ name: ${JSON.stringify(name)} }),\n` : ""}  events: { url: \`\${env.APP_URL}/api/connectd/events\` },
+  sessions: { origins: [env.APP_URL as string] },
+}));
+`,
+    );
+  mkdirSync(join(src, "oc"), { recursive: true });
+
+  const client = join(src, "lib", "oc.ts");
+  write(
+    client,
+    `import { connectd } from "@connectd/sdk";
+import { listeners } from "${spec(client, join(workdir(dir), "app.ts"))}";
+
+// CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET come from .env (connectd init wrote them);
+// in production, from your host's environment.
+export const oc = connectd({
+  // The signed-in user's id, from your auth (a session cookie, a header); null when nobody is signed in.
+  // A user id can't contain ":" (it separates a user's accounts: "u1:work").
+  user: async (req: Request) => null,
+  // Each connection folder's events.ts.
+  listeners,
+  ...(process.env.APP_URL ? { origin: process.env.APP_URL } : {}),
+});
+`,
+  );
+
+  // Next.js (App Router): the route the config's events.url and the connect links use.
+  const isNext = uses(dir, "next");
+  const appDir = [join(src, "app"), join(dir, "app")].find((d) => existsSync(d)) ?? join(src, "app");
+  if (isNext) {
+    const route = join(appDir, "api", "connectd", "[...path]", "route.ts");
+    write(route, `import { oc } from "${spec(route, client)}";\n\n// connect/:def, return, events (oc.routes).\nexport const { GET, POST } = oc.routes;\n`);
+  }
+
+  // registry.d.ts and app.ts, so lib/oc.ts typechecks now. Needs the packages installed.
+  let typed = false;
+  try {
+    await loadProject(dir, config ?? join(dir, CONFIG_FILES[0] as string), join(workdir(dir), "build"), Date.now(), { ...have, APP_URL: appUrl });
+    typed = true;
+  } catch {}
+
+  const step = (cmd: string, what: string) => `  ${cmd.padEnd(24)}${what}`;
+  const done = [
+    wrote.length ? `wrote ${wrote.join(", ")}` : "nothing to write: already set up",
+    kept.length ? `  kept ${kept.join(", ")} (already there)` : "",
+    Object.keys(keys).length && existsSync(join(workdir(dir), "dev.vars")) ? "  the keys from .connectd/dev.vars are in .env now (it isn't read any more)" : "",
+    typed ? "" : "  run connectd types once the packages are installed (it writes .connectd/app.ts, which lib/oc.ts imports)",
+  ];
+  const next = [
+    step("connectd add github", `a provider into ${folders}/ (\`connectd add\` lists them), then its env names in .env`),
+    step(relative(dir, client), "return your signed-in user's id from user(req)"),
+    isNext ? "" : step("oc.routes", "mount GET and POST at /api/connectd/* in your app (Express: toNode from @connectd/sdk/node)"),
+    step("connectd dev", `the runtime on http://localhost:${port}`),
+    cloudflare ? "" : step("to deploy", "npm i -D @connectd/cloudflare, then target: cloudflare({ name }) in the config"),
+  ];
+  log([...done.filter(Boolean), "", "Next:", ...next.filter(Boolean)].join("\n"));
+}

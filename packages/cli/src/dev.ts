@@ -8,13 +8,19 @@ import { dirname, join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@connectd/kernel";
 import { memory, type Snapshot } from "@connectd/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@connectd/runtime";
-import { devKeys, loadEnv, workdir } from "./env.ts";
-import { ENV, type Env, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
+import { loadEnv, workdir } from "./env.ts";
+import { ENV, type Env, generateKeys, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 import { sdkNote } from "./discover.ts";
 
 export const PORT = 8787;
+
+/** The port of a `http://localhost:<port>` URL (CONNECTD_URL, which init wrote): dev listens there. */
+const portOf = (u: string | undefined) => {
+  const m = u ? /^http:\/\/(?:localhost|127\.0\.0\.1):(\d+)\/?$/.exec(u) : null;
+  return m ? Number(m[1]) : undefined;
+};
 
 export type DevOptions = {
   /** The project directory (where `oc.config.ts` and `.env` are). */
@@ -137,7 +143,13 @@ export async function dev(o: DevOptions) {
   const build = join(work, "build");
   rmSync(build, { recursive: true, force: true });
   if (o.reset) rmSync(statePath, { force: true });
-  const keys = devKeys(dir);
+  // The keys are .env's (connectd init wrote them): dev never makes its own.
+  const first = loadEnv(dir, o.env);
+  const missing = Object.keys(generateKeys()).filter((k) => (k.startsWith(ENV.key) ? !Object.keys(first).some((n) => /^CONNECTD_KEY_V\d+$/.test(n) && first[n]) : !first[k]));
+  if (missing.length) {
+    const old = existsSync(join(work, "dev.vars")) ? ": it moves the keys from .connectd/dev.vars into .env" : "";
+    throw new Error(`no ${missing.map((k) => (k.startsWith(ENV.key) ? `${ENV.key}1` : k)).join(", ")} in .env: run \`connectd init\` first${old}`);
+  }
   let snapshot: Snapshot | undefined;
   try {
     snapshot = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, "utf8")) as Snapshot) : undefined;
@@ -150,7 +162,7 @@ export async function dev(o: DevOptions) {
   const index = memoryIndex();
   let w: ReturnType<typeof memory> | undefined;
 
-  const server = await serve(o.port ?? PORT, async (req) => {
+  const server = await serve(o.port ?? portOf(first.CONNECTD_URL) ?? PORT, async (req) => {
       const t = performance.now();
       const res =
         rt && w
@@ -175,7 +187,7 @@ export async function dev(o: DevOptions) {
   let watched: { folders: string | null; dirs: Set<string> } | undefined;
   /** Build, import and validate; swap only if all of it worked. */
   async function load(): Promise<Loaded> {
-    const env = loadEnv(dir, keys.keys, o.env);
+    const env = loadEnv(dir, o.env);
     const { config, folders, inputs } = await loadProject(dir, entry, build, ++n, env);
     watched = { folders, dirs: new Set([dir, ...[...inputs].filter((f) => !IGNORED.test(f)).map(dirname)]) };
     const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
@@ -211,7 +223,7 @@ export async function dev(o: DevOptions) {
     if (!w) return;
     const s = JSON.stringify(w.dump());
     if (s === saved) return;
-    // Credentials in it are sealed, but handshakes and outboxes aren't: owner only, like dev.vars.
+    // Credentials in it are sealed, but handshakes and outboxes aren't: owner only.
     rmSync(`${statePath}.tmp`, { force: true }); // mode applies only to a new file
     writeFileSync(`${statePath}.tmp`, s, { mode: 0o600 });
     renameSync(`${statePath}.tmp`, statePath);
@@ -267,8 +279,7 @@ export async function dev(o: DevOptions) {
   const info = {
     url: local,
     port: server.port,
-    apiKey: loadEnv(dir, keys.keys, o.env)[ENV.apiKey] as string,
-    created: keys.created,
+    apiKey: first[ENV.apiKey] as string,
     statePath,
     loaded: () => loaded,
     reload,
@@ -294,18 +305,18 @@ export async function dev(o: DevOptions) {
 
 export type Dev = Awaited<ReturnType<typeof dev>>;
 
-export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" | "loaded">) {
+export function banner(d: Pick<Dev, "url" | "apiKey" | "statePath" | "loaded">) {
   const l = d.loaded();
   const rows: [string, string][] = [
     ["URL", d.url],
-    ["API key", `${d.apiKey}${d.created ? "   (new: generated into .connectd/dev.vars)" : ""}`],
+    ["API key", `${d.apiKey}   (CONNECTD_API_KEY in .env)`],
   ];
   if (l) {
     const pub = l.publicUrl;
     rows.push(["public URL", pub === d.url ? `${pub}   (https-only providers like Slack need --tunnel or --url)` : pub]);
     rows.push(["callback URL", `${pub}/callback   (register this redirect URI with each OAuth provider)`]);
     rows.push(["webhooks", `${pub}/webhooks/:def[/:id]`]);
-    rows.push(["events", l.project.events ? `${l.project.events.url}   (verify with ${ENV.events} from .connectd/dev.vars)` : "off (set events: { url } in the config)"]);
+    rows.push(["events", l.project.events ? `${l.project.events.url}   (verify with ${ENV.events} from .env)` : "off (set events: { url } in the config)"]);
     rows.push(["sessions", l.project.sessions ? l.project.sessions.origins.join(", ") || "no origins" : "off (set sessions: { origins } in the config)"]);
     rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (sign in with the API key)`]);
     rows.push(["definitions", l.project.definitions.map((x) => x.id).join(", ") || "none"]);
