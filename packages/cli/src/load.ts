@@ -1,7 +1,7 @@
 import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { dirOf, type Found, foldersIn, writeDiscovered } from "./discover.ts";
+import { dirOf, type Found, foldersIn, oldLayout, writeDiscovered } from "./discover.ts";
 import type { Config, Env } from "./project.ts";
 
 export const CONFIG_FILES = ["oc.config.ts", "oc.config.js", "oc.config.mjs"];
@@ -9,7 +9,10 @@ export const CONFIG_FILES = ["oc.config.ts", "oc.config.js", "oc.config.mjs"];
 /** The config file's absolute path: `file` (relative to `dir`), else the first of CONFIG_FILES there. */
 export function findConfig(dir: string, file?: string) {
   const f = file ?? CONFIG_FILES.find((c) => existsSync(join(dir, c)));
-  if (!f || !existsSync(join(dir, f))) throw new Error(`no ${file ?? CONFIG_FILES[0]} in ${dir}`);
+  if (!f || !existsSync(join(dir, f))) {
+    const renamed = !file && existsSync(join(dir, "openconnect.config.ts")) ? " (openconnect.config.ts is now oc.config.ts: rename it)" : "";
+    throw new Error(`no ${file ?? CONFIG_FILES[0]} in ${dir}${renamed}`);
+  }
   return join(dir, f);
 }
 
@@ -36,6 +39,8 @@ export async function importConfig(entry: string, out: string, n: number | strin
 export async function loadProject(dir: string, configPath: string, out: string, n: number, env: Env): Promise<{ config: Config; entry: string; found: Found[] }> {
   const base = await importConfig(configPath, out, n);
   const found = foldersIn(dirOf(base, env, configPath));
+  const old = found.length ? null : oldLayout(configPath);
+  if (old) throw new Error(old);
   const { entry } = writeDiscovered(dir, configPath, found);
   return { config: entry === configPath ? base : await importConfig(entry, out, `${n}-entry`), entry, found };
 }

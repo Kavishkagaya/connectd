@@ -83,7 +83,9 @@ export function withFolders(config: Config, folders: Folder[]): Config {
       if (definitions.some((d) => d.id === f.id)) throw new Error(`two connections with id ${f.id}: the config lists one and ${f.file} is another`);
       definitions.push(isConnection(c) ? withId(c, f.id) : { ...(c as AnyDefinition), id: f.id });
       for (const [name, a] of Object.entries(f.actions)) if (!isAction(a)) throw new Error(`${f.id}/actions/${name}: the default export must be an action({ ... })`);
-      if (Object.keys(f.actions).length) actions[f.id] = { ...actions[f.id], ...(f.actions as Record<string, AnyAction>) };
+      // Typed from the folder only: config-listed actions for it would run untyped (and could shadow one).
+      if (Object.hasOwn(actions, f.id)) throw new Error(`actions for ${f.id} are in the config: put them in its folder's actions/`);
+      if (Object.keys(f.actions).length) actions[f.id] = f.actions as Record<string, AnyAction>;
     }
     return { ...p, definitions, ...(Object.keys(actions).length ? { actions } : {}) };
   };
@@ -108,7 +110,7 @@ export function resolve(config: Config, env: Env): Resolved {
 }
 
 /** Definitions that need connector config and have none: they answer `not_configured`. */
-export const unconfigured = (p: Project) => (p.definitions ?? []).filter((d) => !definitionOf(d).auth.fields && p.config?.[d.id] == null).map((d) => d.id);
+export const unconfigured = (p: Project) => (p.definitions ?? []).filter((d) => !definitionOf(d).auth.fields && (!p.config || !Object.hasOwn(p.config, d.id) || p.config[d.id] == null)).map((d) => d.id);
 
 function need(env: Env, name: string) {
   const v = env[name];

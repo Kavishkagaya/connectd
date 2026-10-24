@@ -1,7 +1,7 @@
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadProject } from "./load.ts";
+import { findConfig, loadProject } from "./load.ts";
 import { resolve } from "./project.ts";
 
 const TMP = join(import.meta.dir, "..", ".tmp-discover");
@@ -36,6 +36,7 @@ export default action({ run: () => ({ ok: true }) });`,
     "src/oc/tracker/actions/close.ts": `import { action } from "@openconnect/connections";
 export default action({ run: () => null });`,
     "src/oc/tracker/actions/open.test.ts": "throw new Error('tests are not imported');",
+    "src/oc/tracker/actions/_shared.ts": "export const helper = 1;",
     "src/oc/tracker/events.ts": "throw new Error('the app side: never in the Worker');",
     // A connection with its own id (a provider's) runs as the folder's.
     "src/oc/gh/connection.ts": `import { connection } from "@openconnect/connections";
@@ -78,4 +79,14 @@ test("refused: a folder without connection.ts, a bad folder or action name, a no
   await expect(load(notConn).then((r) => resolve(r.config, {}))).rejects.toThrow("oc/t/connection.ts: the default export must be a connection");
   const twice = project({ "oc.config.ts": CONFIG(), "oc/listed/connection.ts": KEYED });
   await expect(load(twice).then((r) => resolve(r.config, {}))).rejects.toThrow("two connections with id listed");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/constructor/connection.ts": KEYED }))).rejects.toThrow("constructor is reserved");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/connection.js": "export default 1;" }))).rejects.toThrow("one connection file only");
+  const shadow = project({ "oc.config.ts": CONFIG(", actions: { t: {} }"), "oc/t/connection.ts": KEYED });
+  await expect(load(shadow).then((r) => resolve(r.config, {}))).rejects.toThrow("actions for t are in the config");
+});
+
+test("upgrading from the old layout fails loudly: connections/ and actions/ folders, openconnect.config.ts", async () => {
+  await expect(load(project({ "oc.config.ts": CONFIG(), "connections/notes.ts": KEYED }))).rejects.toThrow("connections/ next to oc.config.ts aren't read any more");
+  const old = project({ "openconnect.config.ts": CONFIG() });
+  expect(() => findConfig(old)).toThrow("openconnect.config.ts is now oc.config.ts");
 });

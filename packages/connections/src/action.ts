@@ -17,8 +17,8 @@ import type { Credential, State } from "./lifecycle.ts";
  *
  * Each runs inside its connection's instance, so `conn.api` is that one user's, already
  * authenticated. The app calls one with `oc.connection("github", id).actions.starRepo(input)`;
- * `every` and `on` runs have no caller, so their results go out as `<name>.completed` /
- * `<name>.failed` events.
+ * `every` and `on` runs have no caller, so their results go out as `action.completed` /
+ * `action.failed` events (with the action's name).
  */
 
 /** Standard Schema v1 (standardschema.dev): zod, valibot and arktype implement it, so we depend on none. */

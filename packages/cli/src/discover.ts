@@ -41,7 +41,19 @@ export function dirOf(config: Config, env: Env, configPath: string): string | nu
   return abs;
 }
 
-/** Every connection folder under `dir`, sorted (stable output). Folders starting with `.` or `_` are left out. */
+/**
+ * main-era layouts (`connections/`, `actions/` with named exports) aren't scanned any more: a
+ * project that still has them would start without those connections, silently.
+ */
+export function oldLayout(configPath: string): string | null {
+  const base = dirname(configPath);
+  const old = ["connections", "actions"].filter((d) => isDir(join(base, d)));
+  return old.length
+    ? `${old.map((d) => `${d}/`).join(" and ")} next to ${basename(configPath)} aren't read any more: move each connection to <dir>/<id>/connection.ts (default export) and its actions to <dir>/<id>/actions/<name>.ts`
+    : null;
+}
+
+/** Every connection folder under `dir`, sorted (stable output). Folders and action files starting with `.` or `_` are left out. */
 export function foldersIn(dir: string | null): Found[] {
   if (!dir) return [];
   const out: Found[] = [];
@@ -50,14 +62,18 @@ export function foldersIn(dir: string | null): Found[] {
     const at = join(dir, e.name);
     const shown = relative(process.cwd(), at) || at;
     if (!ID.test(e.name)) throw new Error(`${shown}: a connection folder's name is its id: letters, digits, _ and - only`);
-    const connection = EXTS.map((x) => join(at, `connection${x}`)).find(existsSync);
+    if (e.name in Object.prototype) throw new Error(`${shown}: ${e.name} is reserved; name the folder something else`);
+    const files = EXTS.map((x) => join(at, `connection${x}`)).filter(existsSync);
+    if (files.length > 1) throw new Error(`${shown}: one connection file only (found ${files.map((f) => basename(f)).join(", ")})`);
+    const connection = files[0];
     if (!connection) throw new Error(`${shown}: no connection.ts (export default the connection, e.g. a provider)`);
     const actions: Found["actions"] = [];
     const adir = join(at, "actions");
     if (isDir(adir)) {
       for (const f of readdirSync(adir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
         const ext = EXTS.find((x) => f.name.endsWith(x));
-        if (!f.isFile() || !ext || SKIP.test(f.name) || f.name.startsWith(".")) continue;
+        // `_` files are helpers the actions share, like `_` folders.
+        if (!f.isFile() || !ext || SKIP.test(f.name) || /^[._]/.test(f.name)) continue;
         const name = f.name.slice(0, -ext.length);
         const bad = badActionName(name);
         if (bad) throw new Error(`${join(shown, "actions", f.name)}: the file name is the action's name, and it's ${bad}`);

@@ -142,7 +142,7 @@ function make(def: Definition<any, any>): any {
  * The same connection under another id: folder discovery names a connection after its folder
  * (`src/oc/gh/connection.ts` exporting `github` runs as `gh`).
  */
-export function withId<T extends AnyConnection>(c: T, id: string): T {
+export function withId<T extends AnyConnection>(c: T, id: string): Omit<T, "id"> & { readonly id: string } {
   return c.id === id ? c : make({ ...definitionOf(c), id });
 }
 
