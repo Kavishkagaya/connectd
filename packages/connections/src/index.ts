@@ -6,3 +6,6 @@ export * from "./builder.ts";
 export * from "./flows.ts";
 export * from "./jwt.ts";
 export * from "./action.ts";
+// What a connection file needs from the kernel, so a copied provider (`connectd add`) imports only this package.
+export type { Json } from "@connectd/kernel";
+export { fromBase64url } from "@connectd/kernel";

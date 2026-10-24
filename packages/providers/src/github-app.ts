@@ -3,6 +3,7 @@ import {
   credentialFrom,
   exchangeCode,
   hmacHex,
+  type Json,
   type OAuth2,
   type OAuth2Config,
   OAuthError,
@@ -12,7 +13,6 @@ import {
   signJwt,
   type TokenResponse,
 } from "@connectd/connections";
-import type { Json } from "@connectd/kernel";
 
 const API = "https://api.github.com";
 const headers = (auth: string) => ({ authorization: auth, accept: "application/vnd.github+json", "user-agent": "connectd" });

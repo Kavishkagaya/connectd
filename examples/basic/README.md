@@ -9,6 +9,13 @@ cp .env.example .env      # one file for your app and connectd
 bun run dev               # connectd dev; only the names the connections read reach the runtime
 ```
 
+A provider can also be copied in as source, yours to edit (`connectd add` lists them):
+
+```sh
+bunx connectd add github --id gh   # src/oc/gh/connection.ts + events.ts, GITHUB_CLIENT_ID/SECRET in .env
+bunx connectd diff gh              # later: what changed upstream since
+```
+
 ## Your app
 
 Your app talks to connectd through one client and one route. `connectd dev` (and `connectd types`)

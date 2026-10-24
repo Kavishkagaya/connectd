@@ -7,10 +7,13 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "bun test src"
+    "test": "bun test src",
+    "registry": "bun src/registry.ts"
   },
   "dependencies": {
-    "@connectd/connections": "workspace:*",
+    "@connectd/connections": "workspace:*"
+  },
+  "devDependencies": {
     "@connectd/kernel": "workspace:*"
   }
 }

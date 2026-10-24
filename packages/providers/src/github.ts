@@ -1,5 +1,4 @@
-import { connection, type Credential, hmacHex, type OAuth2Config, rateHeaders, safeEqual, type StandardSchemaV1 } from "@connectd/connections";
-import type { Json } from "@connectd/kernel";
+import { connection, type Credential, hmacHex, type Json, type OAuth2Config, rateHeaders, safeEqual, type StandardSchemaV1 } from "@connectd/connections";
 
 const API = "https://api.github.com";
 // The REST API rejects requests without a User-Agent.
