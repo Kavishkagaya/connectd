@@ -26,6 +26,7 @@
     "packages/runtime/src/cloudflare.ts",
     "packages/cloudflare/src/worker.ts",
     "packages/connect",
-    "packages/dashboard"
+    "packages/dashboard",
+    "examples/nextjs"
   ]
 }

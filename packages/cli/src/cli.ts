@@ -1,5 +1,5 @@
 import { parse } from "./args.ts";
-import { dev, PORT } from "./dev.ts";
+import { APP_PORT, dev, PORT } from "./dev.ts";
 import { join } from "node:path";
 import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
@@ -7,7 +7,7 @@ import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
 import { sdkNote } from "./discover.ts";
 import { ENV, generateKeys } from "./keys.ts";
 
-export const HELP = `connectd <command> [flags]
+export const HELP = `connectd <command> [flags] [-- app command]
 
 Commands
   dev       run the runtime locally: in memory, real clock, state kept in .connectd/, reloads on save
@@ -22,6 +22,9 @@ connectd dev
   --tunnel         expose it on a public https URL with a cloudflared quick tunnel (Slack needs https)
   --url <url>      public URL of a tunnel you run yourself (callback and webhook URLs use it)
   --reset          start from empty state
+  --app-port <n>   your app's port (default 3000): APP_URL=http://localhost:<n> for the config and the app
+  -- <command>     also run your app (connectd dev -- next dev), with PORT, APP_URL, CONNECTD_URL,
+                   CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET set; stops with dev
 
 connectd deploy
   --env-file <f>   the production env (default .env.production; in CI, CI=true, the shell's); only names the project reads are pushed
@@ -43,6 +46,7 @@ const SPEC = {
   tunnel: "boolean",
   url: "string",
   reset: "boolean",
+  "app-port": "string",
   "env-file": "string",
   name: "string",
   rotate: "string",
@@ -66,6 +70,8 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
     case "dev": {
       const port = a.flags.port === undefined ? undefined : Number(a.flags.port);
       if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) return log(`--port must be a port number`), 2;
+      const appPort = a.flags["app-port"] === undefined ? undefined : Number(a.flags["app-port"]);
+      if (appPort !== undefined && !(Number.isInteger(appPort) && appPort > 0 && appPort < 65536)) return log(`--app-port must be a port number`), 2;
       try {
         const d = await dev({
           dir: o.dir ?? process.cwd(),
@@ -74,6 +80,7 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           ...(typeof a.flags.url === "string" ? { url: a.flags.url } : {}),
           ...(a.flags.tunnel ? { tunnel: true } : {}),
           ...(a.flags.reset ? { reset: true } : {}),
+          ...(a.after.length || appPort ? { app: { command: a.after, port: appPort ?? APP_PORT } } : {}),
           log,
         });
         return d.stop;

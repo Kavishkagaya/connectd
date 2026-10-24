@@ -17,7 +17,9 @@ F=x=y`),
 
 test("args: declared flags only, values inline or next", () => {
   const spec = { port: "string", tunnel: "boolean" } as const;
-  expect(parse(["dev", "--port", "1", "--tunnel", "x"], spec)).toEqual({ command: "dev", flags: { port: "1", tunnel: true }, rest: ["x"] });
+  expect(parse(["dev", "--port", "1", "--tunnel", "x"], spec)).toEqual({ command: "dev", flags: { port: "1", tunnel: true }, rest: ["x"], after: [] });
+  // After `--`: the app's command, flags and all, untouched.
+  expect(parse(["dev", "--tunnel", "--", "next", "dev", "--turbo"], spec)).toEqual({ command: "dev", flags: { tunnel: true }, rest: [], after: ["next", "dev", "--turbo"] });
   expect(parse(["dev", "--port=2"], spec).flags).toEqual({ port: "2" });
   expect(parse(["-h"], spec).flags).toEqual({ help: true });
   expect(() => parse(["--nope"], spec)).toThrow("unknown flag --nope");

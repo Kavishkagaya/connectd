@@ -1,0 +1,28 @@
+{
+  "name": "connectd-example-nextjs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "connectd dev -- next dev",
+    "build": "connectd types && next build",
+    "deploy": "connectd deploy"
+  },
+  "dependencies": {
+    "@connectd/cli": "workspace:*",
+    "@connectd/cloudflare": "workspace:*",
+    "@connectd/connections": "workspace:*",
+    "@connectd/kernel": "workspace:*",
+    "@connectd/providers": "workspace:*",
+    "@connectd/runtime": "workspace:*",
+    "@connectd/sdk": "workspace:*",
+    "next": "16.0.10",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.9.0"
+  }
+}

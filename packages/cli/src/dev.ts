@@ -1,3 +1,4 @@
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@connectd/kernel";
@@ -8,8 +9,20 @@ import { ENV, type Env, options, type Resolved, unconfigured, unconfiguredText }
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 import { sdkNote } from "./discover.ts";
+import { envConfig } from "@connectd/connections";
+import { githubAppSetup, SETUP } from "./manifest.ts";
 
 export const PORT = 8787;
+/** The app's default port (Next, Vite, Remix take PORT). */
+export const APP_PORT = 3000;
+
+/** Build output, dependencies, hidden folders (.next, .git, .connectd, .turbo), and generated types: saves there never reload. `.env*` does. */
+const SKIP = new Set(["node_modules", "dist", "build", "out"]);
+export function ignored(path: string) {
+  const s = path.split(/[/\\]/);
+  const file = s.pop() ?? "";
+  return s.some((x) => x.startsWith(".") || SKIP.has(x)) || SKIP.has(file) || (file.startsWith(".") && !file.startsWith(".env")) || /\.(d\.ts|tsbuildinfo|log)$/.test(file);
+}
 
 export type DevOptions = {
   /** The project directory (where `oc.config.ts` and `.env` are). */
@@ -26,13 +39,19 @@ export type DevOptions = {
   reset?: boolean;
   /** Default true. */
   watch?: boolean;
+  /**
+   * Your app, next to the runtime: `APP_URL` (`http://localhost:<port>`) is set for the config (unless
+   * `.env` sets it), and `command` (if any) runs with it, `PORT`, `CONNECTD_URL`, `CONNECTD_API_KEY` and
+   * `CONNECTD_EVENTS_SECRET`, so the app needs no copy of the dev keys. It stops with dev.
+   */
+  app?: { command: string[]; port: number };
   /** The process environment; default `process.env`. */
   env?: Env;
   log?: (line: string) => void;
 };
 
 /** What a load produced, for the banner and tests. */
-export type Loaded = { project: Resolved; unconfigured: string[]; publicUrl: string };
+export type Loaded = { project: Resolved; unconfigured: string[]; publicUrl: string; githubApp?: string };
 
 /**
  * A Program whose instances follow `swap(next)`, the way a deploy restarts isolates: per-isolate
@@ -85,10 +104,17 @@ export async function dev(o: DevOptions) {
     throw new Error(`${statePath} is unreadable; --reset starts empty`);
   }
 
+  const appUrl = o.app ? `http://localhost:${o.app.port}` : undefined;
+  const withApp = (env: Env): Env => (appUrl && !env.APP_URL ? { ...env, APP_URL: appUrl } : env);
+
   const hot = swappable();
   let rt: Runtime | undefined;
   const index = memoryIndex();
   let w: ReturnType<typeof memory> | undefined;
+
+  let loaded: Loaded | undefined;
+  const setupToken = crypto.randomUUID().replace(/-/g, "");
+  const setup = githubAppSetup({ dir, token: setupToken, publicUrl: () => loaded?.publicUrl ?? local, def: () => loaded?.githubApp, log });
 
   const server = Bun.serve({
     port: o.port ?? PORT,
@@ -97,9 +123,10 @@ export async function dev(o: DevOptions) {
     async fetch(req) {
       const t = performance.now();
       const res =
-        rt && w
+        (await setup(req)) ??
+        (rt && w
           ? await rt.fetch(req, w.call)
-          : Response.json({ error: { code: "not_ready", status: 503, message: "the config failed to load; see the dev server's output" } }, { status: 503 });
+          : Response.json({ error: { code: "not_ready", status: 503, message: "the config failed to load; see the dev server's output" } }, { status: 503 }));
       // The path only: queries carry codes and states.
       log(`${req.method} ${new URL(req.url).pathname} ${res.status} ${Math.round(performance.now() - t)}ms`);
       return res;
@@ -115,10 +142,9 @@ export async function dev(o: DevOptions) {
   }
 
   let n = 0;
-  let loaded: Loaded | undefined;
   /** Build, import and validate; swap only if all of it worked. */
   async function load(): Promise<Loaded> {
-    const env = loadEnv(dir, keys.keys, o.env);
+    const env = withApp(loadEnv(dir, keys.keys, o.env));
     const { config } = await loadProject(dir, entry, build, ++n, env);
     const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
@@ -133,7 +159,9 @@ export async function dev(o: DevOptions) {
       // The index isn't in the snapshot: rebuild it from each connection (the #26 repair path).
       for (const id of Object.keys(snapshot ?? {})) if (id.startsWith("conn:")) await w.call(id, "index.sync", null);
     }
-    return (loaded = { project: opts.project, unconfigured: unconfigured(opts.project), publicUrl });
+    // The connection that reads GITHUB_APP_ID: the manifest flow fills its env.
+    const githubApp = Object.entries(opts.project.registry).find(([, d]) => d.configFrom && envConfig(d.configFrom, {}).read.includes("GITHUB_APP_ID"))?.[0];
+    return (loaded = { project: opts.project, unconfigured: unconfigured(opts.project), publicUrl, ...(githubApp ? { githubApp } : {}) });
   }
 
   async function reload() {
@@ -174,16 +202,43 @@ export async function dev(o: DevOptions) {
     let running = Promise.resolve();
     watcher = watch(dir, { recursive: true }, (_, f) => {
       const p = String(f ?? "");
-      if (/(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/.test(p)) return;
+      if (ignored(p)) return;
       clearTimeout(timer);
       timer = setTimeout(() => (running = running.then(async () => void (await reload()))), 50);
     });
   }
 
+  let app: ChildProcess | undefined;
+  if (o.app?.command.length) {
+    const [cmd, ...args] = o.app.command as [string, ...string[]];
+    const env = withApp(loadEnv(dir, keys.keys, o.env));
+    app = spawn(cmd, args, {
+      cwd: dir,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        PORT: String(o.app.port),
+        APP_URL: env.APP_URL as string,
+        CONNECTD_URL: loaded?.publicUrl ?? local,
+        [ENV.apiKey]: env[ENV.apiKey] as string,
+        [ENV.events]: env[ENV.events] as string,
+      },
+    });
+    app.on("error", (e) => log(`app: ${o.app?.command.join(" ")} failed to start: ${e.message}`));
+    app.on("exit", (code, signal) => stopping || log(`app exited (${signal ?? code}); connectd dev keeps running`));
+  }
+
   let stopping: Promise<void> | undefined;
   const info = {
     url: local,
+    app: appUrl,
+    appCommand: o.app?.command.join(" ") || undefined,
     port: server.port as number,
+    /** The GitHub App manifest page's link, while a github-app connection lacks its config. */
+    setupUrl: () => {
+      const l = loaded;
+      return l?.githubApp && l.project.missing[l.githubApp] ? `${l.publicUrl}${SETUP}?t=${setupToken}` : undefined;
+    },
     apiKey: loadEnv(dir, keys.keys, o.env)[ENV.apiKey] as string,
     created: keys.created,
     statePath,
@@ -195,6 +250,7 @@ export async function dev(o: DevOptions) {
     /** Idempotent (SIGINT twice, a test's cleanup after its own stop). */
     stop: () =>
       (stopping ??= (async () => {
+        app?.kill();
         watcher?.close();
         clearInterval(saver);
         await server.stop(true);
@@ -211,10 +267,11 @@ export async function dev(o: DevOptions) {
 
 export type Dev = Awaited<ReturnType<typeof dev>>;
 
-export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" | "loaded">) {
+export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" | "loaded"> & { setupUrl?: () => string | undefined; app?: string | undefined; appCommand?: string | undefined }) {
   const l = d.loaded();
   const rows: [string, string][] = [
     ["URL", d.url],
+    ...(d.app ? ([["app", `${d.app}${d.appCommand ? `   (${d.appCommand})` : ""}`]] as [string, string][]) : []),
     ["API key", `${d.apiKey}${d.created ? "   (new: generated into .connectd/dev.vars)" : ""}`],
   ];
   if (l) {
@@ -227,6 +284,8 @@ export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" |
     rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (sign in with the API key)`]);
     rows.push(["definitions", l.project.definitions.map((x) => x.id).join(", ") || "none"]);
     if (l.unconfigured.length) rows.push(["no config", `${unconfiguredText(l.project).join(", ")}   (answer not_configured until .env has them)`]);
+    const s = d.setupUrl?.();
+    if (s) rows.push(["github app", `${s}   (creates the GitHub App from a manifest and writes its keys to .env)`]);
     if (l.project.envNames.length) rows.push(["env", `${l.project.envNames.join(", ")}   (from .env; nothing else reaches the runtime)`]);
   }
   rows.push(["state", `${d.statePath}   (--reset to start empty)`]);

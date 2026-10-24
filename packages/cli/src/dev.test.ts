@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Overview } from "@connectd/dashboard";
 import { type ConnectionEvent, connectd } from "@connectd/sdk";
 import { main } from "./cli.ts";
-import { type Dev, dev, swappable } from "./dev.ts";
+import { type Dev, dev, ignored, swappable } from "./dev.ts";
 import type { Program } from "@connectd/kernel";
 import { memory } from "@connectd/kernel/memory";
 import { parseEnv } from "./env.ts";
@@ -371,4 +371,25 @@ test("env reads are by name: a config spreading env is refused; `connectd keys` 
   const k = parseEnv(out.join("\n"));
   expect(k.CONNECTD_API_KEY).toMatch(/^oc_[A-Za-z0-9]{32}$/);
   expect(k.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
+});
+
+test("watcher: build output, dependencies and hidden folders never reload; .env and sources do", () => {
+  for (const p of [".next/server/app.js", "node_modules/x/i.js", ".connectd/state.json", ".git/index", "dist/a.js", "src/oc/x/.y.ts.swp", ".git", ".next", "next-env.d.ts", "tsconfig.tsbuildinfo"]) expect([p, ignored(p)]).toEqual([p, true]);
+  for (const p of [".env", ".env.local", "oc.config.ts", "src/oc/github/connection.ts", "app/page.tsx"]) expect([p, ignored(p)]).toEqual([p, false]);
+});
+
+test("app: dev -- <command> runs the app with the dev keys and its URL, and stops it", async () => {
+  const w = world();
+  const dir = project();
+  const out = join(dir, "app-env.json");
+  const script = `require("fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify(process.env)); setInterval(() => {}, 1000);`;
+  const d = await dev({ dir, port: 0, env: w.env, watch: false, app: { command: [process.execPath, "-e", script], port: 3456 }, log: () => {} });
+  running.push(d);
+  await until(() => existsSync(out));
+  const env = JSON.parse(readFileSync(out, "utf8")) as Record<string, string>;
+  expect(env).toMatchObject({ PORT: "3456", APP_URL: "http://localhost:3456", CONNECTD_URL: d.url, CONNECTD_API_KEY: d.apiKey });
+  expect(env.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
+  // Only those: not the rest of the runtime's keys.
+  expect(Object.keys(env).filter((k) => k.startsWith("CONNECTD_")).sort()).toEqual(["CONNECTD_API_KEY", "CONNECTD_EVENTS_SECRET", "CONNECTD_URL"]);
+  await d.stop();
 });

@@ -85,7 +85,8 @@ packages/cli/         `connectd` bin (#30, #31; Bun only); `@connectd/cli` expor
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `connectd dev`: memory driver on a real clock behind Bun.serve, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save
+  src/dev.ts          `connectd dev`: memory driver on a real clock behind Bun.serve, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save (watcher skips build output, hidden dirs, generated types); `dev -- <app cmd>` runs the app with CONNECTD_URL/API_KEY/EVENTS_SECRET, APP_URL, PORT (--app-port)
+  src/manifest.ts     GitHub App Manifest flow in dev (/setup/github-app, token-gated link in the banner): creates the app, writes GITHUB_APP_* to .env
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/cli.ts, args.ts commands (dev, deploy, types, keys, help) and a declared-flags parser; src/bin.ts the entry
 
@@ -96,6 +97,7 @@ packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, ur
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
 
+examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` checks it): github as a GitHub App created by the manifest flow, oc.routes, `connectd dev -- next dev`
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers, one local, github/actions/profile.ts)
 ```
 
