@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
-import { type Connection, connection, definitionOf, type Flows } from "./builder.ts";
+import { type Connection, connection, definitionOf } from "./builder.ts";
+import type { Flows } from "./flows.ts";
 import { defineConnection } from "./define.ts";
 import type { OAuth2 } from "./lifecycle.ts";
 import { OAuthError } from "./oauth.ts";

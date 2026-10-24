@@ -126,7 +126,12 @@ async function status(b: Bound): Promise<Json> {
 const DONE_TTL_MS = 600_000;
 
 const builtins = (b: Bound, hooks: Hooks[], instance: string, k: Kernel, done: Ticket<string>): Record<string, Method> => ({
-  connect: async (a) => ({ url: await b.connect(input(a)) }),
+  connect: async (a) => {
+    const url = await b.connect(input(a));
+    // A device flow (#56): the code to show the user, polled for in the background.
+    const device = url === null ? null : await b.device();
+    return { url, ...(device ? { device } : {}) };
+  },
   callback: async (a) => {
     const { [COOKIES]: cookies = "", ...params } = input(a);
     const hs = await b.handshake(params);
