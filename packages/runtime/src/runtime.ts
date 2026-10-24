@@ -1,5 +1,5 @@
 import { type AnyAction, type AnyConnection, definitionOf } from "@connectd/connections";
-import { actions } from "./actions.ts";
+import { actions, group } from "./actions.ts";
 import type { Index } from "./directory.ts";
 import { type AnyDefinition, type Hooks, type Hosted, host, type Settings } from "./host.ts";
 import { http, type Route, routes } from "./http.ts";
@@ -34,7 +34,8 @@ export function runtime(o: RuntimeOptions) {
   const settings = () => (loaded ??= o.settings());
   // The key is the id (a folder's name).
   const definitions = Object.fromEntries(Object.entries(o.definitions).map(([id, d]) => [id, { ...definitionOf(d), id }]));
-  const acts = o.actions && Object.keys(o.actions).length ? actions(o.actions, definitions) : null;
+  const by = o.actions && Object.keys(o.actions).length ? group(o.actions, definitions) : null;
+  const acts = by ? actions(by) : null;
   const exts = [...(acts ? [acts] : []), ...(o.extensions ?? [])];
   const index = exts.find((e) => e.index)?.index;
   return {
@@ -43,6 +44,7 @@ export function runtime(o: RuntimeOptions) {
     fetch: http({
       routes: Object.assign({}, ...exts.map((e) => e.routes), routes),
       definitions,
+      actions: by ? Object.fromEntries(by) : {},
       settings,
       internal: new Set(exts.flatMap((e) => e.internal ?? [])),
       ...(index ? { index } : {}),

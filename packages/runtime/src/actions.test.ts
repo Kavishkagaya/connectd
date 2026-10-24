@@ -149,6 +149,10 @@ test("every: runs while active, reports as events, retries a failure, stops on r
   await w.advance(10 * MIN);
   await w.advance(1);
   expect(actionEvents().at(-1)).toEqual({ type: "sync.completed", action: "sync", trigger: "every", output: { n: 1, user: "octo" } });
+  // actions.status: each action's trigger, and the next run of the scheduled ones (the dashboard reads it).
+  const st = (await req("/connections/gh/u1/actions/status")).body as { id: string; every: number | null; on: string | null; next: number | null }[];
+  expect(st.map((a) => [a.id, a.every, a.on])).toEqual([["star", null, null], ["last", null, null], ["forget", null, null], ["sync", 10 * MIN, null], ["welcome", null, "active"]]);
+  expect(st.find((a) => a.id === "sync")?.next).toBeGreaterThan(w.now());
 
   // A failure is reported and retried (backoff), then the schedule goes on.
   failing = 1;

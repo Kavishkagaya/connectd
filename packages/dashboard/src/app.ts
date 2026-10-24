@@ -1,10 +1,11 @@
-import type { EventsStatus, EventSummary, Fault, Page, Row, WebhooksStatus } from "@connectd/runtime";
-import type { DefinitionInfo, Detail, Overview } from "./index.ts";
+import type { EventsStatus, EventSummary, Fault, Page, Row, Subscription, WebhooksStatus } from "@connectd/runtime";
+import type { ActionInfo, DefinitionInfo, Detail, Failures, Overview } from "./index.ts";
 
 /**
  * The dashboard's browser side (#32): no framework, no dependency. Every node is built with
  * createElement and text nodes, never from an HTML string, so nothing from the API is parsed as markup.
- * Hash routes: `#/` connections (`?def=&state=&q=`), `#/c/<def>/<id>` one connection, `#/definitions`.
+ * Hash routes: `#/` connections (`?def=&state=&q=`), `#/c/<def>/<id>` one connection, `#/actions`
+ * (every action, recent failures; `?def=`), `#/definitions`.
  *
  * The API key lives in sessionStorage (this tab only, gone when it closes) and goes out as a Bearer
  * header on same-origin fetches; it's never in a URL or a cookie.
@@ -26,6 +27,34 @@ function address(args: string[]): [string, string] {
 const STATES = ["pending", "active", "reauth_required", "revoked"];
 // ponytail: field types are guessed from names, as in @connectd/connect's form.
 const SECRET = /key|secret|token|password/i;
+
+/** `10 min`, `1 h`, `90 s`. */
+export function every(ms: number) {
+  for (const [unit, n] of [["d", 86_400_000], ["h", 3_600_000], ["min", 60_000], ["s", 1000]] as const) if (ms >= n && ms % n === 0) return `${ms / n} ${unit}`;
+  return `${ms} ms`;
+}
+const trigger = (a: Pick<ActionInfo, "every" | "on">) => (a.every !== null ? `every ${every(a.every)}` : a.on !== null ? `on ${a.on}` : "called by the app");
+
+type Field = { name: string; kind: "string" | "number" | "integer" | "boolean" | "enum"; options: string[]; required: boolean; description: string };
+/**
+ * The fields of a flat object schema (strings, numbers, booleans, string enums), or null when it's
+ * anything else: then the form is a JSON text box. The runtime checks the input either way.
+ */
+export function fields(schema: unknown): Field[] | null {
+  const s = schema as { type?: unknown; properties?: Record<string, unknown>; required?: unknown } | null;
+  if (!s || s.type !== "object" || !s.properties || typeof s.properties !== "object") return null;
+  const required = Array.isArray(s.required) ? s.required : [];
+  const out: Field[] = [];
+  for (const [name, raw] of Object.entries(s.properties)) {
+    const p = raw as { type?: unknown; enum?: unknown; description?: unknown } | null;
+    if (!p || typeof p !== "object") return null;
+    const description = typeof p.description === "string" ? p.description : "";
+    if (Array.isArray(p.enum) && p.enum.length && p.enum.every((v) => typeof v === "string")) out.push({ name, kind: "enum", options: p.enum as string[], required: required.includes(name), description });
+    else if (p.type === "string" || p.type === "number" || p.type === "integer" || p.type === "boolean") out.push({ name, kind: p.type, options: [], required: required.includes(name), description });
+    else return null;
+  }
+  return out;
+}
 
 type Child = Node | string | null | undefined | false;
 type Props = Record<string, string | boolean | ((e: Event) => void)>;
@@ -154,7 +183,7 @@ export function start(win: Win) {
         "header",
         {},
         h("strong", {}, "connectd"),
-        h("nav", {}, h("a", { href: "#/" }, "Connections"), h("a", { href: "#/definitions" }, "Definitions")),
+        h("nav", {}, h("a", { href: "#/" }, "Connections"), h("a", { href: "#/actions" }, "Actions"), h("a", { href: "#/definitions" }, "Definitions")),
         h("button", { type: "button", onclick: signOut }, "Sign out"),
       ),
       note || "",
@@ -270,6 +299,8 @@ export function start(win: Win) {
     parts.push(actions);
     if (st?.state !== "revoked") parts.push(connect(d, id, !!st));
 
+    if (d.actions.length) parts.push(...actionsPanel(d, id, x));
+
     // Events outbox.
     parts.push(h("h3", {}, "Events"));
     if ("error" in x.events) parts.push(h("p", {}, `Not available (${x.events.error.code}): no events() extension?`));
@@ -312,6 +343,130 @@ export function start(win: Win) {
           ]),
         );
     }
+    if (x.subscriptions) parts.push(...subscriptionsPanel(def, id, x.subscriptions));
+    return h("section", {}, ...parts);
+  }
+
+  /** The latest kept `<action>.completed` / `.failed` of each action, from the connection's events. */
+  function lastRuns(d: DefinitionInfo, events: Detail["events"]) {
+    const out = new Map<string, EventSummary>();
+    if (!("ok" in events)) return out;
+    const ev = events.ok as unknown as EventsStatus;
+    // Matched against the action names: a webhook topic can end in `.failed` too (`webhook.charge.failed`).
+    const ids = new Set(d.actions.map((a) => a.id));
+    for (const e of [...ev.queued, ...ev.recent]) {
+      const m = /^(.+)\.(completed|failed)$/.exec(e.type);
+      if (!m || e.copy || !ids.has(m[1] as string)) continue;
+      const prev = out.get(m[1] as string);
+      if (!prev || e.at > prev.at) out.set(m[1] as string, e);
+    }
+    return out;
+  }
+
+  /** Each action: trigger, next run, last scheduled result, and a form to run it now. */
+  function actionsPanel(d: DefinitionInfo, id: string, x: Detail): Child[] {
+    const status = x.actions && "ok" in x.actions ? (x.actions.ok as { id: string; next: number | null }[]) : [];
+    const next = new Map(status.map((a) => [a.id, a.next]));
+    const last = lastRuns(d, x.events);
+    const result = (a: ActionInfo) => {
+      const e = last.get(a.id);
+      if (!e) return a.every !== null || a.on !== null ? "none kept" : "—";
+      const data = e.data as { error?: string; attempt?: number };
+      return e.type.endsWith(".failed")
+        ? h("span", { class: "oc-warn" }, `failed ${time(e.at)}: ${data.error ?? ""}${data.attempt ? ` (attempt ${data.attempt})` : ""}`)
+        : `ok ${time(e.at)}`;
+    };
+    const out: Child[] = [
+      h("h3", {}, "Actions"),
+      table(
+        ["Action", "Trigger", "Next run", "Last scheduled run"],
+        d.actions.map((a) => [h("code", {}, a.id), trigger(a), a.every !== null ? time(next.get(a.id)) : "—", result(a)]),
+      ),
+    ];
+    if (x.actions && "error" in x.actions) out.push(problem(new ApiError(x.actions.error)));
+    out.push(...d.actions.map((a) => runForm(d.id, id, a)));
+    return out;
+  }
+
+  /** Run an action now, with its input from a form built from its JSON Schema, or a JSON text box. */
+  function runForm(def: string, id: string, a: ActionInfo) {
+    const list = a.input ? fields(a.schema) : [];
+    let read: () => unknown;
+    const kids: Child[] = [];
+    if (list === null) {
+      const text = h("textarea", { name: "input", rows: "4", "aria-label": `${a.id} input (JSON)`, placeholder: "{}" }) as HTMLTextAreaElement;
+      kids.push(h("label", {}, "Input (JSON) ", text));
+      read = () => {
+        try {
+          return text.value.trim() ? JSON.parse(text.value) : null;
+        } catch {
+          throw new Error("The input is not valid JSON.");
+        }
+      };
+    } else {
+      const inputs = list.map((f) => {
+        const el =
+          f.kind === "enum"
+            ? h("select", { name: f.name, "aria-label": f.name }, ...(f.required ? [] : [h("option", { value: "" }, "—")]), ...f.options.map((o) => h("option", { value: o }, o)))
+            : h("input", { name: f.name, "aria-label": f.name, type: f.kind === "boolean" ? "checkbox" : f.kind === "string" ? "text" : "number", ...(f.kind === "integer" ? { step: "1" } : {}), required: f.required && f.kind !== "boolean" });
+        kids.push(h("label", {}, `${f.name} `, el, f.description ? h("span", { class: "oc-hint" }, ` ${f.description}`) : null));
+        return el as HTMLInputElement;
+      });
+      read = () =>
+        Object.fromEntries(
+          list.flatMap((f, i): [string, string | number | boolean][] => {
+            const el = inputs[i] as HTMLInputElement;
+            if (f.kind === "boolean") return [[f.name, !!el.checked]];
+            if (el.value === "") return [];
+            return [[f.name, f.kind === "number" || f.kind === "integer" ? Number(el.value) : el.value]];
+          }),
+        );
+    }
+    const submit = act(async () => {
+      const out = await method(def, id, `actions/${seg(a.id)}`, a.input ? read() : null);
+      return h("div", { class: "oc-note" }, `${a.id} returned:`, json(out));
+    });
+    return h("details", { class: "oc-run" }, h("summary", {}, `Run ${a.id}`), h("form", { onsubmit: submit }, ...kids, h("button", { type: "submit" }, `Run ${a.id} now`)));
+  }
+
+  function subscriptionsPanel(def: string, id: string, r: NonNullable<Detail["subscriptions"]>): Child[] {
+    const title = h("h4", {}, "Subscriptions");
+    if ("error" in r) return [title, problem(new ApiError(r.error))];
+    const list = r.ok as unknown as Subscription[];
+    if (!list.length) return [title, h("p", {}, "None. The app adds them with webhooks.subscribe().")];
+    const drop = (s: Subscription) =>
+      act(async () => {
+        if (!win.confirm(`Unsubscribe ${s.id}? It's removed at the provider too.`)) return null;
+        await method(def, id, "webhooks.unsubscribe", { id: s.id });
+        return h("p", { class: "oc-note" }, "Unsubscribed.");
+      });
+    return [title, table(["Id", "Input", "Renews at", ""], list.map((s) => [h("code", {}, s.id), json(s.input), time(s.renewAt), h("button", { type: "button", class: "oc-danger", onclick: drop(s) }, "Unsubscribe")]))];
+  }
+
+  /** Every action of the deployment, and recent failed scheduled runs across connections. */
+  async function actionsView(q: URLSearchParams) {
+    const o = await overview();
+    const all = o.definitions.flatMap((d) => d.actions.map((a) => ({ def: d.id, a })));
+    const parts: Child[] = [h("h2", {}, "Actions")];
+    if (!all.length) return h("section", {}, ...parts, h("p", {}, "No actions in this deployment. Add one as src/oc/<connection>/actions/<name>.ts."));
+    parts.push(table(["Connection", "Action", "Trigger", "Input"], all.map(({ def, a }) => [def, h("code", {}, a.id), trigger(a), a.input ? (a.schema ? "schema" : "yes") : "none"])));
+    parts.push(h("h3", {}, "Recent failures"));
+    if (!o.index) return h("section", {}, ...parts, h("p", {}, "Needs a connection index (directory) to look across connections."));
+    const defs = [...new Set(all.map((x) => x.def))];
+    const current = q.get("def") ?? "";
+    const pick = h("select", { name: "def", "aria-label": "definition" }, h("option", { value: "" }, "any definition"), ...defs.map((v) => h("option", { value: v, selected: v === current }, v))) as HTMLSelectElement;
+    const filter = (e: Event) => {
+      e.preventDefault();
+      win.location.hash = pick.value ? `#/actions?def=${encodeURIComponent(pick.value)}` : "#/actions";
+    };
+    parts.push(h("form", { class: "oc-filter", onsubmit: filter }, pick, h("button", { type: "submit" }, "Filter")));
+    const f = await api<Failures>(`/dashboard/api/failures${current ? `?def=${encodeURIComponent(current)}` : ""}`);
+    parts.push(
+      f.failures.length
+        ? table(["At", "Connection", "Action", "Error", "Attempt"], f.failures.map((x) => [time(x.at), h("span", {}, `${x.def} / `, connLink(x.def, x.id)), h("code", {}, x.action), x.error, String(x.attempt)]))
+        : h("p", {}, "No failed runs in the kept events."),
+      h("p", { class: "oc-hint" }, `Looked at ${f.scanned} connection${f.scanned === 1 ? "" : "s"}${f.more ? " (the first ones in the index; filter by definition to narrow it)" : ""}, from each one's kept events.`),
+    );
     return h("section", {}, ...parts);
   }
 
@@ -376,7 +531,7 @@ export function start(win: Win) {
     try {
       // Empty segments kept (`#/c//x`), so the connection route can refuse them. A bad escape throws here too.
       const [view, ...args] = path.split("/").map(decodeURIComponent);
-      node = view === "c" ? await connection(...address(args)) : view === "definitions" ? await definitions() : await connections(new URLSearchParams(query));
+      node = view === "c" ? await connection(...address(args)) : view === "definitions" ? await definitions() : view === "actions" ? await actionsView(new URLSearchParams(query)) : await connections(new URLSearchParams(query));
     } catch (e) {
       if (!key) return void (mine === gen && root.replaceChildren(login(problem(e))));
       node = problem(e);

@@ -117,7 +117,7 @@ const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 export const badActionName = (name: string): string | null =>
   !NAME.test(name)
     ? "letters, digits, _ and - only"
-    : name === "then" || name === "toJSON" || name === "connection" || name === "webhook" || name in Object.prototype
+    : name === "then" || name === "toJSON" || name === "status" || name === "connection" || name === "webhook" || name in Object.prototype
       ? "reserved"
       : null;
 /** Why `name` can't name a connection's own event, or null. No dots, so it never meets `connection.*`, `webhook.*` or `<action>.completed`. */

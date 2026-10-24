@@ -134,7 +134,7 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
       retry: RETRY,
       giveUp: arm,
     });
-    return [{ ms, next, arm, timer }];
+    return [{ id: a.id, ms, next, arm, timer }];
   });
 
   const on = mine.flatMap((a) => {
@@ -149,7 +149,7 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
     return [{ state, seen, timer }];
   });
 
-  const methods = Object.fromEntries(
+  const methods: Record<string, (args: Json) => Promise<Json>> = Object.fromEntries(
     mine.map((a) => [
       `actions.${a.id}`,
       async (args: Json): Promise<Json> => {
@@ -168,6 +168,12 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
       },
     ]),
   );
+
+  /** Each action's trigger and next scheduled run, for the dashboard. */
+  methods["actions.status"] = async () => {
+    const next = new Map(await Promise.all(every.map(async (e) => [e.id, (await e.next.read())?.value.at ?? null] as const)));
+    return mine.map((a) => ({ id: a.id, every: a.every ?? null, on: a.on ?? null, next: next.get(a.id) ?? null }));
+  };
 
   // Record version last handled, this isolate; undefined: check once after a restart (covers a lost timer).
   let checked: number | undefined;
@@ -208,8 +214,7 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
   };
 }
 
-/** The actions extension; `runtime({ actions })` adds it. */
-export function actions(list: Record<string, Record<string, AnyAction>>, definitions: Record<string, unknown>): Extension {
-  const by = group(list, definitions);
+/** The actions extension, from `group`'s result; `runtime({ actions })` adds it. */
+export function actions(by: Map<string, ActionSpec[]>): Extension {
   return { connection: (h) => hooks(h, by.get(h.def.id) ?? []) };
 }
