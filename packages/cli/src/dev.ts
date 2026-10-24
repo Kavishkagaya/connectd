@@ -1,5 +1,10 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
-import { join, resolve as resolvePath } from "node:path";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import type { AddressInfo } from "node:net";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@connectd/kernel";
 import { memory, type Snapshot } from "@connectd/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@connectd/runtime";
@@ -63,7 +68,54 @@ export function swappable() {
 }
 
 /**
- * `connectd dev`: the runtime on the memory driver with a real clock, served by Bun. State
+ * A `(Request) => Response` handler on node:http (Node and Bun both have it), on localhost. `port` 0
+ * picks a free one.
+ */
+const IGNORED = /(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/;
+const HOP = ["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-connection"];
+
+export async function serve(port: number, handle: (req: Request) => Promise<Response>) {
+  const run = async (req: IncomingMessage, res: ServerResponse) => {
+    const chunks: Uint8Array[] = [];
+    for await (const c of req) chunks.push(c as Uint8Array);
+    const headers = new Headers();
+    // Hop-by-hop headers describe the connection to this server, not the request (Node's fetch refuses some).
+    for (const [k, v] of Object.entries(req.headers)) if (v !== undefined && !HOP.includes(k)) headers.set(k, Array.isArray(v) ? v.join(", ") : v);
+    const method = req.method ?? "GET";
+    const body = method === "GET" || method === "HEAD" ? undefined : Buffer.concat(chunks);
+    // The runtime reads only the path and query; its public URL comes from settings.
+    const out = await handle(new Request(new URL(req.url ?? "/", `http://localhost:${bound}`).href, { method, headers, ...(body ? { body } : {}) }));
+    const head: Record<string, string | string[]> = {};
+    out.headers.forEach((v, k) => void (k === "set-cookie" ? 0 : (head[k] = v)));
+    const cookies = out.headers.getSetCookie();
+    if (cookies.length) head["set-cookie"] = cookies;
+    if (out.statusText) res.writeHead(out.status, out.statusText, head);
+    else res.writeHead(out.status, head);
+    if (!out.body || method === "HEAD") return void res.end();
+    // Streamed, as the proxy streams the provider's response (SSE, downloads).
+    // pipeline: an upstream that fails partway resets the client's connection, a client that goes away stops the upstream.
+    await pipeline(Readable.fromWeb(out.body as NodeReadableStream), res).catch(() => {});
+  };
+  const server = createServer((req, res) =>
+    run(req, res).catch((e) => {
+      console.error("connectd dev:", e);
+      if (!res.headersSent) res.writeHead(500);
+      res.end();
+    }),
+  );
+  await new Promise<void>((ok, fail) => server.once("error", fail).listen(port, "localhost", ok));
+  const bound = (server.address() as AddressInfo).port;
+  return {
+    port: bound,
+    stop: () => {
+      server.closeAllConnections();
+      return new Promise<void>((ok) => server.close(() => ok()));
+    },
+  };
+}
+
+/**
+ * `connectd dev`: the runtime on the memory driver with a real clock, on node:http. State
  * (connections, handshakes, outboxes, timers) is snapshotted to `.connectd/state.json`, so it
  * survives restarts; a change to the config or anything it imports reloads the definitions in
  * place, keeping state, as a deploy would.
@@ -90,11 +142,7 @@ export async function dev(o: DevOptions) {
   const index = memoryIndex();
   let w: ReturnType<typeof memory> | undefined;
 
-  const server = Bun.serve({
-    port: o.port ?? PORT,
-    hostname: "localhost",
-    idleTimeout: 120,
-    async fetch(req) {
+  const server = await serve(o.port ?? PORT, async (req) => {
       const t = performance.now();
       const res =
         rt && w
@@ -103,23 +151,25 @@ export async function dev(o: DevOptions) {
       // The path only: queries carry codes and states.
       log(`${req.method} ${new URL(req.url).pathname} ${res.status} ${Math.round(performance.now() - t)}ms`);
       return res;
-    },
   });
   const local = `http://localhost:${server.port}`;
   let tun: { url: string; stop(): void } | undefined;
   try {
-    if (o.tunnel) tun = await tunnel(server.port as number, typeof o.tunnel === "object" ? o.tunnel : {});
+    if (o.tunnel) tun = await tunnel(server.port, typeof o.tunnel === "object" ? o.tunnel : {});
   } catch (e) {
-    server.stop(true);
+    server.stop();
     throw e;
   }
 
   let n = 0;
   let loaded: Loaded | undefined;
+  /** What the last good load read: its files' directories, and the connection folders' parent (new folders). */
+  let watched: { folders: string | null; dirs: Set<string> } | undefined;
   /** Build, import and validate; swap only if all of it worked. */
   async function load(): Promise<Loaded> {
     const env = loadEnv(dir, keys.keys, o.env);
-    const { config } = await loadProject(dir, entry, build, ++n, env);
+    const { config, folders, inputs } = await loadProject(dir, entry, build, ++n, env);
+    watched = { folders, dirs: new Set([dir, ...[...inputs].filter((f) => !IGNORED.test(f)).map(dirname)]) };
     const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
     // options() keeps only what the project reads, as deployed: a connection that works here works there.
@@ -168,22 +218,47 @@ export async function dev(o: DevOptions) {
     log(`config failed to load (fix it and save; serving 503 until then):\n${e instanceof Error ? e.message : String(e)}`);
   }
 
-  let watcher: FSWatcher | undefined;
+  let watchers: FSWatcher[] = [];
   if (o.watch !== false) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let running = Promise.resolve();
-    watcher = watch(dir, { recursive: true }, (_, f) => {
-      const p = String(f ?? "");
-      if (/(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/.test(p)) return;
+    const changed = (_: unknown, f: string | Buffer | null) => {
+      if (IGNORED.test(String(f ?? ""))) return;
       clearTimeout(timer);
-      timer = setTimeout(() => (running = running.then(async () => void (await reload()))), 50);
-    });
+      timer = setTimeout(
+        () =>
+          (running = running.then(async () => {
+            if (stopping) return;
+            await reload();
+            arm();
+          })),
+        50,
+      );
+    };
+    // The directories of the files the config bundles (not node_modules: a recursive watch walks
+    // the whole tree, on every arm), and the connection folders recursively, armed again after each
+    // reload: the files may have changed, and on Linux, Node's recursive watcher loses a file that an
+    // editor saved by renaming a new one over it (vim, sed -i). Until a load works, the project.
+    const arm = () => {
+      for (const x of watchers) x.close();
+      const on = (p: string, recursive: boolean) => {
+        try {
+          return [watch(p, { recursive }, changed)];
+        } catch {
+          return []; // gone since (a deleted folder)
+        }
+      };
+      watchers = watched
+        ? [...[...watched.dirs].flatMap((d) => on(d, false)), ...(watched.folders && existsSync(watched.folders) ? on(watched.folders, true) : [])]
+        : on(dir, true);
+    };
+    arm();
   }
 
   let stopping: Promise<void> | undefined;
   const info = {
     url: local,
-    port: server.port as number,
+    port: server.port,
     apiKey: loadEnv(dir, keys.keys, o.env)[ENV.apiKey] as string,
     created: keys.created,
     statePath,
@@ -195,9 +270,9 @@ export async function dev(o: DevOptions) {
     /** Idempotent (SIGINT twice, a test's cleanup after its own stop). */
     stop: () =>
       (stopping ??= (async () => {
-        watcher?.close();
+        for (const x of watchers) x.close();
         clearInterval(saver);
-        await server.stop(true);
+        await server.stop();
         await w?.stop();
         save();
         tun?.stop();

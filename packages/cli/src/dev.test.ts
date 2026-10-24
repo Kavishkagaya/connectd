@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Overview } from "@connectd/dashboard";
 import { type ConnectionEvent, connectd } from "@connectd/sdk";
 import { main } from "./cli.ts";
-import { type Dev, dev, swappable } from "./dev.ts";
+import { type Dev, dev, serve, swappable } from "./dev.ts";
 import type { Program } from "@connectd/kernel";
 import { memory } from "@connectd/kernel/memory";
 import { parseEnv } from "./env.ts";
@@ -371,4 +371,58 @@ test("env reads are by name: a config spreading env is refused; `connectd keys` 
   const k = parseEnv(out.join("\n"));
   expect(k.CONNECTD_API_KEY).toMatch(/^oc_[A-Za-z0-9]{32}$/);
   expect(k.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
+});
+
+test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-by-hop headers dropped, HEAD", async () => {
+  let seen: Headers | undefined;
+  const s = await serve(0, async (req) => {
+    seen = req.headers;
+    if (new URL(req.url).pathname === "/broken") {
+      const body = new ReadableStream<Uint8Array>({
+        start(c) {
+          c.enqueue(new TextEncoder().encode("part"));
+          setTimeout(() => c.error(new Error("upstream went away")), 50);
+        },
+      });
+      return new Response(body);
+    }
+    if (new URL(req.url).pathname === "/stream") {
+      let i = 0;
+      const body = new ReadableStream<Uint8Array>({
+        async pull(c) {
+          await new Promise((r) => setTimeout(r, 100));
+          c.enqueue(new TextEncoder().encode(`data: ${i}\n\n`));
+          if (++i === 3) c.close();
+        },
+      });
+      return new Response(body, { headers: { "content-type": "text/event-stream" } });
+    }
+    const h = new Headers({ "x-body": String((await req.arrayBuffer()).byteLength) });
+    h.append("set-cookie", "a=1; Path=/");
+    h.append("set-cookie", "b=2; Path=/");
+    return new Response("ok", { headers: h });
+  });
+  try {
+    // The first event arrives before the last is written.
+    const res = await fetch(`http://localhost:${s.port}/stream`);
+    const reader = res.body!.getReader();
+    const t0 = performance.now();
+    await reader.read();
+    const first = performance.now() - t0;
+    while (!(await reader.read()).done);
+    expect(first).toBeLessThan(250);
+    // A chunked upload: the handler sees the body, not the hop's transfer-encoding.
+    const up = await fetch(`http://localhost:${s.port}/up`, { method: "POST", body: new Blob(["hello"]).stream(), duplex: "half" } as RequestInit);
+    expect(up.headers.get("x-body")).toBe("5");
+    expect(seen?.has("transfer-encoding")).toBe(false);
+    expect(seen?.has("connection")).toBe(false);
+    expect(up.headers.getSetCookie()).toEqual(["a=1; Path=/", "b=2; Path=/"]);
+    // A body that fails partway ends the client's response with an error instead of leaving it hanging.
+    const broken = await fetch(`http://localhost:${s.port}/broken`);
+    expect(await Promise.race([broken.text().then(() => "ended", () => "failed"), new Promise((r) => setTimeout(() => r("hung"), 2000))])).toBe("failed");
+    const head = await fetch(`http://localhost:${s.port}/`, { method: "HEAD" });
+    expect(head.status).toBe(200);
+  } finally {
+    await s.stop();
+  }
 });
