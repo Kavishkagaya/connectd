@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
-import { definitionOf, hmacHex, type OAuth2 } from "@openconnect/connections";
+import { definitionOf, hmacHex, type Jwk, type OAuth2, verifyJwt } from "@openconnect/connections";
 import { fakeOAuth, harness } from "@openconnect/connections/testing";
 import { base64url, type Json } from "@openconnect/kernel";
 import { github } from "./github.ts";
+import { githubApp } from "./github-app.ts";
 import { google } from "./google.ts";
 import { slack } from "./slack.ts";
 
@@ -211,4 +212,61 @@ test("google webhooks: calendar channel registered with the secret as token, sto
   expect(await w.verify({ config: { clientId: "x" }, ...at }, n, "nope")).toBe(false);
   expect(w.parse(n)).toMatchObject({ topic: "calendar.exists", delivery: "ch1:2", payload: { channelId: "ch1", resourceId: "res1" } });
   expect(w.parse(hook({ "x-goog-resource-state": "sync" }))).toEqual({ reply: null });
+});
+
+test("github app: install + user check, installation tokens minted from the app key, app webhooks routed by installation", async () => {
+  const pair = (await crypto.subtle.generateKey({ name: "RSASSA-PKCS1-v1_5", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" }, true, [
+    "sign",
+    "verify",
+  ])) as CryptoKeyPair;
+  const pkcs8 = new Uint8Array((await crypto.subtle.exportKey("pkcs8", pair.privateKey)) as ArrayBuffer);
+  // GitHub hands out PKCS#1 keys: the RSA key inside PKCS#8's octet string.
+  const privateKey = `-----BEGIN RSA PRIVATE KEY-----\n${btoa(String.fromCharCode(...pkcs8.slice(26)))}\n-----END RSA PRIVATE KEY-----\n`;
+  const jwk = { ...((await crypto.subtle.exportKey("jwk", pair.publicKey)) as Jwk), kid: "app" };
+  let clock = () => 0;
+  let n = 0;
+  let uninstalled = false;
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const auth = new Headers(init?.headers).get("authorization") ?? "";
+    if (url === "https://github.com/login/oauth/access_token") return Response.json({ access_token: "ghu_user", token_type: "bearer" });
+    if (url === "https://api.github.com/user/installations")
+      return auth === "Bearer ghu_user" ? Response.json({ installations: [{ id: 7, account: { login: "acme" } }] }) : new Response(null, { status: 401 });
+    const m = url.match(/^https:\/\/api\.github\.com\/app\/installations\/(\d+)\/access_tokens$/);
+    if (m && init?.method === "POST") {
+      const claims = await verifyJwt(auth.slice(7), [jwk]);
+      if (claims?.iss !== "123" || uninstalled) return new Response(null, { status: 404 });
+      return Response.json({ token: `ghs_${++n}`, expires_at: new Date(clock() + H).toISOString() });
+    }
+    return new Response(null, { status: 404 });
+  }) as typeof globalThis.fetch;
+  const config = { clientId: "Iv1.app", clientSecret: "cs", appId: "123", slug: "my-app", privateKey, webhookSecret: "whs" };
+  const { w, get, callback } = await harness(githubApp, config, fetch);
+  clock = () => w.now();
+  const c = await get("conn:acme");
+
+  const url = new URL((await c.connect())!);
+  expect(url.origin + url.pathname).toBe("https://github.com/apps/my-app/installations/new");
+  const state = url.searchParams.get("state")!;
+  // The installing user can't see installation 8: nobody claims another org's install.
+  await expect(callback({ state, installation_id: "8", setup_action: "install", code: "c1" })).rejects.toThrow("access_denied");
+  const again = new URL((await c.connect())!).searchParams.get("state")!;
+  await callback({ state: again, installation_id: "7", setup_action: "install", code: "c2" });
+  expect(await c.metadata()).toEqual({ installationId: "7", account: "acme" });
+  expect(((await c.token()) as OAuth2).accessToken).toBe("ghs_1");
+  expect(definitionOf(githubApp).external?.({ installationId: "7", account: "acme" })).toEqual({ installation: "7" });
+
+  await w.advance(H);
+  const t2 = (await c.token()) as OAuth2;
+  expect(t2.accessToken).toBe("ghs_2");
+  expect(t2.data).toEqual({ installationId: 7, account: "acme" });
+
+  uninstalled = true;
+  await expect(c.conn.refresh()).rejects.toMatchObject({ state: "reauth_required", reason: "invalid_grant" });
+
+  const hooks = definitionOf(githubApp).webhooks!;
+  const body = JSON.stringify({ action: "opened", installation: { id: 7 } });
+  const req = { headers: new Headers({ "x-hub-signature-256": `sha256=${await hmacHex("whs", body)}`, "x-github-event": "issues", "x-github-delivery": "d1" }), body };
+  expect(await hooks.verify({ config, now: () => 0 }, req, null)).toBe(true);
+  expect(await hooks.verify({ config, now: () => 0 }, { ...req, body: `${body} ` }, null)).toBe(false);
+  expect(hooks.parse(req)).toMatchObject({ topic: "issues", delivery: "d1", external: { key: "installation", value: "7" } });
 });

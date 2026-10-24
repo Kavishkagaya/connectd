@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection, type OAuth2, oauth2 } from "@openconnect/connections";
+import { apiKey, connection, defineConnection, type OAuth2, oauth2 } from "@openconnect/connections";
 import { fakeOAuth } from "@openconnect/connections/testing";
 import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
@@ -127,4 +127,37 @@ test("extensions add routes, methods, timers and after hooks", async () => {
   expect((await req("POST", "/connections/keyed/k1/connect", { key: "sk" })).body).toEqual({ url: null });
   await w.advance(1000);
   expect(log).toEqual(["ping", "connect", "tick", "ext.tick"]);
+});
+
+test("device flow over HTTP: connect returns the code to show, the runtime polls until approved", async () => {
+  let approved = false;
+  const fetch = (async (url: string) =>
+    url === "https://dev.test/device"
+      ? Response.json({ device_code: "dc", user_code: "ABCD-EFGH", verification_uri: "https://dev.test/activate", expires_in: 600, interval: 5 })
+      : Response.json(approved ? { access_token: "d1", expires_in: 3600 } : { error: "authorization_pending" })) as typeof globalThis.fetch;
+  const tv = connection("tv")
+    .config<{ clientId: string }>()
+    .auth((f) => f.device({ deviceUrl: "https://dev.test/device", tokenUrl: "https://dev.test/token" }));
+  const settings = {
+    keys: await importKeys({ 1: key(1) }, 1),
+    stateKey: await importHmacKey(key(9)),
+    apiKey: "secret",
+    redirectUri: "https://oc.test/callback",
+    config: { tv: { clientId: "cid" } },
+    fetch,
+  };
+  const rt = runtime({ definitions: { tv }, settings: async () => settings });
+  const w = memory(rt.program);
+  const req = async (method: string, path: string) =>
+    (await rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" } }), w.call)).json() as Promise<any>;
+
+  expect(await req("POST", "/connections/tv/t1/connect")).toEqual({
+    url: "https://dev.test/activate",
+    device: { userCode: "ABCD-EFGH", verificationUri: "https://dev.test/activate", expiresAt: 600_000, intervalMs: 5000 },
+  });
+  await w.advance(5000);
+  expect((await req("GET", "/connections/tv/t1")).state).toBe("pending");
+  approved = true;
+  await w.advance(5000);
+  expect((await req("GET", "/connections/tv/t1")).state).toBe("active");
 });

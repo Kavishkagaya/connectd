@@ -1,4 +1,4 @@
-import type { Credential, State } from "@openconnect/connections";
+import type { Credential, Device, State } from "@openconnect/connections";
 import type { Json } from "@openconnect/kernel";
 import type { Fault, Page, Query, Row, SessionArgs } from "@openconnect/runtime";
 import { events, type EventsOptions } from "./events.ts";
@@ -158,9 +158,10 @@ export function openconnect(o: Options) {
        * `@openconnect/connect`: this URL isn't tied to the browser that opens it, so anyone who
        * gets it (a user of your app sending it to someone else) can have another person's provider
        * account land on this connection (login CSRF). Sessions bind the flow to the browser and the
-       * result to your page.
+       * result to your page. A device flow (#56) also returns `device`: show its `userCode` and
+       * `verificationUri`; the runtime polls, and the connection goes active once the user approves.
        */
-      connect: (args: Record<string, string> = {}) => call<{ url: string | null }>("connect", args),
+      connect: (args: Record<string, string> = {}) => call<{ url: string | null; device?: Device }>("connect", args),
       /** A current credential, refreshed if due. Prefer `fetch`, which never hands the token out. */
       token: () => call<Credential>("token"),
       revoke: (reason?: string) => call<Status>("revoke", reason === undefined ? null : { reason }),

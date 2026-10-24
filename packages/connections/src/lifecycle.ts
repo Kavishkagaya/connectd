@@ -9,7 +9,8 @@ import { OAuthError, type TokenResponse } from "./oauth.ts";
 
 export type State = "pending" | "active" | "reauth_required" | "revoked";
 
-export type OAuth2 = { kind: "oauth2"; accessToken: string; refreshToken?: string; expiresAt?: number; raw: TokenResponse };
+/** A token credential. `data` is what a flow keeps per connection to get the next token (GitHub App installation id); it rides along refreshes. */
+export type OAuth2 = { kind: "oauth2"; accessToken: string; refreshToken?: string; expiresAt?: number; raw: TokenResponse; data?: Json };
 /** API keys, basic auth, anything that doesn't refresh. */
 export type Static = { kind: "static"; fields: Record<string, string> };
 export type Credential = OAuth2 | Static;
@@ -25,6 +26,8 @@ type Stored = { state: State; reason?: string; credential: string | null };
 export type LifecycleOptions = {
   /** Exchange a refresh token at the provider; `bind` wires the definition's `refresh`. */
   refresh?: (cred: OAuth2) => Promise<TokenResponse>;
+  /** `refresh` gets a new token without a refresh token, from what the flow holds (client secret, private key: #56). */
+  mints?: boolean;
   /** Refresh this long before expiry (default 5 min; at most half the token's lifetime). */
   leadMs?: number;
   /** Backoff for transient refresh failures (default 30 s base, 8 attempts, then reauth_required). */
@@ -127,9 +130,14 @@ export function lifecycle(k: Kernel, opts: LifecycleOptions = {}) {
     }
   }
 
+  /** A refresh can get a new token: a refresh token, or a flow that mints. */
+  const renewable = (c: OAuth2) => !!opts.refresh && (!!c.refreshToken || !!opts.mints);
+  /** Still the credential a refresh started from (refresh token; access token for minted ones, which have none). */
+  const sameCred = (a: OAuth2, b: OAuth2) => (opts.mints && !b.refreshToken ? a.accessToken === b.accessToken : a.refreshToken === b.refreshToken);
+
   // ponytail: timer and cell writes aren't atomic. A crash between them leaves no timer; token() still refreshes on demand.
   async function arm(state: State, c: Credential | null) {
-    if (state !== "active" || c?.kind !== "oauth2" || !c.refreshToken || c.expiresAt === undefined || !opts.refresh) return refreshTimer.cancel();
+    if (state !== "active" || c?.kind !== "oauth2" || !renewable(c) || c.expiresAt === undefined) return refreshTimer.cancel();
     const lead = Math.min(opts.leadMs ?? 300_000, (c.expiresAt - k.now()) / 2);
     // Jitter spreads out connections that were created together.
     const at = c.expiresAt - lead - Math.random() * lead * 0.1;
@@ -143,7 +151,7 @@ export function lifecycle(k: Kernel, opts: LifecycleOptions = {}) {
       const s = await read();
       if (s?.state !== "active") throw new NotActive(s?.state ?? null, s?.reason);
       const used = s.credential as Credential;
-      if (used.kind !== "oauth2" || !used.refreshToken || !opts.refresh) return used;
+      if (used.kind !== "oauth2" || !renewable(used) || !opts.refresh) return used;
       let tok: TokenResponse;
       try {
         tok = await opts.refresh(used);
@@ -159,7 +167,7 @@ export function lifecycle(k: Kernel, opts: LifecycleOptions = {}) {
       // Keep retrying the write: with rotation, dropping `next` would lose the only valid refresh token.
       // Give up only if a revoke or a re-authorization replaced the credential meanwhile; theirs wins.
       const after = await update((cur) =>
-        cur?.state === "active" && cur.credential?.kind === "oauth2" && cur.credential.refreshToken === used.refreshToken
+        cur?.state === "active" && cur.credential?.kind === "oauth2" && sameCred(cur.credential, used)
           ? { to: "active", credential: next }
           : null,
       );
@@ -174,7 +182,7 @@ export function lifecycle(k: Kernel, opts: LifecycleOptions = {}) {
     const c = s.credential as Credential;
     if (c.kind !== "oauth2" || c.expiresAt === undefined || c.expiresAt - k.now() > SKEW_MS) return c;
     const exp = c.expiresAt;
-    if (c.refreshToken && opts.refresh)
+    if (renewable(c))
       // Transient failure while the old token still works: hand out the old token.
       return refresh().catch((e) => {
         if (e instanceof NotActive || exp <= k.now()) throw e;
@@ -225,5 +233,6 @@ export function credentialFrom(tok: TokenResponse, now: number, prev?: Credentia
     ...(refresh ? { refreshToken: refresh } : {}),
     ...(typeof tok.expires_in === "number" ? { expiresAt: now + tok.expires_in * 1000 } : {}),
     raw: tok,
+    ...(prev?.kind === "oauth2" && prev.data !== undefined ? { data: prev.data } : {}),
   };
 }

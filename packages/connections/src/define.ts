@@ -1,6 +1,6 @@
 import type { Json, Kernel, Limit, Observed } from "@openconnect/kernel";
 import { type Credential, lifecycle, NotActive, type OAuth2 } from "./lifecycle.ts";
-import type { TokenResponse } from "./oauth.ts";
+import { OAuthError, type TokenResponse } from "./oauth.ts";
 
 /**
  * A connection definition: how to authorize against one provider, plus its quirks. Plain data and
@@ -10,8 +10,14 @@ import type { TokenResponse } from "./oauth.ts";
 
 export type Ctx<C> = { config: C; fetch: typeof fetch; redirectUri: string; now(): number };
 
-/** First step of an authorization: send the user somewhere (data comes back at the callback), or done already. */
-export type Start = { redirect: (state: string) => string; data: Json } | { credential: Credential };
+/** What a device flow shows the user: go to `verificationUri`, type `userCode` (RFC 8628). */
+export type Device = { userCode: string; verificationUri: string; verificationUriComplete?: string; expiresAt: number; intervalMs: number };
+
+/**
+ * First step of an authorization: send the user somewhere (data comes back at the callback), done
+ * already (API keys, minted tokens), or a device code the user enters elsewhere while `poll` waits.
+ */
+export type Start = { redirect: (state: string) => string; data: Json } | { credential: Credential } | { device: Device; data: Json };
 
 /** The flow as steps. Helpers (`oauth2`, `apiKey`) build these; a custom flow writes them directly. */
 export type Auth<C> = {
@@ -21,6 +27,10 @@ export type Auth<C> = {
   refresh?(ctx: Ctx<C>, cred: OAuth2): Promise<TokenResponse>;
   /** Revoke at the provider. Best effort: the connection is revoked locally either way. */
   revoke?(ctx: Ctx<C>, cred: Credential): Promise<void>;
+  /** `refresh` needs no refresh token: it mints a new token from what the flow holds (client credentials, JWT bearer, GitHub Apps). */
+  mints?: boolean;
+  /** Device flow: the credential once the user approved, null while they haven't. A throw ends the attempt. */
+  poll?(ctx: Ctx<C>, data: Json): Promise<Credential | null>;
   /** The input fields `start` asks the user for (`apiKey`); a frontend renders them as a form (#29). */
   fields?: string[];
 };
@@ -142,9 +152,42 @@ export type BindOptions<C> = Omit<Ctx<C>, "now">;
 export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: BindOptions<C>) {
   const ctx: Ctx<C> = { config: opts.config, fetch: opts.fetch, redirectUri: opts.redirectUri, now: () => k.now() };
   const { refresh, revoke } = def.auth;
-  const conn = lifecycle(k, refresh ? { refresh: (c: OAuth2) => refresh(ctx, c) } : {});
+  const conn = lifecycle(k, refresh ? { refresh: (c: OAuth2) => refresh(ctx, c), mints: !!def.auth.mints } : {});
   /** Who the credential belongs to; `{ m: null }` for a definition without `metadata`. */
   const metaCell = k.cell<{ m: Json }>("meta");
+  /** A device flow in progress: what the user was shown, and what `poll` needs. */
+  const deviceCell = k.cell<{ device: Device; data: Json }>("device");
+  // ponytail: an expired or denied device attempt leaves the connection pending (no reason recorded); connect() again starts over.
+  const devicePoll = k.timer("device", {
+    async handle(): Promise<void> {
+      const d = (await deviceCell.read())?.value;
+      if (!d || !def.auth.poll) return;
+      if (k.now() >= d.device.expiresAt) {
+        await deviceCell.delete();
+        return;
+      }
+      let cred: Credential | null;
+      try {
+        cred = await def.auth.poll(ctx, d.data);
+      } catch (e) {
+        if (e instanceof OAuthError && e.code === "slow_down") {
+          const device = { ...d.device, intervalMs: d.device.intervalMs + 5000 };
+          await deviceCell.put({ ...d, device });
+          await devicePoll.set(k.now() + device.intervalMs);
+          return;
+        }
+        console.error("device flow ended", k.instance, e);
+        await deviceCell.delete();
+        return;
+      }
+      if (!cred) {
+        await devicePoll.set(k.now() + d.device.intervalMs);
+        return;
+      }
+      await deviceCell.delete();
+      await finish(cred).catch((e) => console.error("device flow: credential rejected", k.instance, e));
+    },
+  });
 
   /** Take the handshake a callback's `state` names, at most once: the start step's data and `connect`'s `extra`. */
   async function handshake(params: Record<string, string>): Promise<Handshake> {
@@ -185,10 +228,18 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
         return null;
       }
       if (!s) await conn.pend();
+      if ("device" in step) {
+        await deviceCell.put({ device: step.device, data: step.data });
+        await devicePoll.set(k.now() + step.device.intervalMs);
+        return step.device.verificationUriComplete ?? step.device.verificationUri;
+      }
       return step.redirect(await conn.handshake.open({ data: step.data, ...(extra === undefined ? {} : { extra }) }));
     },
 
     handshake,
+
+    /** The device code to show the user while a device flow waits for approval; null otherwise. */
+    device: async (): Promise<Device | null> => (await deviceCell.read())?.value.device ?? null,
 
     /** The provider redirected back. `params` is the callback query, `state` included; `hs` if already taken. */
     async callback(params: Record<string, string>, hs?: Handshake) {
