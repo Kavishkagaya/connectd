@@ -57,8 +57,8 @@ export default (env) => ({
 
 function project(files: Record<string, string> = {}) {
   const dir = mkdtempSync(join(TMP, "p-"));
-  for (const [f, s] of Object.entries({ "oc.config.ts": CONFIG, "label.ts": `export const label = "v1";\n`, ".dev.vars": "CLIENT_ID=cid\n", ...files }))
-    writeFileSync(join(dir, f), s);
+  for (const [f, s] of Object.entries({ "oc.config.ts": CONFIG, "label.ts": `export const label = "v1";\n`, ".env": "CLIENT_ID=cid\n", ...files }))
+    mkdirSync(join(dir, f, ".."), { recursive: true }), writeFileSync(join(dir, f), s);
   return dir;
 }
 
@@ -115,14 +115,14 @@ test("keys: generated once into .openconnect/dev.vars, gitignored, kept across r
   expect(b.d.created).toBe(false);
   expect(b.d.apiKey).toBe(a.d.apiKey);
   // The project's own env wins over generated keys.
-  writeFileSync(join(dir, ".dev.vars"), "CLIENT_ID=cid\nOPENCONNECT_API_KEY=mine\n");
+  writeFileSync(join(dir, ".env"), "CLIENT_ID=cid\nOPENCONNECT_API_KEY=mine\n");
   await b.d.stop();
   expect((await start(dir, w.env)).d.apiKey).toBe("mine");
 });
 
-test("config: function of the env (.dev.vars < process env), banner, unconfigured definitions", async () => {
+test("config: function of the env (.env < process env), banner, unconfigured definitions", async () => {
   const w = world();
-  const dir = project({ ".dev.vars": "" });
+  const dir = project({ ".env": "" });
   const { d, lines } = await start(dir, w.env);
   const l = d.loaded()!;
   expect(l.project.definitions.map((x) => x.id)).toEqual(["example", "keyed"]);
@@ -150,6 +150,35 @@ test("config: function of the env (.dev.vars < process env), banner, unconfigure
   expect(again.d.loaded()!.publicUrl).toBe("https://dev.example.com");
   const { url } = await again.oc.connection("example", "u1").connect();
   expect(new URL(url!).searchParams.get("redirect_uri")).toBe("https://dev.example.com/callback");
+});
+
+test("one .env: a connection reads its config with env(); only the names read reach the runtime; .dev.vars is refused", async () => {
+  const w = world();
+  const conn = `import { connection } from "@openconnect/connections";
+export default connection().config((env) => ({ clientId: env("TRACKER_ID"), region: env.optional("TRACKER_REGION") ?? "us" })).auth((f) => f.apiKey("key"))
+  .identity(async (ctx) => ({ config: ctx.config }));`;
+  const dir = project({ ".env": "TRACKER_ID=t1\nDATABASE_URL=postgres://app\n", "oc/tracker/connection.ts": conn });
+  const { d, oc } = await start(dir, w.env);
+  const l = d.loaded()!;
+  expect(l.project.envNames).toContain("TRACKER_ID");
+  expect(l.project.envNames).toContain("TRACKER_REGION");
+  expect(l.project.envNames).not.toContain("DATABASE_URL");
+  expect(l.project.config?.tracker).toEqual({ clientId: "t1", region: "us" });
+  await oc.connection("tracker", "u1").connect({ key: "k" });
+  expect((await oc.connection("tracker", "u1").status()).metadata).toMatchObject({ config: { clientId: "t1", region: "us" } });
+  await d.stop();
+  // A required name missing: not configured, and the banner names it.
+  writeFileSync(join(dir, ".env"), "DATABASE_URL=postgres://app\n");
+  const again = await start(dir, w.env);
+  expect(again.d.loaded()!.unconfigured).toEqual(["example", "tracker"]);
+  expect(again.lines.join("\n")).toContain("tracker (TRACKER_ID)");
+  await again.d.stop();
+  writeFileSync(join(dir, ".dev.vars"), "CLIENT_ID=cid\n");
+  await expect(start(dir, w.env)).rejects.toThrow(".dev.vars isn't read any more");
+  // A connection that reads its config can't also get one from oc.config.ts.
+  const both = project({ "oc/tracker/connection.ts": conn, "oc.config.ts": `export default { config: { tracker: {} } };` });
+  const b = await start(both, w.env);
+  expect(b.lines.join("\n")).toContain("remove config.tracker");
 });
 
 test("config errors: no config file, duplicate ids, a broken config serves 503 until fixed", async () => {
@@ -283,10 +312,14 @@ test("cli: help, flags, deploy slot", async () => {
 
 test("examples/basic loads", async () => {
   const dir = join(import.meta.dir, "..", "..", "..", "examples", "basic");
-  const d = await dev({ dir, port: 0, env: { GITHUB_CLIENT_ID: "x", GITHUB_CLIENT_SECRET: "y" }, watch: false, log: () => {} });
+  const lines: string[] = [];
+  const d = await dev({ dir, port: 0, env: { GITHUB_CLIENT_ID: "x", GITHUB_CLIENT_SECRET: "y", DATABASE_URL: "postgres://app" }, watch: false, log: (l) => lines.push(l) });
   running.push(d);
   expect(d.loaded()!.project.definitions.map((x) => x.id)).toEqual(["github", "google", "notes", "slack"]);
   expect(d.loaded()!.unconfigured).toEqual(["google", "slack"]);
+  // The providers read their own env names; the app's other vars aren't among them.
+  expect(d.loaded()!.project.envNames).toEqual(["APP_ORIGIN", "EVENTS_URL", "GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET", "SLACK_SIGNING_SECRET"]);
+  expect(lines.join("\n")).toContain("google (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET), slack (SLACK_CLIENT_ID, SLACK_CLIENT_SECRET)");
   expect(Object.keys(d.loaded()!.project.actions?.github ?? {})).toEqual(["profile"]);
 });
 
@@ -327,4 +360,15 @@ test("state.json: owner-only, its writes don't trigger reloads, stop is idempote
   expect(lines.some((l) => l.startsWith("reload"))).toBe(false);
   await Promise.all([d.stop(), d.stop()]);
   await d.stop();
+});
+
+test("env reads are by name: a config spreading env is refused; `openconnect keys` prints fresh values", async () => {
+  const { resolve } = await import("./project.ts");
+  expect(() => resolve((env) => ({ ...env, definitions: [] }), { PATH: "/bin", CLOUDFLARE_API_TOKEN: "t" })).toThrow("spreading or listing env isn't supported");
+  expect(resolve((env) => ({ definitions: [], ...(env.EVENTS_URL ? { events: { url: env.EVENTS_URL } } : {}) }), { EVENTS_URL: "https://a.test", PATH: "/bin" }).envNames).toEqual(["EVENTS_URL"]);
+  const out: string[] = [];
+  expect(await main(["keys"], { log: (l) => void out.push(l), dir: TMP })).toBe(0);
+  const k = parseEnv(out.join("\n"));
+  expect(k.OPENCONNECT_API_KEY).toMatch(/^oc_[A-Za-z0-9]{32}$/);
+  expect(k.OPENCONNECT_EVENTS_SECRET).toStartWith("whsec_");
 });

@@ -14,7 +14,7 @@ export default defineConfig({
       wrangler: { configPath: g.wrangler },
       miniflare: {
         // The secrets `deploy` pushes, plus a provider secret from an env file.
-        bindings: { ...generateKeys(), OPENCONNECT_API_KEY: "test-key", EXAMPLE_CLIENT_ID: "cid", MIGRATIONS: await readD1Migrations(g.migrations) },
+        bindings: { ...generateKeys(), OPENCONNECT_API_KEY: "test-key", EXAMPLE_CLIENT_ID: "cid", ENVD_CLIENT_ID: "envd-cid", MIGRATIONS: await readD1Migrations(g.migrations) },
         // The proxy's upstream.
         outboundService: (req: Request) => Response.json({ url: req.url }),
       },

@@ -5,6 +5,7 @@ import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
 import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
 import { sdkNote } from "./discover.ts";
+import { ENV, generateKeys } from "./keys.ts";
 
 export const HELP = `openconnect <command> [flags]
 
@@ -12,6 +13,7 @@ Commands
   dev       run the runtime locally: in memory, real clock, state kept in .openconnect/, reloads on save
   deploy    deploy to your Cloudflare account (through wrangler)
   types     write .openconnect/registry.d.ts (the typed client's registry; dev and deploy write it too)
+  keys      print a new OPENCONNECT_API_KEY and OPENCONNECT_EVENTS_SECRET (for CI secrets and your app's host)
   help      this text
 
 openconnect dev
@@ -22,14 +24,15 @@ openconnect dev
   --reset          start from empty state
 
 openconnect deploy
-  --env-file <f>   provider secrets to push as Worker secrets (e.g. .prod.vars; never .openconnect/dev.vars)
+  --env-file <f>   the production env (default .env.production; in CI, CI=true, the shell's); only names the project reads are pushed
   --name <name>    Worker name (default: deploy.name in the config, else the directory's name)
   --url <url>      public https origin on a custom domain (default: the workers.dev URL)
   --rotate <list>  comma-separated: key (adds OPENCONNECT_KEY_V<n+1>), api-key, state, sessions
   --new-keys       generate fresh runtime keys although the index database exists without its Worker
   --dry-run        write .openconnect/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
   --config <file>  config file (default ${CONFIG_FILES[0]})
-  Needs wrangler (bun add -d wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN).
+  Needs wrangler (bun add -d wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID).
+  In CI, OPENCONNECT_API_KEY comes from a CI secret (openconnect keys); deploy never prints one there.
   Managed deploys (--managed) wait for the managed service (#34).
 `;
 
@@ -104,6 +107,19 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
         log((e as Error).message);
         return 1;
       }
+    }
+    case "keys": {
+      // The two values that are yours: the same in CI secrets (or .env.production) and in your app's host.
+      const k = generateKeys();
+      log(
+        [
+          `${ENV.apiKey}=${k[ENV.apiKey]}`,
+          `${ENV.events}=${k[ENV.events]}`,
+          "",
+          "Put both in your CI secrets (or .env.production) and in your app's environment. New each run; nothing is stored.",
+        ].join("\n"),
+      );
+      return 0;
     }
     case "types": {
       const dir = o.dir ?? process.cwd();

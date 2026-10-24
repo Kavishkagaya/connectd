@@ -17,7 +17,10 @@ const lift = (t: TokenResponse): TokenResponse => (typeof t.access_token === "st
  * Errors are `{ ok: false, error }` with a 200.
  */
 export const slack = connection("slack")
-  .config<SlackConfig>()
+  .config<SlackConfig>((env) => {
+    const signingSecret = env.optional("SLACK_SIGNING_SECRET");
+    return { clientId: env("SLACK_CLIENT_ID"), clientSecret: env("SLACK_CLIENT_SECRET"), ...(signingSecret ? { signingSecret } : {}) };
+  })
   .auth((f) =>
     f
       .oauth2({ authorizeUrl: "https://slack.com/oauth/v2/authorize", tokenUrl: "https://slack.com/api/oauth.v2.access" })

@@ -34,7 +34,7 @@ const bearer = (cred: Credential) => headers(`Bearer ${cred.kind === "oauth2" ? 
  * `DELETE /applications/{client_id}/grant` rather than RFC 7009.
  */
 export const github = connection("github")
-  .config<OAuth2Config>()
+  .config<OAuth2Config>((env) => ({ clientId: env("GITHUB_CLIENT_ID"), clientSecret: env("GITHUB_CLIENT_SECRET") }))
   .auth((f) =>
     f
       .oauth2({ authorizeUrl: "https://github.com/login/oauth/authorize", tokenUrl: "https://github.com/login/oauth/access_token" })

@@ -192,3 +192,14 @@ test("builder: the types allow only the core's order", () => {
   authed.webhooks({ ...hooks, register: async (_c, _cr, _e, input: { repo: string }) => ({ hook: input.repo }) });
   authed.webhooks({ ...hooks, register: async (_c, _cr, _e, input) => ({ hook: input }) });
 });
+
+test("config from the environment: env() required, env.optional() not; every name read is reported", async () => {
+  const { envConfig } = await import("./define.ts");
+  const c = connection("t").config((env) => ({ id: env("T_ID"), region: env.optional("T_REGION") ?? "us" })).auth((f) => f.apiKey("key"));
+  const from = definitionOf(c).configFrom!;
+  expect(envConfig(from, { T_ID: "a", OTHER: "x" })).toEqual({ value: { id: "a", region: "us" }, read: ["T_ID", "T_REGION"], missing: [] });
+  expect(envConfig(from, { T_ID: "" })).toEqual({ value: null, read: ["T_ID", "T_REGION"], missing: ["T_ID"] });
+  // Typed from what it returns.
+  const id: string = (envConfig(from, { T_ID: "a" }).value as { id: string }).id;
+  expect(id).toBe("a");
+});

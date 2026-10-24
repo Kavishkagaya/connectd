@@ -4,7 +4,7 @@ import type { Handler, Json, Program } from "@openconnect/kernel";
 import { memory, type Snapshot } from "@openconnect/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@openconnect/runtime";
 import { devKeys, loadEnv, workdir } from "./env.ts";
-import { ENV, type Env, options, type Resolved, unconfigured } from "./project.ts";
+import { ENV, type Env, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 import { sdkNote } from "./discover.ts";
@@ -12,7 +12,7 @@ import { sdkNote } from "./discover.ts";
 export const PORT = 8787;
 
 export type DevOptions = {
-  /** The project directory (where `oc.config.ts` and `.dev.vars` are). */
+  /** The project directory (where `oc.config.ts` and `.env` are). */
   dir: string;
   /** Config file, relative to `dir`. Default: the first of CONFIG_FILES that exists. */
   config?: string;
@@ -122,6 +122,7 @@ export async function dev(o: DevOptions) {
     const { config } = await loadProject(dir, entry, build, ++n, env);
     const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
+    // options() keeps only what the project reads, as deployed: a connection that works here works there.
     const opts = options(config, { ...env, [ENV.url]: publicUrl }, index);
     await opts.settings(); // missing keys or a bad one fail here, not on the first request
     const next = runtime({ ...opts, now: () => (w as ReturnType<typeof memory>).now() });
@@ -225,7 +226,8 @@ export function banner(d: Pick<Dev, "url" | "apiKey" | "created" | "statePath" |
     rows.push(["sessions", l.project.sessions ? l.project.sessions.origins.join(", ") || "no origins" : "off (set sessions: { origins } in the config)"]);
     rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (sign in with the API key)`]);
     rows.push(["definitions", l.project.definitions.map((x) => x.id).join(", ") || "none"]);
-    if (l.unconfigured.length) rows.push(["no config", `${l.unconfigured.join(", ")}   (answer not_configured until config: { <id>: ... } is set)`]);
+    if (l.unconfigured.length) rows.push(["no config", `${unconfiguredText(l.project).join(", ")}   (answer not_configured until .env has them)`]);
+    if (l.project.envNames.length) rows.push(["env", `${l.project.envNames.join(", ")}   (from .env; nothing else reaches the runtime)`]);
   }
   rows.push(["state", `${d.statePath}   (--reset to start empty)`]);
   return `\nopenconnect dev\n${rows.map(([k, v]) => `  ${k.padEnd(14)}${v}`).join("\n")}\n`;
