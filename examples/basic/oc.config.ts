@@ -1,11 +1,10 @@
 import { defineConfig } from "@openconnect/cli";
-import { github, google, slack } from "@openconnect/providers";
 
-// `openconnect dev` in this directory. Provider credentials go in .dev.vars (see .dev.vars.example);
-// a provider without them answers not_configured until they're set. Connections in connections/ and
-// actions in actions/ join on their own (folder discovery); the providers are listed here.
+// `openconnect dev` in this directory. The connections are the folders in src/oc/ (one each, named
+// by its id: connection.ts, actions/). Provider credentials go in .dev.vars (see
+// .dev.vars.example); a provider without them answers not_configured until they're set.
 export default defineConfig((env) => ({
-  definitions: [github, slack, google],
+  dir: "src/oc",
   config: {
     ...(env.GITHUB_CLIENT_ID ? { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } } : {}),
     ...(env.SLACK_CLIENT_ID ? { slack: { clientId: env.SLACK_CLIENT_ID, clientSecret: env.SLACK_CLIENT_SECRET, signingSecret: env.SLACK_SIGNING_SECRET } } : {}),

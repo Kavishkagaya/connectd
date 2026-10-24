@@ -57,7 +57,7 @@ export default (env) => ({
 
 function project(files: Record<string, string> = {}) {
   const dir = mkdtempSync(join(TMP, "p-"));
-  for (const [f, s] of Object.entries({ "openconnect.config.ts": CONFIG, "label.ts": `export const label = "v1";\n`, ".dev.vars": "CLIENT_ID=cid\n", ...files }))
+  for (const [f, s] of Object.entries({ "oc.config.ts": CONFIG, "label.ts": `export const label = "v1";\n`, ".dev.vars": "CLIENT_ID=cid\n", ...files }))
     writeFileSync(join(dir, f), s);
   return dir;
 }
@@ -154,14 +154,14 @@ test("config: function of the env (.dev.vars < process env), banner, unconfigure
 
 test("config errors: no config file, duplicate ids, a broken config serves 503 until fixed", async () => {
   const w = world();
-  await expect(dev({ dir: mkdtempSync(join(TMP, "e-")), port: 0, watch: false, log: () => {} })).rejects.toThrow(/no openconnect.config.ts/);
-  const dir = project({ "openconnect.config.ts": `import { apiKey, defineConnection } from "@openconnect/connections";
+  await expect(dev({ dir: mkdtempSync(join(TMP, "e-")), port: 0, watch: false, log: () => {} })).rejects.toThrow(/no oc.config.ts/);
+  const dir = project({ "oc.config.ts": `import { apiKey, defineConnection } from "@openconnect/connections";
 const k = defineConnection({ id: "k", auth: apiKey(["key"]) });
 export default { definitions: [k, k] };` });
   const { d, lines } = await start(dir, w.env);
   expect(lines.join("\n")).toContain("two definitions with id k");
   expect((await fetch(`${d.url}/connections/k/a`)).status).toBe(503);
-  writeFileSync(join(dir, "openconnect.config.ts"), CONFIG);
+  writeFileSync(join(dir, "oc.config.ts"), CONFIG);
   expect(await d.reload()).toBe(true);
   expect((await fetch(`${d.url}/connections/keyed/a`, { headers: { authorization: `Bearer ${d.apiKey}` } })).status).toBe(404);
 });
@@ -285,8 +285,9 @@ test("examples/basic loads", async () => {
   const dir = join(import.meta.dir, "..", "..", "..", "examples", "basic");
   const d = await dev({ dir, port: 0, env: { GITHUB_CLIENT_ID: "x", GITHUB_CLIENT_SECRET: "y" }, watch: false, log: () => {} });
   running.push(d);
-  expect(d.loaded()!.project.definitions.map((x) => x.id)).toEqual(["github", "slack", "google", "notes"]);
-  expect(d.loaded()!.unconfigured).toEqual(["slack", "google"]);
+  expect(d.loaded()!.project.definitions.map((x) => x.id)).toEqual(["github", "google", "notes", "slack"]);
+  expect(d.loaded()!.unconfigured).toEqual(["google", "slack"]);
+  expect(Object.keys(d.loaded()!.project.actions?.github ?? {})).toEqual(["profile"]);
 });
 
 test("swap: an instance moves to the new program only when idle, never two live handlers", async () => {

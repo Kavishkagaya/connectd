@@ -6,7 +6,7 @@ import { generateKeys } from "./src/keys.ts";
 // What `openconnect deploy` would upload for test/fixture, run in workerd from its own wrangler.json:
 // the generated entry, the DO class and migration, the D1 binding and the copied migrations.
 const fixture = `${import.meta.dirname}/test/fixture`;
-const g = generate({ dir: fixture, config: `${fixture}/openconnect.config.ts`, name: "fixture", url: "https://oc.test" });
+const g = generate({ dir: fixture, config: `${fixture}/oc.config.ts`, name: "fixture", url: "https://oc.test" });
 
 export default defineConfig({
   plugins: [

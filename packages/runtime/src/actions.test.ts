@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { action, connection, type StandardSchemaV1 } from "@openconnect/connections";
+import { type ActionCtx, action, connection, type StandardSchemaV1 } from "@openconnect/connections";
 import { fakeOAuth } from "@openconnect/connections/testing";
 import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
@@ -29,19 +29,20 @@ const bare = connection("bare")
   .auth((f) => f.apiKey("key"));
 
 let failing = 0;
-const star = action("star", gh)
-  .input(repoSchema)
-  .run(async ({ api, store }, { repo }) => {
+const star = action({
+  input: repoSchema,
+  run: async ({ api, store }, { repo }) => {
     const res = await api.fetch(`/user/starred/${repo}`, { method: "PUT" });
     await store.set("last", repo);
     return { status: res.status };
-  });
-const last = action("last", gh).run(async ({ store, connection }) => ({ last: await store.get<string>("last"), id: connection.id, proto: await store.get("constructor") }));
-const forget = action("forget", gh).run(async ({ store }) => void (await store.delete("last")));
+  },
+});
+const last = action({ run: async ({ store, connection }) => ({ last: await store.get<string>("last"), id: connection.id, proto: await store.get("constructor") }) });
+const forget = action({ run: async ({ store }) => void (await store.delete("last")) });
 let hold: Promise<void> | null = null;
-const sync = action("sync", gh)
-  .every(10 * MIN)
-  .run(async ({ api, store }) => {
+const sync = action({
+  every: 10 * MIN,
+  run: async ({ api, store }) => {
     if (failing > 0) {
       failing--;
       throw new Error("provider down");
@@ -50,17 +51,19 @@ const sync = action("sync", gh)
     const n = ((await store.get<number>("runs")) ?? 0) + 1;
     await store.set("runs", n);
     return { n, user: (await api.get<{ login: string }>("/user")).login };
-  });
-const welcome = action("welcome", gh)
-  .on("active")
-  .run(async ({ store }) => void (await store.set("welcomed", ((await store.get<number>("welcomed")) ?? 0) + 1)));
-const ping = action("ping", bare).run(async ({ token }) => ({ kind: (await token()).kind }));
+  },
+});
+const welcome = action({ on: "active", run: async ({ store }) => void (await store.set("welcomed", ((await store.get<number>("welcomed")) ?? 0) + 1)) });
+const ping = action({ run: async ({ token }) => ({ kind: (await token()).kind }) });
+const noApi = action({ run: async ({ api }) => (await api.get("/x")) as Json });
 
-// Types: `api` only on connections with `.api()`; input actions take no triggers.
-// @ts-expect-error bare has no .api()
-action("x", bare).run(async ({ api }) => api);
-// @ts-expect-error scheduled actions take no input
-action("y", gh).input(repoSchema).every(MIN);
+// Types: input actions take no triggers; an annotated conn is exact (bare has no .api()).
+void (() => {
+  // @ts-expect-error scheduled actions take no input
+  action({ input: repoSchema, every: MIN, run: () => null });
+  // @ts-expect-error bare has no .api()
+  action({ run: async (conn: ActionCtx<typeof bare>) => conn.api.get("/x") });
+});
 
 async function setup() {
   const sent: ConnectionEvent[] = [];
@@ -90,7 +93,7 @@ async function setup() {
     fetch: p.fetch,
     events: { url: "https://app.test/events", secret: `whsec_${key(3)}` },
   };
-  const rt = runtime({ definitions: { gh, bare }, actions: [star, last, forget, sync, welcome, ping], settings: async () => settings, extensions: [events()] });
+  const rt = runtime({ definitions: { gh, bare }, actions: { gh: { star, last, forget, sync, welcome }, bare: { ping, noApi } }, settings: async () => settings, extensions: [events()] });
   const w = memory(rt.program);
   const req = async (path: string, body?: Json) => {
     const res = await rt.fetch(new Request(`https://oc.test${path}`, { method: "POST", headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.call);
@@ -132,6 +135,8 @@ test("actions over HTTP: input checked by its schema, run with an authed api, sh
   // No api on a connection without one; the token is there.
   await req("/connections/bare/k1/connect", { key: "sk" });
   expect((await req("/connections/bare/k1/actions/ping")).body).toEqual({ kind: "static" });
+  // No .api(): conn.api throws a clear error (a 500 from the action).
+  expect(JSON.stringify((await req("/connections/bare/k1/actions/noApi")).body)).not.toContain("api.test");
 });
 
 test("every: runs while active, reports as events, retries a failure, stops on revoke; on: once per entry", async () => {
@@ -199,9 +204,11 @@ test("revoked while a scheduled run is in flight: no failure reported, not armed
   expect(Object.keys(w.dump()).filter((i) => i.includes("ghost"))).toEqual([]);
 });
 
-test("runtime refuses two actions with one id on a connection, and an action on a missing connection", () => {
+test("runtime refuses actions on a missing connection and unusable names; action() refuses input with triggers", () => {
   const settings = async () => ({}) as never;
-  expect(() => runtime({ definitions: { gh }, actions: [star, action("star", gh).run(() => null)], settings })).toThrow("two actions named star on gh");
-  expect(() => runtime({ definitions: { bare }, actions: [star], settings })).toThrow("no connection gh");
-  expect(() => action("bad.id", gh)).toThrow("letters, digits");
+  expect(() => runtime({ definitions: { bare }, actions: { gh: { star } }, settings })).toThrow("no connection gh");
+  expect(() => runtime({ definitions: { gh }, actions: { gh: { "bad.id": star } }, settings })).toThrow("letters, digits");
+  for (const n of ["then", "toJSON", "toString", "constructor"]) expect(() => runtime({ definitions: { gh }, actions: { gh: { [n]: star } }, settings })).toThrow("reserved");
+  expect(() => action({ input: repoSchema, every: MIN, run: () => null } as never)).toThrow("no every or on");
+  expect(() => action({ every: 10, run: () => null })).toThrow("at least 1000");
 });

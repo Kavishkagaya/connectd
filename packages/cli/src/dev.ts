@@ -4,7 +4,7 @@ import type { Handler, Json, Program } from "@openconnect/kernel";
 import { memory, type Snapshot } from "@openconnect/kernel/memory";
 import { memoryIndex, type Runtime, runtime } from "@openconnect/runtime";
 import { devKeys, loadEnv, workdir } from "./env.ts";
-import { ENV, type Env, options, type Project, unconfigured } from "./project.ts";
+import { ENV, type Env, options, type Resolved, unconfigured } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 import { sdkNote } from "./discover.ts";
@@ -12,7 +12,7 @@ import { sdkNote } from "./discover.ts";
 export const PORT = 8787;
 
 export type DevOptions = {
-  /** The project directory (where `openconnect.config.ts` and `.dev.vars` are). */
+  /** The project directory (where `oc.config.ts` and `.dev.vars` are). */
   dir: string;
   /** Config file, relative to `dir`. Default: the first of CONFIG_FILES that exists. */
   config?: string;
@@ -32,7 +32,7 @@ export type DevOptions = {
 };
 
 /** What a load produced, for the banner and tests. */
-export type Loaded = { project: Project; unconfigured: string[]; publicUrl: string };
+export type Loaded = { project: Resolved; unconfigured: string[]; publicUrl: string };
 
 /**
  * A Program whose instances follow `swap(next)`, the way a deploy restarts isolates: per-isolate

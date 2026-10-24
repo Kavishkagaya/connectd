@@ -109,8 +109,8 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
       const dir = o.dir ?? process.cwd();
       try {
         const config = findConfig(dir, typeof a.flags.config === "string" ? a.flags.config : undefined);
-        const { modules } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), { ...process.env });
-        log(`wrote .openconnect/registry.d.ts (the config${modules.length ? ` and ${modules.length} discovered module${modules.length === 1 ? "" : "s"}` : ""})`);
+        const { found } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), { ...process.env });
+        log(`wrote .openconnect/registry.d.ts (${found.length ? found.map((f) => `${f.id}${f.actions.length ? ` (${f.actions.map((a) => a.name).join(", ")})` : ""}`).join(", ") : "no connection folders"})`);
         const note = sdkNote(dir);
         if (note) log(note);
         return 0;

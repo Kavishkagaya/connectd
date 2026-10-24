@@ -60,7 +60,7 @@ export default (env) => ({
 
 function setup(o: { events?: boolean; vars?: string } = {}) {
   const dir = mkdtempSync(join(TMP, "my app-"));
-  writeFileSync(join(dir, "openconnect.config.ts"), CONFIG(o.events));
+  writeFileSync(join(dir, "oc.config.ts"), CONFIG(o.events));
   writeFileSync(join(dir, ".prod.vars"), o.vars ?? "GH_ID=prod-id\nGH_SECRET=prod-secret\n");
   const bin = join(dir, "wrangler-fake");
   writeFileSync(bin, FAKE);
@@ -71,7 +71,7 @@ function setup(o: { events?: boolean; vars?: string } = {}) {
   const run = (x: Partial<DeployOptions> = {}) =>
     deploy({
       dir,
-      load: (env) => loadProject(dir, join(dir, "openconnect.config.ts"), join(dir, ".openconnect", "build"), ++n, env),
+      load: (env) => loadProject(dir, join(dir, "oc.config.ts"), join(dir, ".openconnect", "build"), ++n, env),
       envFile: ".prod.vars",
       wrangler: bin,
       env,
@@ -242,7 +242,7 @@ test("--dry-run: writes the entry, wrangler config and migrations, prints the pl
   expect(out).toContain("definitions  keyed, gh");
   expect(out).toContain(".openconnect/deploy/worker.ts");
   const entry = readFileSync(r.generated.entry, "utf8");
-  expect(entry).toContain('from "../../openconnect.config.ts"');
+  expect(entry).toContain('from "../../oc.config.ts"');
   expect(entry).not.toContain("openconnect:config");
   expect(entry).toMatch(/from "\.\.\/.*runtime\/src\/cloudflare\.ts"/);
   expect(readFileSync(join(s.dir, ".openconnect", ".gitignore"), "utf8")).toBe("*\n");
@@ -258,7 +258,7 @@ test("cli: deploy flags, --managed deferred", async () => {
   expect(out.join("\n")).toContain("openconnect deploy cli-test");
   expect(await main(["deploy", "--dry-run", "--url", "nope"], { log, dir: s.dir })).toBe(1);
   // generate() alone, as the workerd test uses it.
-  expect(generate({ dir: s.dir, config: join(s.dir, "openconnect.config.ts"), name: "x" }).wrangler).toEndWith("wrangler.json");
+  expect(generate({ dir: s.dir, config: join(s.dir, "oc.config.ts"), name: "x" }).wrangler).toEndWith("wrangler.json");
 });
 
 test("existing Worker without state.json (CI): refused until --url, its vars never dropped", async () => {

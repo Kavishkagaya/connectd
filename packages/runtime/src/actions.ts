@@ -1,4 +1,4 @@
-import { type ActionSpec, type AnyAction, actionOf, apiFor, NotActive, type SchemaIssue, type State, type Store } from "@openconnect/connections";
+import { type ActionSpec, type AnyAction, actionOf, apiFor, badActionName, NotActive, type SchemaIssue, type State, type Store } from "@openconnect/connections";
 import type { Json } from "@openconnect/kernel";
 import { emit } from "./events.ts";
 import { Fail, type Hooks, type Hosted } from "./host.ts";
@@ -24,16 +24,21 @@ const issues = (list: ReadonlyArray<SchemaIssue>): Json =>
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
-/** Every action, grouped by its connection's definition id. Throws on a duplicate id for one connection. */
-export function group(list: AnyAction[]): Map<string, ActionSpec[]> {
-  const by = new Map<string, ActionSpec[]>();
-  for (const a of list) {
-    const s = actionOf(a);
-    const mine = by.get(s.connection) ?? [];
-    if (mine.some((m) => m.id === s.id)) throw new Error(`two actions named ${s.id} on ${s.connection}`);
-    by.set(s.connection, [...mine, s]);
+/** The actions by connection, checked: each on a known connection, each name usable. */
+export function group(by: Record<string, Record<string, AnyAction>>, definitions: Record<string, unknown>): Map<string, ActionSpec[]> {
+  const out = new Map<string, ActionSpec[]>();
+  for (const [connection, list] of Object.entries(by)) {
+    if (!Object.hasOwn(definitions, connection)) throw new Error(`actions for ${connection}: no connection ${connection} in definitions`);
+    out.set(
+      connection,
+      Object.entries(list).map(([id, a]) => {
+        const bad = badActionName(id);
+        if (bad) throw new Error(`action ${connection}/${id}: the name is ${bad}`);
+        return { ...actionOf(a), id, connection };
+      }),
+    );
   }
-  return by;
+  return out;
 }
 
 function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
@@ -48,16 +53,26 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
     delete: async (key) => void (await cell.update((cur) => (cur && Object.hasOwn(cur, key) ? Object.fromEntries(Object.entries(cur).filter(([k]) => k !== key)) : null))),
   };
   const token = () => h.bound.token();
-  const ctx = async () => ({
-    config: h.bound.ctx.config,
-    fetch: h.bound.ctx.fetch,
-    now: () => h.k.now(),
-    connection: { definition: h.def.id, id: h.id },
-    identity: await h.bound.metadata(),
-    token,
-    store,
-    ...(h.def.proxy ? { api: apiFor(h.bound.ctx, h.def.proxy, token) } : {}),
-  });
+  const ctx = async () => {
+    const c = {
+      config: h.bound.ctx.config,
+      fetch: h.bound.ctx.fetch,
+      now: () => h.k.now(),
+      connection: { definition: h.def.id, id: h.id },
+      identity: await h.bound.metadata(),
+      token,
+      store,
+    };
+    // A getter that throws, not a missing field: `conn.api.get` would otherwise fail as "undefined is not an object".
+    const proxy = h.def.proxy;
+    return Object.defineProperty(c, "api", {
+      enumerable: !!proxy,
+      get: () => {
+        if (!proxy) throw new Error(`${h.def.id} has no .api(): use conn.token() and conn.fetch`);
+        return apiFor(h.bound.ctx, proxy, token);
+      },
+    });
+  };
 
   /** The state and the record's version, without decrypting the credential. */
   const record = async (): Promise<{ state: State; v: number } | null> => {
@@ -176,7 +191,7 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
 }
 
 /** The actions extension; `runtime({ actions })` adds it. */
-export function actions(list: AnyAction[]): Extension {
-  const by = group(list);
+export function actions(list: Record<string, Record<string, AnyAction>>, definitions: Record<string, unknown>): Extension {
+  const by = group(list, definitions);
   return { connection: (h) => hooks(h, by.get(h.def.id) ?? []) };
 }
