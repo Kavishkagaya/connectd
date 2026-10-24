@@ -21,6 +21,8 @@ test("the generated Worker: connect, status, list from D1, proxy, oauth redirect
   const { url } = await json("POST", "/connections/example/u1/connect");
   expect(new URL(url).searchParams.get("redirect_uri")).toBe("https://oc.test/callback");
   expect(new URL(url).searchParams.get("client_id")).toBe("cid");
+  const envd = await json("POST", "/connections/envd/u1/connect");
+  expect(new URL(envd.url).searchParams.get("client_id")).toBe("envd-cid");
   expect((await req("GET", "/connections/keyed/k1".replace("keyed", "nope"))).status).toBe(404);
   const anon = await worker.fetch(new Request("https://oc.test/connections/keyed/k1"), env as unknown as Record<string, unknown>);
   expect(anon.status).toBe(401);
@@ -39,7 +41,7 @@ test("the generated Worker serves the dashboard: the page, its script, and the A
   const ov = await json("GET", "/dashboard/api/overview");
   expect(ov.callbackUrl).toBe("https://oc.test/callback");
   expect(ov.index).toBe(true);
-  expect(ov.definitions.map((d: { id: string }) => d.id)).toEqual(["keyed", "example"]);
+  expect(ov.definitions.map((d: { id: string }) => d.id)).toEqual(["keyed", "example", "envd"]);
   await json("POST", "/connections/keyed/k1/connect", { key: "sk" });
   const d = await json("GET", "/dashboard/api/connections/keyed/k1");
   expect(d.status.ok.state).toBe("active");

@@ -48,7 +48,12 @@ export function devKeys(dir: string): { keys: Record<string, string>; created: b
   return { keys, created: true };
 }
 
-/** Lowest to highest: generated keys, `.env`, `.dev.vars`, the process environment. */
+/**
+ * Dev's environment, lowest to highest: generated keys, `.env` (the app's one file, trigger.dev
+ * style: shared with the app), the process environment. The runtime gets only the names the project
+ * reads (`workerEnv`), so the app's other vars (DATABASE_URL) never reach it.
+ */
 export function loadEnv(dir: string, generated: Record<string, string>, processEnv: Env = process.env): Env {
-  return { ...generated, ...read(join(dir, ".env")), ...read(join(dir, ".dev.vars")), ...processEnv };
+  if (existsSync(join(dir, ".dev.vars"))) throw new Error(".dev.vars isn't read any more: move its lines into .env (one file for the app and openconnect)");
+  return { ...generated, ...read(join(dir, ".env")), ...processEnv };
 }

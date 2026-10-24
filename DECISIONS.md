@@ -561,6 +561,15 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
 - Upgrading fails loudly: `connections/` or `actions/` next to the config with no connection folders is an error naming the move, and a lone `openconnect.config.ts` gets a rename hint.
 - Next: typed events (webhook topics, `.events()` with `conn.emit`, `<action>.completed`), then the app side (`lib/oc.ts`, `oc.routes`, `events.ts` with `listen()`).
 
+**Built (step 7): one `.env`.** As agreed (trigger.dev style): no `.dev.vars`, no `config: { github: ... }` in the config file; a connection reads its own env names.
+- `connection().config((env) => ({ clientId: env("GITHUB_CLIENT_ID"), ... }))`: `env("NAME")` is required, `env.optional("NAME")` isn't; `C` is inferred from the return (or given, `.config<OAuth2Config>((env) => ...)`). A function rather than `env.NAME`: under `noUncheckedIndexedAccess` an index read is `string | undefined`, which no config type takes. `.config<C>()` without a function still means the host supplies it (plain definitions, tests).
+- `envConfig(from, env)` (define.ts) runs it, recording every name read and the missing required ones: a missing one leaves the config null (`not_configured`), and dev's banner and deploy's plan name what's missing (`google (GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET)`). A connection with its own env config and a `config.<id>` in the config file is an error.
+- `resolve()` collects `envNames`: the names the connections read plus the ones a function config file reads (a recording proxy over its env). `workerEnv(env, names)` keeps those and `OPENCONNECT_*`: the only env the runtime gets, in dev and deployed, so the app's other vars (DATABASE_URL) never reach it, and what works in dev works deployed.
+- dev: generated keys < `.env` < the process env; a `.dev.vars` is an error naming the move.
+- deploy: `--env-file`, else `.env.production`, else the shell environment (CI). Only the names read, plus `OPENCONNECT_EVENTS_SECRET` and `OPENCONNECT_API_KEY`, become Worker secrets; the plan prints them, and the file's other names as "not sent". `.env` (dev's) is refused as the production file.
+- Providers read `GITHUB_CLIENT_ID`/`_SECRET`, `GOOGLE_*`, `SLACK_CLIENT_ID`/`_SECRET` (+ optional `SLACK_SIGNING_SECRET`), `GITHUB_APP_ID`/`_SLUG`/`_PRIVATE_KEY`/`_CLIENT_ID` (+ optional `_CLIENT_SECRET`, `_WEBHOOK_SECRET`).
+- Tests: `envConfig` (connections), dev (a folder connection's env config, names read and not, a missing one in the banner, `.dev.vars` refused, the config-file conflict; the example's names), deploy (`.env.production` default with a "not sent" name, the shell fallback without PATH or DATABASE_URL, `.env` refused).
+
 ## #56 Auth flows — decided
 
 Which flows openconnect supports and how the new ones fit the lifecycle (discussion on #56). Built in full except DCR.

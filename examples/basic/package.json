@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "openconnect dev",
-    "deploy": "openconnect deploy --env-file .prod.vars"
+    "deploy": "openconnect deploy"
   },
   "dependencies": {
     "@openconnect/cli": "workspace:*",

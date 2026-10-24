@@ -1,4 +1,4 @@
-import { type AnyAction, type AnyConnection, definitionOf, isAction, isConnection, withId } from "@openconnect/connections";
+import { type AnyAction, type AnyConnection, definitionOf, envConfig, isAction, isConnection, withId } from "@openconnect/connections";
 import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
@@ -91,26 +91,57 @@ export function withFolders(config: Config, folders: Folder[]): Config {
   };
 }
 
-/** The project with definitions checked: unique, non-empty ids. */
-/** A project as the runtime gets it: every definition (listed and from folders), checked. */
-export type Resolved = Project & { definitions: (AnyConnection | AnyDefinition)[]; registry: Record<string, AnyDefinition> };
+/**
+ * A project as the runtime gets it: every definition (listed and from folders), checked; `config`
+ * with each connection's own (`.config((env) => ...)`) filled in; `missing`: the required env names
+ * a connection still lacks; `envNames`: every name the config and the connections read, the only
+ * ones (besides `OPENCONNECT_*`) a Worker gets.
+ */
+export type Resolved = Project & {
+  definitions: (AnyConnection | AnyDefinition)[];
+  registry: Record<string, AnyDefinition>;
+  missing: Record<string, string[]>;
+  envNames: string[];
+};
 
 export function resolve(config: Config, env: Env): Resolved {
-  const raw = typeof config === "function" ? config(env) : config;
-  const p = raw && typeof raw === "object" ? { ...raw, definitions: raw.definitions ?? [] } : raw;
-  if (!p || typeof p !== "object") throw new Error("the config must export defineConfig({ ... })");
-  if (p.definitions !== undefined && !Array.isArray(p.definitions)) throw new Error("definitions must be a list");
+  const names = new Set<string>();
+  // The names a function config reads, as connections' are counted.
+  const seen = new Proxy(env, { get: (t, n) => (typeof n === "string" && names.add(n), Reflect.get(t, n)) });
+  const raw = typeof config === "function" ? config(seen) : config;
+  if (!raw || typeof raw !== "object") throw new Error("the config must export defineConfig({ ... })");
+  if (raw.definitions !== undefined && !Array.isArray(raw.definitions)) throw new Error("definitions must be a list");
+  const p = { ...raw, definitions: raw.definitions ?? [] };
   const registry: Record<string, AnyDefinition> = {};
-  for (const d of p.definitions ?? []) {
-    if (!d?.id || typeof d.id !== "string") throw new Error("every definition needs an id (connection(id))");
+  const own: Record<string, unknown> = {};
+  const missing: Record<string, string[]> = {};
+  for (const d of p.definitions) {
+    if (!d?.id || typeof d.id !== "string") throw new Error("every definition needs an id (connection(id), or its folder's name)");
     if (Object.hasOwn(registry, d.id)) throw new Error(`two definitions with id ${d.id}`);
-    registry[d.id] = definitionOf(d);
+    const def = definitionOf(d);
+    registry[d.id] = def;
+    if (!def.configFrom) continue;
+    if (p.config && Object.hasOwn(p.config, d.id)) throw new Error(`${d.id} reads its config from the environment (.config((env) => ...)); remove config.${d.id} from the config file`);
+    const r = envConfig(def.configFrom, env);
+    for (const n of r.read) names.add(n);
+    own[d.id] = r.value;
+    if (r.missing.length) missing[d.id] = r.missing;
   }
-  return { ...p, registry };
+  return { ...p, config: { ...p.config, ...own }, registry, missing, envNames: [...names].filter((n) => !n.startsWith("OPENCONNECT_")).sort() };
 }
 
-/** Definitions that need connector config and have none: they answer `not_configured`. */
-export const unconfigured = (p: Project) => (p.definitions ?? []).filter((d) => !definitionOf(d).auth.fields && (!p.config || !Object.hasOwn(p.config, d.id) || p.config[d.id] == null)).map((d) => d.id);
+/** What a Worker gets of `env`: the names the project reads, and `OPENCONNECT_*` (keys, URL, API key, events secret). */
+export const workerEnv = (env: Env, names: string[]): Env =>
+  Object.fromEntries(Object.entries(env).filter(([k, v]) => v !== undefined && (k.startsWith("OPENCONNECT_") || names.includes(k))));
+
+/** Definitions that need connector config and have none (they answer `not_configured`), or lack env names they read. */
+export const unconfigured = (p: Project & { missing?: Record<string, string[]> }) =>
+  (p.definitions ?? [])
+    .filter((d) => (p.missing && Object.hasOwn(p.missing, d.id)) || (!definitionOf(d).auth.fields && (!p.config || !Object.hasOwn(p.config, d.id) || p.config[d.id] == null)))
+    .map((d) => d.id);
+
+/** `github (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET), notes`: the unconfigured ones, with the env names each lacks. */
+export const unconfiguredText = (p: Resolved) => unconfigured(p).map((id) => (p.missing[id]?.length ? `${id} (${p.missing[id].join(", ")})` : id));
 
 function need(env: Env, name: string) {
   const v = env[name];

@@ -319,3 +319,28 @@ test("a signal during wrangler deploy removes the secrets file, stops wrangler, 
   expect(await code).toBe(143);
   expect(readdirSync(tmp)).toEqual([]);
 });
+
+test("one env: .env.production by default, only the names the project reads are sent (the list printed first); the shell otherwise; .env refused", async () => {
+  const s = setup({ vars: "" });
+  writeFileSync(join(s.dir, ".env.production"), "GH_ID=prod-id\nGH_SECRET=prod-secret\nDATABASE_URL=postgres://prod\n");
+  const r = await s.run({ envFile: undefined });
+  const w = s.account().workers[r.name]!;
+  expect(w.secrets.GH_ID).toBe("prod-id");
+  expect(Object.keys(w.secrets)).not.toContain("DATABASE_URL");
+  const out = s.lines.join("\n");
+  expect(out).toContain("secrets      GH_ID, GH_SECRET from .env.production");
+  expect(out).toContain("not sent     DATABASE_URL");
+
+  // No file: the shell's environment, still only the names read.
+  const t = setup({ vars: "" });
+  const shell = { ...t.env, GH_ID: "shell-id", GH_SECRET: "shell-secret", DATABASE_URL: "postgres://prod" };
+  const r2 = await t.run({ envFile: undefined, env: shell });
+  const w2 = t.account().workers[r2.name]!;
+  expect(w2.secrets.GH_ID).toBe("shell-id");
+  expect(Object.keys(w2.secrets)).not.toContain("DATABASE_URL");
+  expect(Object.keys(w2.secrets)).not.toContain("PATH");
+  expect(t.lines.join("\n")).toContain("from the shell environment");
+
+  writeFileSync(join(t.dir, ".env"), "GH_ID=dev\n");
+  await expect(t.run({ envFile: ".env" })).rejects.toThrow(".env is dev's");
+});

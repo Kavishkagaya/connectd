@@ -1,5 +1,5 @@
 import type { Json, Limit, Observed } from "@openconnect/kernel";
-import { BEARER, type Ctx, type Definition, type Inject, inject, type Webhooks } from "./define.ts";
+import { BEARER, type ConfigFrom, type Ctx, type Definition, type Inject, inject, type Webhooks } from "./define.ts";
 import { type Flow, type Flows, flows, IDENTITY, STEPS } from "./flows.ts";
 import type { Credential } from "./lifecycle.ts";
 
@@ -153,12 +153,16 @@ export function withId<T extends AnyConnection>(c: T, id: string): Omit<T, "id">
 export function connection<const Id extends string = string>(id: Id = "" as Id) {
   return {
     id,
-    config: <C = null>() => ({
+    /**
+     * `.config<C>()` names the config type and the host supplies it; `.config((env) => ({ clientId: env("GITHUB_CLIENT_ID") }))`
+     * reads it from the environment: `env("NAME")`, `env.optional("NAME")` (one `.env`; only the names read here reach the Worker).
+     */
+    config: <C = null>(from?: ConfigFrom<C>) => ({
       /** How a credential is made: `f` holds the flows, already typed for this config. Runs once. */
       auth: <M extends Json = null>(pick: (f: Flows<C>) => Flow<C, M>): Authed<Id, C, M> => {
         const flow = pick(flows as unknown as Flows<C>);
         const own = flow[IDENTITY];
-        return make({ id, auth: flow[STEPS], ...(own ? { metadata: async (_ctx: Ctx<C>, cred: Credential) => own(cred) } : {}) });
+        return make({ id, auth: flow[STEPS], ...(from ? { configFrom: from } : {}), ...(own ? { metadata: async (_ctx: Ctx<C>, cred: Credential) => own(cred) } : {}) });
       },
     }),
   };

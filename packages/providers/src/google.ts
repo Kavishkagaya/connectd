@@ -16,7 +16,7 @@ const bearer = (cred: Credential) => ({ authorization: `Bearer ${(cred as OAuth2
  * straight from the token endpoint over TLS, so it's read without verifying the signature (OIDC 3.1.3.7).
  */
 export const google = connection("google")
-  .config<GoogleConfig>()
+  .config<GoogleConfig>((env) => ({ clientId: env("GOOGLE_CLIENT_ID"), clientSecret: env("GOOGLE_CLIENT_SECRET") }))
   .auth((f) =>
     f
       .oauth2({

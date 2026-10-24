@@ -50,7 +50,41 @@ export type Definition<C, M extends Json> = {
   proxy?: { baseUrl: string; inject?: Inject };
   /** Incoming provider webhooks (#25): how to check and read them, and optionally how to register one per connection. */
   webhooks?: Webhooks<C, any>;
+  /** Its config from the environment (`.config((env) => ...)`, #54): the host runs it with its env (`envConfig`). */
+  configFrom?: ConfigFrom<C>;
 };
+
+/**
+ * Reads the environment for a connection's config: `env("NAME")` is required (a missing one leaves
+ * the connection unconfigured, `not_configured`, with the names listed); `env.optional("NAME")` isn't.
+ */
+export type EnvReader = ((name: string) => string) & { optional(name: string): string | undefined };
+export type ConfigFrom<C> = (env: EnvReader) => C;
+
+/**
+ * Run a connection's `configFrom` against `env`: its value (null while a required name is missing),
+ * every name it reads (the host passes only those to the Worker) and the missing required ones.
+ */
+export function envConfig<C>(from: ConfigFrom<C>, env: Record<string, string | undefined>): { value: C | null; read: string[]; missing: string[] } {
+  const read = new Set<string>();
+  const missing = new Set<string>();
+  // A plain read, not hasOwn: a Worker's `env` (cloudflare:workers) isn't a plain object. Non-strings (bindings, Object.prototype's) count as unset.
+  const get = (n: string) => {
+    read.add(n);
+    const v = env[n];
+    return typeof v === "string" && v ? v : undefined;
+  };
+  const reader = Object.assign(
+    (n: string) => {
+      const v = get(n);
+      if (v === undefined) missing.add(n);
+      return v ?? "";
+    },
+    { optional: get },
+  );
+  const value = from(reader);
+  return { value: missing.size ? null : value, read: [...read], missing: [...missing] };
+}
 
 /** A webhook as the provider sent it. `body` is raw: verify before parsing. */
 export type Webhook = { headers: Headers; body: string };

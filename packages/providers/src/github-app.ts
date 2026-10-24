@@ -95,7 +95,17 @@ async function mint(ctx: { config: GitHubAppConfig; fetch: typeof fetch; now(): 
  */
 // ponytail: revoke is local only; uninstalling is the org admin's call (DELETE /app/installations/{id} would remove the app for everyone there).
 export const githubApp = connection("github-app")
-  .config<GitHubAppConfig>()
+  .config<GitHubAppConfig>((env) => {
+    const [clientSecret, webhookSecret] = [env.optional("GITHUB_APP_CLIENT_SECRET"), env.optional("GITHUB_APP_WEBHOOK_SECRET")];
+    return {
+      appId: env("GITHUB_APP_ID"),
+      slug: env("GITHUB_APP_SLUG"),
+      privateKey: env("GITHUB_APP_PRIVATE_KEY"),
+      clientId: env("GITHUB_APP_CLIENT_ID"),
+      ...(clientSecret ? { clientSecret } : {}),
+      ...(webhookSecret ? { webhookSecret } : {}),
+    };
+  })
   .auth((f) =>
     f.flow({
       mints: true,

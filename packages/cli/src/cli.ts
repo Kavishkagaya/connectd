@@ -22,7 +22,7 @@ openconnect dev
   --reset          start from empty state
 
 openconnect deploy
-  --env-file <f>   provider secrets to push as Worker secrets (e.g. .prod.vars; never .openconnect/dev.vars)
+  --env-file <f>   the production env (default .env.production, else the shell); only names the project reads are pushed
   --name <name>    Worker name (default: deploy.name in the config, else the directory's name)
   --url <url>      public https origin on a custom domain (default: the workers.dev URL)
   --rotate <list>  comma-separated: key (adds OPENCONNECT_KEY_V<n+1>), api-key, state, sessions
