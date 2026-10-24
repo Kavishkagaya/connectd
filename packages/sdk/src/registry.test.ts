@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { type ActionCtx, action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@openconnect/connections";
 import { importHmacKey, importKeys, type Json } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
-import { runtime, webhooks } from "@openconnect/runtime";
+import { events as eventsExt, runtime, webhooks } from "@openconnect/runtime";
 import { type Client, type Connection, OpenConnectError, openconnect } from "./client.ts";
 import type { Entry, RegistryOf } from "./registry.ts";
 
@@ -123,4 +123,83 @@ test("types: optional input stays optional, plain definitions widen the ids, typ
   const untyped: Connection = typed;
   const client: Client = oc as unknown as Client;
   expect([plain.id, typeof untyped.call, typeof client.connection]).toEqual(["plain", "function", "function"]);
+});
+
+// Typed events (#54): a connection with declared topics and its own events, an action that emits one.
+const count = schema((v) => (typeof (v as { count?: unknown })?.count === "number" ? { count: (v as { count: number }).count } : null));
+const board = connection("board")
+  .config()
+  .auth((f) => f.apiKey("key"))
+  .webhooks({ verify: async () => true, parse: (req) => ({ topic: req.headers.get("x-topic") ?? "", payload: JSON.parse(req.body) as Json }), topics: ["card", "list"] })
+  .events({ synced: count });
+const sync = action({
+  run: async (conn: ActionCtx<typeof board>) => {
+    await conn.emit("synced", { count: 3 });
+    // @ts-expect-error not one of board's events
+    void (() => conn.emit("nope", {}));
+    // @ts-expect-error the schema's input
+    void (() => conn.emit("synced", { count: "3" }));
+    return { done: true };
+  },
+});
+const bad = action({ run: async (conn: ActionCtx) => (await conn.emit("synced", { count: "x" }), null) });
+const unknown = action({ run: async (conn: ActionCtx) => (await conn.emit("missing"), null) });
+const nightly = action({ every: 60_000, run: async (conn: ActionCtx<typeof board>) => (await conn.emit("synced", { count: 9 }), { swept: 2 }) });
+// Emits, then throws: the app call fails and nothing it emitted is sent.
+const broken = action({ run: async (conn: ActionCtx<typeof board>) => (await conn.emit("synced", { count: 1 }), (() => { throw new Error("broke"); })()) as null });
+const plain = connection("plain").config().auth((f) => f.apiKey("key"));
+void (() => {
+  // @ts-expect-error plain declares no events
+  action({ run: async (conn: ActionCtx<typeof plain>) => (await conn.emit("synced"), null) });
+});
+type B = { board: Entry<typeof board, { sync: typeof sync; nightly: typeof nightly; bad: typeof bad; unknown: typeof unknown; broken: typeof broken }> };
+
+test("typed events: webhook.<topic> from the declared topics, <action>.completed, own events via conn.emit", async () => {
+  const secret = `whsec_${key(3)}`;
+  let deliver: (req: Request) => Promise<Response> = async () => new Response(null, { status: 204 });
+  const settings = {
+    keys: await importKeys({ 1: key(1) }, 1),
+    stateKey: await importHmacKey(key(9)),
+    apiKey: "secret",
+    redirectUri: "https://oc.test/callback",
+    config: { board: null },
+    webhooks: { url: "https://oc.test/webhooks", key: await importHmacKey(key(5)) },
+    events: { url: "https://app.test/events", secret },
+    fetch: (async (url: string, init?: RequestInit) => (url === "https://app.test/events" ? deliver(new Request(url, init)) : new Response(null, { status: 404 }))) as typeof fetch,
+  };
+  const rt = runtime({ definitions: { board }, actions: { board: { sync, nightly, bad, unknown, broken } }, settings: async () => settings, extensions: [eventsExt(), webhooks()] });
+  const w = memory(rt.program);
+  const oc = openconnect<B>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
+  const ev = oc.events({ secret, now: w.now });
+  deliver = (req) => ev.handle(req);
+
+  const seen: string[] = [];
+  ev.on("connection.active", (e) => void seen.push(`${e.type} ${e.data.to} ${e.connection.definition satisfies "board"}`))
+    .on("webhook.card", (e) => void seen.push(`${e.type} ${e.data.topic} ${JSON.stringify(e.data.payload)}`))
+    .on("synced", (e) => void seen.push(`synced ${(e.data.count satisfies number) + 0}`))
+    .on("sync.completed", (e) => void seen.push(`sync ${e.data.output.done satisfies boolean}`))
+    .on("nightly.completed", (e) => void seen.push(`nightly ${e.data.output.swept satisfies number}`));
+  void (() => {
+    // @ts-expect-error not a declared topic
+    ev.on("webhook.board", () => {});
+    // @ts-expect-error no such action or event
+    ev.on("missing.completed", () => {});
+  });
+
+  const b = oc.connection("board", "u1");
+  await b.connect({ key: "k" });
+  expect(await b.actions.sync()).toEqual({ done: true });
+  // Checked against the schema, and against the names the connection declares: the app call fails.
+  await expect(b.actions.bad()).rejects.toThrow();
+  await expect(b.actions.unknown()).rejects.toThrow();
+  await expect(b.actions.broken()).rejects.toThrow();
+  const hook = (topic: string) =>
+    rt.fetch(new Request("https://oc.test/webhooks/board/u1", { method: "POST", headers: { "x-topic": topic }, body: JSON.stringify({ n: 1 }) }), w.call).then((r) => r.json());
+  expect(await hook("card")).toEqual({ delivered: 1 });
+  // Not a declared topic: acknowledged, never an event.
+  expect(await hook("board")).toEqual({ delivered: 0, ignored: "board" });
+  await w.advance(60_000);
+  await w.advance(1);
+  // The scheduled run's own event goes out before its .completed.
+  expect(seen).toEqual(["connection.active active board", "synced 3", 'webhook.card card {"n":1}', "synced 9", "nightly 2"]);
 });

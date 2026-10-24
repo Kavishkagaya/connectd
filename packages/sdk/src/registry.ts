@@ -1,5 +1,6 @@
 import type { Action, Connection } from "@openconnect/connections";
 import type { Json } from "@openconnect/kernel";
+import type { ConnectionEvent, LifecycleEvent, WebhookData } from "@openconnect/runtime";
 
 /**
  * The project's connections and their actions, for the typed client (#54). Empty here; the CLI's
@@ -69,3 +70,54 @@ export type ActionsOf<E> = [E] extends [never]
 /** What `webhooks.subscribe` takes: the definition's subscription schema's input. */
 // ponytail: `.webhooks()` carries `S` only as the last step of the builder; called earlier, subscribe takes Json.
 export type SubscriptionOf<E> = [E] extends [never] ? Json : E extends { connection: { "~subscription"?: infer S } } ? (unknown extends S ? Json : S) : Json;
+
+type Base<K> = Omit<LifecycleEvent, "type" | "data" | "connection"> & { connection: { definition: K; id: string } };
+type OutOf<S> = S extends { readonly "~standard": { readonly types?: { readonly output: infer O } | undefined } } ? O : Json;
+/** Its declared topics, any topic without; none for a connection without `.webhooks()`. */
+type TopicsOf<C> = "~topics" extends keyof C ? (C extends { readonly "~topics"?: infer T } ? (unknown extends T ? string : Extract<T, string>) : string) : never;
+type OwnOf<C> = C extends { readonly "~events"?: infer E } ? (unknown extends E ? {} : NonNullable<E>) : {};
+type ActionEvents<K, N extends string, O> =
+  | (Base<K> & { type: `${N}.completed`; data: { action: N; trigger: "every" | "on"; output: O } })
+  | (Base<K> & { type: `${N}.failed`; data: { action: N; trigger: "every" | "on"; error: string; attempt: number } });
+
+/**
+ * Every event one connection sends the app (#54), `connection.definition` its id: `connection.<state>`,
+ * `webhook.<topic>` (its `.webhooks({ topics })`, any topic without), `<action>.completed` / `.failed`
+ * with the action's output, and its own `.events({ ... })` with each schema's output.
+ */
+export type EventsOfEntry<K extends string, E> = E extends { connection: infer C; actions: infer A }
+  ?
+      | (Base<K> & Pick<LifecycleEvent, "type" | "data">)
+      | (Base<K> & { type: `webhook.${TopicsOf<C>}`; data: WebhookData })
+      | { [N in Extract<keyof A, string>]: ActionEvents<K, N, A[N] extends Action<any, infer O> ? O : Json> }[Extract<keyof A, string>]
+      | { [N in Extract<keyof OwnOf<C>, string>]: Base<K> & { type: N; data: OutOf<OwnOf<C>[N]> } }[Extract<keyof OwnOf<C>, string>]
+  : never;
+
+/** The events the app can get: the registry's, typed; any `ConnectionEvent` without one (or with untyped definitions). */
+export type EventsOf<R> = [keyof R] extends [never]
+  ? ConnectionEvent
+  : { [K in Exclude<Extract<keyof R, string>, "~untyped">]: EventsOfEntry<K, R[K]> }[Exclude<Extract<keyof R, string>, "~untyped">] | ("~untyped" extends keyof R ? ConnectionEvent : never);
+
+/**
+ * The events of one `type`. A pattern type (`webhook.${string}`) counts when `T` fits it; an own
+ * event's plain `string` only for a name without dots (theirs never have one); `webhook.*` and
+ * `connection.*` only ever name webhooks and lifecycle events.
+ */
+export type EventFor<R, T extends string> = EventsOf<R> extends infer E
+  ? E extends { type: infer U extends string }
+    ? // `webhook.checkout.session.completed` is a webhook, never an action's `.completed`; `connection.*` likewise.
+      [T, U] extends [`webhook.${string}`, `webhook.${string}`] | [`connection.${string}`, `connection.${string}`]
+      ? T extends U
+        ? E & { type: T }
+        : never
+      : T extends `webhook.${string}` | `connection.${string}`
+        ? never
+        : T extends U
+      ? string extends U
+        ? T extends `${string}.${string}`
+          ? never
+          : E
+        : E & { type: T }
+      : never
+    : never
+  : never;

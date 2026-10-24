@@ -52,6 +52,8 @@ export type Definition<C, M extends Json> = {
   webhooks?: Webhooks<C, any>;
   /** Its config from the environment (`.config((env) => ...)`, #54): the host runs it with its env (`envConfig`). */
   configFrom?: ConfigFrom<C>;
+  /** Its own events (#54), by name: what `conn.emit(name, data)` checks `data` against. Delivered as type `<name>`. */
+  events?: Record<string, StandardSchemaV1>;
 };
 
 /**
@@ -96,8 +98,14 @@ export type Webhook = { headers: Headers; body: string };
  */
 export type Incoming = { reply: Json } | { topic: string; delivery?: string; payload: Json; external?: { key: string; value: string } };
 
-/** `S`: what one subscription takes (`{ repo, events }`), when the definition has `subscription`. */
-export type Webhooks<C, S = null> = {
+/** `S`: what one subscription takes (`{ repo, events }`), when the definition has `subscription`. `T`: its topics. */
+export type Webhooks<C, S = null, T extends string = string> = {
+  /**
+   * The topics it delivers, as `webhook.<topic>` events (#54): the typed client's event names. Others
+   * are acknowledged and dropped. Without it, every topic is delivered (typed `webhook.${string}`).
+   */
+  // ponytail: names only, payloads stay Json; a schema per topic when payload types are worth their upkeep.
+  topics?: readonly T[];
   /**
    * True if the provider sent it. `secret` is this connection's own webhook secret on
    * `/webhooks/:def/:id` (the one `register` handed the provider), null on the app-level route;

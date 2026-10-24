@@ -27,8 +27,8 @@ const example = defineConnection({
 });
 const keyed = defineConnection({ id: "keyed", auth: apiKey(["key"]), proxy: { baseUrl: API, inject: { query: "api_key" } } });
 
-// A webhooks stand-in (#25): a method that queues a `webhook` event.
-const hook: Extension = { connection: (h) => ({ methods: { hook: async (a) => (await emit(h, a), null) } }) };
+// A webhooks stand-in (#25): a method that queues a `webhook.<topic>` event.
+const hook: Extension = { connection: (h) => ({ methods: { hook: async (a) => (await emit(h, a, `webhook.${(a as { topic?: string } | null)?.topic ?? "push"}`), null) } }) };
 
 type Handler = (req: Request) => Response | Promise<Response>;
 

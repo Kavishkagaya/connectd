@@ -130,7 +130,7 @@ async function setup(o: { events?: boolean; down?: string } = {}) {
   const secretOf = async (id: string) => (await api(`/connections/hooked/${id}/webhooks.endpoint`)).body as { url: string; secret: string };
   const webhooksOf = async (id?: string) => {
     await w!.advance(0); // events go out from the timer
-    return got.filter((e): e is WebhookEvent => e.type === "webhook" && (!id || e.connection.id === id));
+    return got.filter((e): e is WebhookEvent => e.type.startsWith("webhook.") && (!id || e.connection.id === id));
   };
   return { w: w!, api, hook, send, got, secretOf, webhooksOf };
 }
@@ -144,7 +144,7 @@ test("per-connection: verified with the connection's own secret, delivered after
 
   expect(await t.hook("/webhooks/hooked/c1", { type: "push", id: "d1", n: 1 }, ep.secret)).toEqual({ status: 200, body: { delivered: 1 } });
   await t.w.advance(0);
-  expect(t.got.map((e) => e.type)).toEqual(["connection.active", "webhook"]);
+  expect(t.got.map((e) => e.type)).toEqual(["connection.active", "webhook.push"]);
   expect(t.got[1]).toMatchObject({ connection: { definition: "hooked", id: "c1" }, data: { topic: "push", delivery: "d1", payload: { type: "push", id: "d1", n: 1 } } });
 
   // Wrong secret, another connection's secret, the app secret, tampered body: all 401, nothing delivered.

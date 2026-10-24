@@ -46,7 +46,7 @@ packages/runtime/
   src/host.ts         the Program every connection instance runs: one kernel per instance, registry lookup, bind, extensions' hooks (Hosted.k), methods, faults
   src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
-  src/actions.ts      actions on the connection's instance (added by runtime({ actions })): actions.<id> methods + /actions/:id route, input validation, .every timers while active, .on per state entry, action.completed/failed events
+  src/actions.ts      actions on the connection's instance (added by runtime({ actions })): actions.<id> methods + /actions/:id route, input validation, .every timers while active, .on per state entry, <action>.completed/failed events, conn.emit for the connection's own .events()
   src/proxy.ts        proxy() extension: /proxy/:def/:id/<path>, token + rate permits in one DO call
   src/events.ts       events extension: what an event is and how it's signed and POSTed, on the kernel's queue (relays the record's outbox); emit(); events.status/flush/redeliver
   src/signature.ts    Standard Webhooks sign/verify, no imports (`/signature` export, for the SDK)
@@ -57,7 +57,7 @@ packages/runtime/
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
   src/client.ts       openconnect<R = Registry>({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, OpenConnectError
-  src/registry.ts     interface Registry (filled by the CLI's generated .openconnect/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types
+  src/registry.ts     interface Registry (filled by the CLI's generated .openconnect/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types, EventsOf (the events the app gets, typed per connection)
   src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
   src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
