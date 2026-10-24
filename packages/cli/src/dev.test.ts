@@ -8,6 +8,7 @@ import { type Dev, dev, ignored, serve, swappable } from "./dev.ts";
 import type { Program } from "@connectd/kernel";
 import { memory } from "@connectd/kernel/memory";
 import { parseEnv } from "./env.ts";
+import { generateKeys } from "./keys.ts";
 import { NO_CLOUDFLARED, tunnel, tunnelUrl } from "./tunnel.ts";
 
 // Projects live under packages/cli/.tmp so their imports resolve through this package's node_modules.
@@ -55,9 +56,15 @@ export default (env) => ({
 });
 `;
 
+/** The dev keys `connectd init` writes into .env. */
+const KEYS = generateKeys();
+const keyLines = Object.entries(KEYS)
+  .map(([k, v]) => `${k}=${v}\n`)
+  .join("");
+
 function project(files: Record<string, string> = {}) {
   const dir = mkdtempSync(join(TMP, "p-"));
-  for (const [f, s] of Object.entries({ "oc.config.ts": CONFIG, "label.ts": `export const label = "v1";\n`, ".env": "CLIENT_ID=cid\n", ...files }))
+  for (const [f, s] of Object.entries({ "oc.config.ts": CONFIG, "label.ts": `export const label = "v1";\n`, ".env": `CLIENT_ID=cid\n${keyLines}`, ...files }))
     mkdirSync(join(dir, f, ".."), { recursive: true }), writeFileSync(join(dir, f), s);
   return dir;
 }
@@ -97,32 +104,27 @@ async function authorize(d: Dev, oc: ReturnType<typeof connectd>, id: string) {
   expect(res.status).toBe(200);
 }
 
-test("keys: generated once into .connectd/dev.vars, gitignored, kept across runs", async () => {
+test("keys: dev reads them from .env, never makes its own; without them, connectd init", async () => {
   const w = world();
-  const dir = project();
+  const dir = project({ ".env": "CLIENT_ID=cid\n" });
+  await expect(start(dir, w.env)).rejects.toThrow(/no CONNECTD_API_KEY, CONNECTD_KEY_V1, .* in \.env: run `connectd init` first$/);
+  expect(existsSync(join(dir, ".connectd", "dev.vars"))).toBe(false);
+  // A project an older dev ran: init moves its keys.
+  writeFileSync(join(dir, ".connectd", "dev.vars"), "CONNECTD_API_KEY=oc_old\n");
+  await expect(start(dir, w.env)).rejects.toThrow("it moves the keys from .connectd/dev.vars into .env");
+  writeFileSync(join(dir, ".env"), `CLIENT_ID=cid\n${keyLines}`);
   const a = await start(dir, w.env);
-  expect(a.d.created).toBe(true);
-  expect(a.d.apiKey).toMatch(/^oc_[A-Za-z0-9]{32}$/);
+  expect(a.d.apiKey).toBe(KEYS.CONNECTD_API_KEY!);
   expect(a.lines.join("\n")).toContain(a.d.apiKey);
-  const vars = parseEnv(readFileSync(join(dir, ".connectd", "dev.vars"), "utf8"));
-  expect(Object.keys(vars).sort()).toEqual(
-    ["CONNECTD_API_KEY", "CONNECTD_EVENTS_SECRET", "CONNECTD_KEY_V1", "CONNECTD_SESSIONS_KEY", "CONNECTD_STATE_KEY", "CONNECTD_WEBHOOKS_KEY"].sort(),
-  );
-  expect(vars.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
   expect(readFileSync(join(dir, ".connectd", ".gitignore"), "utf8")).toBe("*\n");
   await a.d.stop();
-  const b = await start(dir, w.env);
-  expect(b.d.created).toBe(false);
-  expect(b.d.apiKey).toBe(a.d.apiKey);
-  // The project's own env wins over generated keys.
-  writeFileSync(join(dir, ".env"), "CLIENT_ID=cid\nCONNECTD_API_KEY=mine\n");
-  await b.d.stop();
-  expect((await start(dir, w.env)).d.apiKey).toBe("mine");
+  // The process environment wins over .env.
+  expect((await start(dir, { ...w.env, CONNECTD_API_KEY: "mine" })).d.apiKey).toBe("mine");
 });
 
 test("config: function of the env (.env < process env), banner, unconfigured definitions", async () => {
   const w = world();
-  const dir = project({ ".env": "" });
+  const dir = project({ ".env": keyLines });
   const { d, lines } = await start(dir, w.env);
   const l = d.loaded()!;
   expect(l.project.definitions.map((x) => x.id)).toEqual(["example", "keyed"]);
@@ -157,7 +159,7 @@ test("one .env: a connection reads its config with env(); only the names read re
   const conn = `import { connection } from "@connectd/connections";
 export default connection().config((env) => ({ clientId: env("TRACKER_ID"), region: env.optional("TRACKER_REGION") ?? "us" })).auth((f) => f.apiKey("key"))
   .identity(async (ctx) => ({ config: ctx.config }));`;
-  const dir = project({ ".env": "TRACKER_ID=t1\nDATABASE_URL=postgres://app\n", "oc/tracker/connection.ts": conn });
+  const dir = project({ ".env": `TRACKER_ID=t1\nDATABASE_URL=postgres://app\n${keyLines}`, "oc/tracker/connection.ts": conn });
   const { d, oc } = await start(dir, w.env);
   const l = d.loaded()!;
   expect(l.project.envNames).toContain("TRACKER_ID");
@@ -168,7 +170,7 @@ export default connection().config((env) => ({ clientId: env("TRACKER_ID"), regi
   expect((await oc.connection("tracker", "u1").status()).metadata).toMatchObject({ config: { clientId: "t1", region: "us" } });
   await d.stop();
   // A required name missing: not configured, and the banner names it.
-  writeFileSync(join(dir, ".env"), "DATABASE_URL=postgres://app\n");
+  writeFileSync(join(dir, ".env"), `DATABASE_URL=postgres://app\n${keyLines}`);
   const again = await start(dir, w.env);
   expect(again.d.loaded()!.unconfigured).toEqual(["example", "tracker"]);
   expect(again.lines.join("\n")).toContain("tracker (TRACKER_ID)");
@@ -199,7 +201,7 @@ test("dev server through the SDK: oauth2 and API-key connect, list, proxy, signe
   const w = world();
   const dir = project();
   const { d, oc } = await start(dir, w.env);
-  const secret = parseEnv(readFileSync(join(dir, ".connectd", "dev.vars"), "utf8")).CONNECTD_EVENTS_SECRET!;
+  const secret = KEYS.CONNECTD_EVENTS_SECRET!;
   const got: ConnectionEvent[] = [];
   const ev = oc.events({ secret }).on("*", (e) => void got.push(e));
   w.receive((req) => ev.handle(req));
@@ -313,7 +315,7 @@ test("cli: help, flags, deploy slot", async () => {
 test("examples/basic loads", async () => {
   const dir = join(import.meta.dir, "..", "..", "..", "examples", "basic");
   const lines: string[] = [];
-  const d = await dev({ dir, port: 0, env: { GITHUB_CLIENT_ID: "x", GITHUB_CLIENT_SECRET: "y", DATABASE_URL: "postgres://app" }, watch: false, log: (l) => lines.push(l) });
+  const d = await dev({ dir, port: 0, env: { ...KEYS, GITHUB_CLIENT_ID: "x", GITHUB_CLIENT_SECRET: "y", DATABASE_URL: "postgres://app" }, watch: false, log: (l) => lines.push(l) });
   running.push(d);
   expect(d.loaded()!.project.definitions.map((x) => x.id)).toEqual(["github", "google", "notes", "slack"]);
   expect(d.loaded()!.unconfigured).toEqual(["google", "slack"]);

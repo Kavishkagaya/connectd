@@ -13,7 +13,7 @@ export const ENV = {
 
 const random = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
 
-/** Fresh values for every generated secret: dev keeps them in `.connectd/dev.vars`, deploy sets them as Worker secrets. */
+/** Fresh values for every generated secret: `connectd init` writes dev's into .env, deploy sets an environment's as Worker secrets. */
 export const generateKeys = (): Record<string, string> => ({
   [ENV.apiKey]: `oc_${random().replace(/[+/=]/g, "").slice(0, 32)}`,
   [`${ENV.key}1`]: random(),

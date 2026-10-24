@@ -6,6 +6,7 @@ A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`con
 
 ```sh
 cp .env.example .env      # one file for your app and connectd
+bunx connectd init        # once: dev's keys and CONNECTD_URL into .env (the rest is already here)
 bun run dev               # connectd dev; only the names the connections read reach the runtime
 ```
 

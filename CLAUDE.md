@@ -83,15 +83,16 @@ packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /
 packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed); `@connectd/cli` exports project.ts; runtime/kernel/connections are peer deps
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), resolve() (connections' env config, `envNames`, `missing`), workerEnv(), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
-  src/env.ts          dotenv parsing; dev's env (generated keys < .env < process env; .dev.vars refused); dev keys generated once into .connectd/dev.vars
+  src/env.ts          dotenv parsing; dev's env (.env < process env; .dev.vars refused)
+  src/init.ts         `connectd init`: dev's keys + CONNECTD_URL + APP_URL into .env (keys from an old .connectd/dev.vars moved), .gitignore, oc.config.ts, <src>/lib/oc.ts, the Next.js route; never overwrites
   src/load.ts         findConfig, importConfig (esbuild bundle to .mjs + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: the environment (--env <name>, default production: .env.<name> or --env-file, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save (watcher skips build output, hidden dirs, generated types)
+  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, keys from .env (init's; never made here), port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save (watcher skips build output, hidden dirs, generated types)
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) and `connectd diff <id>` (unified diff against the catalog)
-  src/cli.ts, args.ts commands (dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
+  src/cli.ts, args.ts commands (init, dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
 
 packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, url })` in oc.config.ts; the adapter deploys through wrangler
   src/index.ts        cloudflare(): a Target, data only (Workers-safe: the config is bundled into the Worker)
@@ -117,7 +118,7 @@ Kernel subpath exports: `@connectd/kernel`, `/memory`, `/do`, `/parity`. Connect
 - Provider changed: `cd packages/providers && bun run registry` (rewrites registry/)
 - Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts`
 - One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`
-- Dev server on the example: `cd examples/basic && bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `connectd --help`)
+- Dev server on the example: `cd examples/basic && bunx connectd init` once (keys into .env), then `bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `connectd --help`)
 - Deploy plan without Cloudflare: `cd examples/basic && bunx connectd deploy --dry-run` (then `wrangler deploy --dry-run -c .connectd/deploy/wrangler.json` bundles it offline)
 
 ## Patterns
