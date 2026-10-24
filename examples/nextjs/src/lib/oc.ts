@@ -8,7 +8,7 @@ export async function currentUser() {
   return (await cookies()).get(USER_COOKIE)?.value ?? null;
 }
 
-// CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET: set by `connectd dev -- next dev`;
+// CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET from the environment (see the README);
 // in production, the values `connectd deploy` prints.
 export const oc = connectd({
   user: (req) => req.headers.get("cookie")?.match(/(?:^|;\s*)demo_user=([^;]+)/)?.[1] ?? null,

@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "connectd dev -- next dev",
+    "dev": "next dev",
+    "dev:connectd": "connectd dev",
     "build": "connectd types && next build",
     "deploy": "connectd deploy"
   },

@@ -110,10 +110,16 @@ test("keys: generated once into .connectd/dev.vars, gitignored, kept across runs
   );
   expect(vars.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
   expect(readFileSync(join(dir, ".connectd", ".gitignore"), "utf8")).toBe("*\n");
+  // The app's three values land in .env (appended: the project's lines stay), once.
+  const appEnv = parseEnv(readFileSync(join(dir, ".env"), "utf8"));
+  expect(appEnv).toEqual({ CLIENT_ID: "cid", CONNECTD_URL: a.d.url, CONNECTD_API_KEY: a.d.apiKey, CONNECTD_EVENTS_SECRET: vars.CONNECTD_EVENTS_SECRET as string });
+  expect(a.lines.join("\n")).toContain("wrote CONNECTD_URL, CONNECTD_API_KEY, CONNECTD_EVENTS_SECRET to .env for your app");
+  const once = readFileSync(join(dir, ".env"), "utf8");
   await a.d.stop();
   const b = await start(dir, w.env);
   expect(b.d.created).toBe(false);
   expect(b.d.apiKey).toBe(a.d.apiKey);
+  expect(readFileSync(join(dir, ".env"), "utf8")).toBe(once);
   // The project's own env wins over generated keys.
   writeFileSync(join(dir, ".env"), "CLIENT_ID=cid\nCONNECTD_API_KEY=mine\n");
   await b.d.stop();
@@ -373,27 +379,6 @@ test("env reads are by name: a config spreading env is refused; `connectd keys` 
   expect(k.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
 });
 
-test("watcher: build output, dependencies and hidden folders never reload; .env and sources do", () => {
-  for (const p of [".next/server/app.js", "node_modules/x/i.js", ".connectd/state.json", ".git/index", "dist/a.js", "src/oc/x/.y.ts.swp", ".git", ".next", "next-env.d.ts", "tsconfig.tsbuildinfo"]) expect([p, ignored(p)]).toEqual([p, true]);
-  for (const p of [".env", ".env.local", "oc.config.ts", "src/oc/github/connection.ts", "app/page.tsx"]) expect([p, ignored(p)]).toEqual([p, false]);
-});
-
-test("app: dev -- <command> runs the app with the dev keys and its URL, and stops it", async () => {
-  const w = world();
-  const dir = project();
-  const out = join(dir, "app-env.json");
-  const script = `require("fs").writeFileSync(${JSON.stringify(out)}, JSON.stringify(process.env)); setInterval(() => {}, 1000);`;
-  const d = await dev({ dir, port: 0, env: w.env, watch: false, app: { command: [process.execPath, "-e", script], port: 3456 }, log: () => {} });
-  running.push(d);
-  await until(() => existsSync(out));
-  const env = JSON.parse(readFileSync(out, "utf8")) as Record<string, string>;
-  expect(env).toMatchObject({ PORT: "3456", APP_URL: "http://localhost:3456", CONNECTD_URL: d.url, CONNECTD_API_KEY: d.apiKey });
-  expect(env.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
-  // Only those: not the rest of the runtime's keys.
-  expect(Object.keys(env).filter((k) => k.startsWith("CONNECTD_")).sort()).toEqual(["CONNECTD_API_KEY", "CONNECTD_EVENTS_SECRET", "CONNECTD_URL"]);
-  await d.stop();
-});
-
 test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-by-hop headers dropped, HEAD", async () => {
   let seen: Headers | undefined;
   const s = await serve(0, async (req) => {
@@ -446,4 +431,9 @@ test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-
   } finally {
     await s.stop();
   }
+});
+
+test("watcher: build output, dependencies and hidden folders never reload; .env and sources do", () => {
+  for (const p of [".next/server/app.js", "node_modules/x/i.js", ".connectd/state.json", ".git/index", "dist/a.js", "src/oc/x/.y.ts.swp", ".git", ".next", "next-env.d.ts", "tsconfig.tsbuildinfo"]) expect([p, ignored(p)]).toEqual([p, true]);
+  for (const p of [".env", ".env.local", "oc.config.ts", "src/oc/github/connection.ts", "app/page.tsx"]) expect([p, ignored(p)]).toEqual([p, false]);
 });

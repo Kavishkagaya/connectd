@@ -1,12 +1,11 @@
-/** `[command] [--flag value | --flag=value | --switch]... [-- anything]`. Flags are declared, so a typo is an error, not ignored. `after`: what follows `--`, untouched. */
+/** `[command] [--flag value | --flag=value | --switch]...`. Flags are declared, so a typo is an error, not ignored. */
 export type Spec = Record<string, "string" | "boolean">;
 
-export function parse(argv: string[], spec: Spec): { command: string | undefined; flags: Record<string, string | boolean>; rest: string[]; after: string[] } {
+export function parse(argv: string[], spec: Spec): { command: string | undefined; flags: Record<string, string | boolean>; rest: string[] } {
   const flags: Record<string, string | boolean> = {};
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i] as string;
-    if (a === "--") return { command: rest.shift(), flags, rest, after: argv.slice(i + 1) };
     if (a === "-h") {
       flags.help = true;
       continue;
@@ -27,5 +26,5 @@ export function parse(argv: string[], spec: Spec): { command: string | undefined
       flags[name] = v;
     }
   }
-  return { command: rest.shift(), flags, rest, after: [] };
+  return { command: rest.shift(), flags, rest };
 }

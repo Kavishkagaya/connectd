@@ -25,8 +25,8 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
   let repos: Repo[] = [];
   let reposError = "";
   if (status.state === "active") {
-    const res = await gh.fetch("/installation/repositories?per_page=20");
-    if (res.ok) repos = ((await res.json()) as { repositories: Repo[] }).repositories;
+    const res = await gh.fetch("/user/repos?sort=updated&per_page=20");
+    if (res.ok) repos = (await res.json()) as Repo[];
     else reposError = `${res.status} ${await res.text()}`;
   }
 
@@ -49,12 +49,12 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
       {status.state === "active" ? (
         <>
           <p>
-            Installed on <b>{String((status.metadata as { account?: string } | null)?.account ?? "?")}</b>.
+            Connected as <b>{String((status.metadata as { login?: string } | null)?.login ?? "?")}</b>.
           </p>
           <form action={disconnect}>
             <button type="submit">Disconnect</button>
           </form>
-          <h3>Repositories the app can see</h3>
+          <h3>Your recently updated repositories</h3>
           {reposError ? (
             <pre>{reposError}</pre>
           ) : repos.length ? (
@@ -67,7 +67,7 @@ export default async function Home({ searchParams }: { searchParams: Promise<Rec
               ))}
             </ul>
           ) : (
-            <p>None yet: pick repositories in the installation's settings on GitHub.</p>
+            <p>No repositories.</p>
           )}
         </>
       ) : (
