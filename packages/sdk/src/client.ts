@@ -1,7 +1,9 @@
 import type { Credential, Device, State } from "@connectd/connections";
 import type { Json } from "@connectd/kernel";
-import type { Fault, Page, Query, Row, SessionArgs } from "@connectd/runtime";
+import type { ConnectionEvent, Fault, Page, Query, Row, SessionArgs } from "@connectd/runtime";
 import { events, type EventsOptions } from "./events.ts";
+import { isListener, type Listener } from "./listen.ts";
+import { routes, type User } from "./routes.ts";
 import type { ActionsOf, EntryOf, IdentityOf, Known, Registry, SubscriptionOf } from "./registry.ts";
 
 // ponytail: depends on @connectd/runtime only for types (erased) and signature.ts (no imports);
@@ -18,9 +20,18 @@ import type { ActionsOf, EntryOf, IdentityOf, Known, Registry, SubscriptionOf } 
  */
 
 export type Options = {
-  /** Base URL of the runtime's Worker. */
-  url: string;
-  apiKey: string;
+  /** Base URL of the runtime's Worker. Default: `CONNECTD_URL` from the environment. */
+  url?: string;
+  /** Default: `CONNECTD_API_KEY` from the environment. */
+  apiKey?: string;
+  /** Who is signed in, for `routes` (#54): the user's id, or null. Their connection ids are it (or `<id>:<account>`). */
+  user?: User;
+  /** The folders' `listen()` handlers by connection id, for `routes`' events: `import { listeners } from "../.connectd/app.ts"`. */
+  listeners?: Record<string, Listener>;
+  /** Event delivery for `routes` (default secret: `CONNECTD_EVENTS_SECRET`). */
+  events?: Partial<EventsOptions>;
+  /** The app's public origin, when `req.url` behind a proxy doesn't show it. */
+  origin?: string;
   /** Default: global `fetch`. Tests pass the runtime's own fetch handler. */
   fetch?: (input: string, init: RequestInit) => Promise<Response>;
   /** How a 429 retry waits (default `setTimeout`); tests pass a fake clock. */
@@ -81,17 +92,24 @@ const sleeper = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  * `R`: the project's registry (default: the generated one, `Registry`), so `connection("github", id)`
  * takes only known ids and its actions, status and subscriptions are typed.
  */
-export function connectd<R = Registry>(o: Options) {
-  const base = o.url.replace(/\/+$/, "");
+export function connectd<R = Registry>(o: Options = {}) {
+  for (const [id, l] of Object.entries(o.listeners ?? {}))
+    if (!isListener(l) || l.id !== id) throw new Error(`listeners.${id}: its events.ts must export default listen(${JSON.stringify(id)})`);
+  // Read on first use: an app may build (import this) before its environment is set.
+  const need = (v: string | undefined, name: string) => {
+    if (!v) throw new Error(`${name} is not set (or pass it to connectd({ ... }))`);
+    return v;
+  };
+  const baseUrl = () => need(o.url ?? env("CONNECTD_URL"), "CONNECTD_URL").replace(/\/+$/, "");
   // Wrapped: workerd's fetch throws "Illegal invocation" when called as a method.
   const f = o.fetch ?? ((input: string, init: RequestInit) => fetch(input, init));
   const sleep = o.sleep ?? sleeper;
-  const auth = `Bearer ${o.apiKey}`;
+  const auth = () => `Bearer ${need(o.apiKey ?? env("CONNECTD_API_KEY"), "CONNECTD_API_KEY")}`;
 
   async function request<T>(method: "GET" | "POST", path: string, body?: Json): Promise<T> {
-    const res = await f(base + path, {
+    const res = await f(baseUrl() + path, {
       method,
-      headers: { authorization: auth, ...(body === undefined ? {} : { "content-type": "application/json" }) },
+      headers: { authorization: auth(), ...(body === undefined ? {} : { "content-type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
     if (!res.ok) throw await failure(res);
@@ -114,6 +132,7 @@ export function connectd<R = Registry>(o: Options) {
    * otherwise leave the proxy and reach the admin API with our API key.
    */
   function inside(prefix: string, path: string): string {
+    const base = baseUrl();
     const u = new URL(base + prefix + path);
     if (!u.pathname.startsWith(new URL(base + prefix).pathname)) throw new ConnectdError({ code: "bad_request", status: 400, message: `path leaves ${prefix}: ${path}` });
     return u.href;
@@ -141,7 +160,7 @@ export function connectd<R = Registry>(o: Options) {
       const { retry, ...rest } = init;
       const r = retry ? (retry === true ? {} : retry) : null;
       const headers = new Headers(rest.headers);
-      headers.set("authorization", auth);
+      headers.set("authorization", auth());
       const stream = rest.body instanceof ReadableStream;
       // duplex: required by Node's fetch to send a stream (not in the DOM RequestInit types yet).
       const req = { ...rest, headers, ...(stream ? ({ duplex: "half" } as {}) : {}) };
@@ -208,6 +227,17 @@ export function connectd<R = Registry>(o: Options) {
     };
   }
 
+  // Annotated: the events handler's types name the client's own, which include `routes`.
+  type Handle = { handle(req: Request): Promise<Response> };
+  let ev: Handle | undefined;
+  /** The listeners' handlers on one events handler, each for its own connection's events only. */
+  const listening = (): Handle => {
+    if (ev) return ev;
+    const e = events<{}>({ ...o.events, secret: need(o.events?.secret ?? env("CONNECTD_EVENTS_SECRET"), "CONNECTD_EVENTS_SECRET") }, (def, id) => connection(def as Known<R>, id) as unknown as Connection);
+    for (const l of Object.values(o.listeners ?? {}))
+      for (const [type, h] of l.handlers) e.on(type as "*", (event: ConnectionEvent, conn: Connection) => (event.connection.definition === l.id ? (h as (e: unknown, c: unknown) => unknown)(event, conn) : undefined));
+    return (ev = e);
+  };
   const client = {
     connection,
     connections: {
@@ -224,9 +254,21 @@ export function connectd<R = Registry>(o: Options) {
     },
     /** The receiving end of event delivery (#24); handlers get the event's connection as a client. */
     events: (e: EventsOptions) => events<R>(e, (def, id) => connection(def as Known<R>, id) as unknown as Connection),
+    /** The app's route (#54): `export const { GET, POST } = oc.routes` (connect, return, events; see routes.ts). */
+    routes: routes({
+      base: baseUrl,
+      fetch: f,
+      connection: (def, id) => connection(def as Known<R>, id),
+      events: listening,
+      ...(o.user ? { user: o.user } : {}),
+      ...(o.origin ? { origin: o.origin } : {}),
+    }),
   };
   return client;
 }
+
+/** The process environment where there is one (Node, Bun); never required: Workers and Deno pass options. */
+const env = (name: string): string | undefined => (globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.[name];
 
 export type Client<R = Registry> = ReturnType<typeof connectd<R>>;
 /** A connection client, untyped (events hand these out: any definition). */

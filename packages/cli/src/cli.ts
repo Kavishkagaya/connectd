@@ -126,7 +126,7 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
       try {
         const config = findConfig(dir, typeof a.flags.config === "string" ? a.flags.config : undefined);
         const { found } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), { ...process.env });
-        log(`wrote .connectd/registry.d.ts (${found.length ? found.map((f) => `${f.id}${f.actions.length ? ` (${f.actions.map((a) => a.name).join(", ")})` : ""}`).join(", ") : "no connection folders"})`);
+        log(`wrote .connectd/registry.d.ts and app.ts (${found.length ? found.map((f) => `${f.id}${f.actions.length ? ` (${f.actions.map((a) => a.name).join(", ")})` : ""}`).join(", ") : "no connection folders"})`);
         const note = sdkNote(dir);
         if (note) log(note);
         return 0;

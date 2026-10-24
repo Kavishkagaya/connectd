@@ -88,6 +88,8 @@ export async function setup() {
     w,
     oc,
     authorize,
+    /** The user approving at the provider (redirect URL in, code and state out). */
+    approve: p.approve,
     seen,
     sleeps,
     upstream: (f: Handler) => void (upstream = f),
