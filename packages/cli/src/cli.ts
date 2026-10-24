@@ -2,6 +2,7 @@ import { parse } from "./args.ts";
 import { dev, PORT } from "./dev.ts";
 import { join } from "node:path";
 import { add, diff, list } from "./add.ts";
+import { init } from "./init.ts";
 import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
 import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
@@ -11,6 +12,7 @@ import { ENV, generateKeys } from "./keys.ts";
 export const HELP = `connectd <command> [flags]
 
 Commands
+  init      set up dev in your app: keys, CONNECTD_URL and APP_URL in .env, oc.config.ts, lib/oc.ts, the route
   dev       run the runtime locally: in memory, real clock, state kept in .connectd/, reloads on save
   deploy    deploy to your Cloudflare account (through wrangler)
   types     write .connectd/registry.d.ts (the typed client's registry; dev and deploy write it too)
@@ -19,8 +21,13 @@ Commands
   keys      print a new CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET (for CI secrets and your app's host)
   help      this text
 
+connectd init
+  --port <n>       where connectd dev will run (default ${PORT}; written as CONNECTD_URL)
+  --app-url <url>  your app's origin (default APP_URL from .env, else http://localhost:3000)
+  Writes only what's missing; keys an older connectd dev kept in .connectd/dev.vars move to .env.
+
 connectd dev
-  --port <n>       port (default ${PORT}; 0 picks a free one)
+  --port <n>       port (default CONNECTD_URL's in .env, else ${PORT}; 0 picks a free one)
   --config <file>  config file (default ${CONFIG_FILES[0]})
   --tunnel         expose it on a public https URL with a cloudflared quick tunnel (Slack needs https)
   --url <url>      public URL of a tunnel you run yourself (callback and webhook URLs use it)
@@ -61,6 +68,7 @@ const SPEC = {
   id: "string",
   force: "boolean",
   registry: "string",
+  "app-url": "string",
 } as const;
 
 /** Runs a command; resolves to an exit code, or to a running dev server's stop function. */
@@ -75,6 +83,17 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
   }
   if (a.flags.help || !a.command || a.command === "help") return log(HELP), a.command || a.flags.help ? 0 : 2;
   switch (a.command) {
+    case "init": {
+      const port = a.flags.port === undefined ? undefined : Number(a.flags.port);
+      if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) return log(`--port must be a port number`), 2;
+      try {
+        await init({ dir: o.dir ?? process.cwd(), ...(port ? { port } : {}), ...(typeof a.flags["app-url"] === "string" ? { appUrl: a.flags["app-url"] } : {}), log });
+        return 0;
+      } catch (e) {
+        log((e as Error).message);
+        return 1;
+      }
+    }
     case "dev": {
       const port = a.flags.port === undefined ? undefined : Number(a.flags.port);
       if (port !== undefined && !(Number.isInteger(port) && port >= 0 && port < 65536)) return log(`--port must be a port number`), 2;

@@ -658,6 +658,25 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
 - Checked by hand on Node 22 with no Bun on the PATH, in a project made from examples/basic that installs the tarballs: `--help`, `types`, `dev` (API, dashboard, reload on save and on a new folder), `add` and `diff`, `deploy --dry-run`, then `wrangler deploy --dry-run` bundling the generated Worker from the packed JavaScript, and a strict tsc of an app's `lib/oc.ts` against the packed declarations (an unknown connection id is a type error). ponytail: no automated test for the pack (it runs tsc three times); a CI job that packs and runs that check once there is CI.
 - ponytail: tarballs only; `npm publish` of each package, in dependency order, comes with the first release.
 
+**Built (step 15): `connectd init`.** As agreed with Kavishka: each environment's keys come from one explicit step. `init` makes dev's, and `deploy --env <name>` (#73) makes each deployed environment's.
+- `connectd init [--port] [--app-url]`, in the app's directory, writes only what's missing and never overwrites:
+  - `.env`, appended (the app's own lines stay): `APP_URL` (default http://localhost:3000), `CONNECTD_URL=http://localhost:<port>`, and the runtime's generated keys (`CONNECTD_API_KEY`, `CONNECTD_KEY_V1`, `CONNECTD_STATE_KEY`, `CONNECTD_SESSIONS_KEY`, `CONNECTD_WEBHOOKS_KEY`, `CONNECTD_EVENTS_SECRET`). A new `.env` is owner only.
+  - `.env` in `.gitignore`, since it holds keys now (unless an `.env` or `.env*` line is there).
+  - `oc.config.ts`: `dir` (`src/oc` when there's a `src/`, else `oc`), `events.url` and `sessions.origins` from `env.APP_URL` (the route's `/api/connectd`), and `target: cloudflare({ name })` when `@connectd/cloudflare` is a dependency.
+  - `<src>/lib/oc.ts`: `connectd({ user, listeners, origin })`, with `user` returning null until the app returns its signed-in user.
+  - For a Next.js app, `app/api/connectd/[...path]/route.ts` (`oc.routes`). Elsewhere it says where to mount it.
+  - It runs `types` when the packages are installed, so `lib/oc.ts` typechecks at once.
+- Keys an older `connectd dev` kept in `.connectd/dev.vars` move into `.env`, every key version included: that dev ran with dev.vars under .env, so credentials sealed before a later version still need the old one. Names already set are kept; an empty value counts as unset; a set key version means no fresh `V1`.
+- `dev` only reads: its keys come from `.env` (or the process env), it never makes its own, and without them it fails with "run `connectd init` first" (naming dev.vars when there is one). Its default port is `CONNECTD_URL`'s, when that's a localhost URL. `loadEnv` no longer takes generated keys, and `devKeys` is gone.
+- After review:
+  - `.env` is checked with `git check-ignore` (parent .gitignores and negations count); outside a repo, the directory's .gitignore (`.env`, `/.env`, `.env*`, a later `!.env`). `.env.*` alone no longer counts.
+  - An existing `.env` that gets keys is made owner only (0600).
+  - Next.js: the route goes in the root `app/` when the root has `app/` or `pages/` (Next ignores `src/app` then), else `src/app`.
+  - `APP_URL` must be an origin (`new URL(x).origin === x`); the error names where it came from. `--app-url` or `--port` ignored because `.env` has the value already is said so, and the next steps print `.env`'s `CONNECTD_URL`.
+  - dev warns when `CONNECTD_URL` isn't `http://localhost:<port>` (it can't listen there).
+  - A `.env` git tracks is refused before anything is written (ignore rules don't apply to a tracked file, so the keys would be committed); the error says `git rm --cached .env`.
+- Tests: a Next.js app (every file, the `.env` lines after the app's own, idempotent), another app (`--port`, `--app-url`, a new `.env`'s mode, the route left to mount), and kept values (set keys, versions, an existing config, dev.vars moved). Dev: no keys refused, with the dev.vars hint.
+
 **Agreed, not built yet** (the same discussion; each lands in its own PR and updates this entry):
 - Several accounts per user: different connection ids (`"u1:work"`, `"u1:personal"`); no new feature.
 - v1 is self-host only: one app per deployment.
