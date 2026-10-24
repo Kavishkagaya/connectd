@@ -56,9 +56,11 @@ packages/runtime/
   src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
-  src/client.ts       connectd<R = Registry>({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, ConnectdError
+  src/client.ts       connectd<R = Registry>({ url?, apiKey?, user?, listeners? }) (CONNECTD_* env defaults, read on first use): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, ConnectdError
   src/registry.ts     interface Registry (filled by the CLI's generated .connectd/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types, EventsOf (the events the app gets, typed per connection)
   src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
+  src/listen.ts       listen(id).on(type, handler): a folder's events.ts (app side), one connection's events
+  src/routes.ts       oc.routes { GET, POST } (#54, app side): connect/:def (server-started redirect session), return (page + confirm), events (to listeners)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
   src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
 
@@ -80,7 +82,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun only); `@connectd/cli` expor
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
   src/env.ts          dotenv parsing; dev's env (generated keys < .env < process env; .dev.vars refused); dev keys generated once into .connectd/dev.vars
   src/load.ts         findConfig, importConfig (Bun.build bundle + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
-  src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts (events.ts never in the Worker), .connectd/entry.ts (withFolders) and registry.d.ts. Node APIs only
+  src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
   src/dev.ts          `connectd dev`: memory driver on a real clock behind Bun.serve, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save

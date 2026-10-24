@@ -58,8 +58,12 @@ export default connection("github").config().auth((f) => f.apiKey("token"));`,
   expect(reg).toContain('import type config from "../oc.config.ts";');
   expect(reg).toContain('import type c1 from "../src/oc/tracker/connection.ts";');
   expect(reg).toContain('"tracker": Entry<typeof c1, { "close": typeof a1_0, "open": typeof a1_1 }>;');
-  expect(reg).not.toContain("events.ts");
-  expect(readFileSync(r.entry, "utf8")).not.toContain("events.ts");
+  expect(reg).not.toContain("events");
+  expect(readFileSync(r.entry, "utf8")).not.toContain("events");
+  // The app's side: the folders with an events.ts, by id, imported without an extension.
+  const app = readFileSync(join(dir, ".connectd", "app.ts"), "utf8");
+  expect(app).toContain('import l1 from "../src/oc/tracker/events";');
+  expect(app).toContain('export const listeners = { "tracker": l1 };');
 });
 
 test("no folders: the config runs as is; a named dir must exist", async () => {
@@ -68,6 +72,7 @@ test("no folders: the config runs as is; a named dir must exist", async () => {
   expect(r.entry).toBe(join(dir, "oc.config.ts"));
   expect(existsSync(join(dir, ".connectd", "entry.ts"))).toBe(false);
   expect(readFileSync(join(dir, ".connectd", "registry.d.ts"), "utf8")).toContain("interface Registry extends RegistryOf<typeof config> {");
+  expect(readFileSync(join(dir, ".connectd", "app.ts"), "utf8")).toContain("export const listeners = {};");
   await expect(load(project({ "oc.config.ts": CONFIG(', dir: "lib/oc"') }))).rejects.toThrow("dir: lib/oc is not a folder");
 });
 

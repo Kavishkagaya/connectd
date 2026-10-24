@@ -592,8 +592,31 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
 - `#/actions`: every action of the deployment, and recent failed scheduled runs across connections (`GET /dashboard/api/failures?def=`). ponytail: it scans the first 100 connections in the index and reads each one's kept events; an app-wide failure log (an `app:<def>` instance the actions extension reports to) when deployments outgrow it.
 - Runtime: `actions.status` on a connection (each action's `every`, `on` and next run), and `Api.actions` (the actions by connection, for routes). `status` is now a reserved action name. The overview's `registers` is false for definitions with explicit subscriptions, as in the runtime.
 
+**Built (step 11): the app side.** What the app writes is one client and one route; the folders hold the rest.
+- `src/oc/<id>/events.ts`: `export default listen("<id>").on(type, handler)...` (`@connectd/sdk`), typed like `oc.events().on()` but with that connection's events only; it runs in the app, never in the Worker. A chain, not an object of handlers: it reuses `on()`'s typing as is, typo refusal included.
+- Discovery writes `.connectd/app.ts`: `export const listeners = { <id>: <its events.ts> }`, imports without extensions (the app's bundler or tsconfig resolves them), always written (`{}` with none) so the app's import never breaks. `connectd({ listeners })` checks each listener's id against its key (the folder's name).
+- `lib/oc.ts`: `connectd({ user, listeners })`. `url`, `apiKey` and the events secret default to `CONNECTD_URL`, `CONNECTD_API_KEY`, `CONNECTD_EVENTS_SECRET` from the process environment, read on first use (an app build imports the client before its env is set). `user(req)` returns the signed-in user's id, or null.
+- The route, mounted anywhere: `export const { GET, POST } = oc.routes`.
+  - `GET <base>/connect/:def?return=&account=`: the connection id is the user's id, or `<user>:<account>` (several accounts per user, as agreed). It's a redirect-mode session (#29) started from the server: a session token whose `returnUrl` is `<base>/return`, then `/session/authorize` with the app's origin, then a 303 to the runtime's `/session/authorize?ticket=`, which sets the binding cookie in this browser.
+  - `GET <base>/return`: a page (CSP nonce) that reads the outcome from the fragment and confirms it with a same-origin POST. It then goes to `return` (same-origin paths only) with `?connectd=connected` or `?connectd=error&code=`.
+  - `POST <base>/return`: refused unless the Origin is the app's and the id is the signed-in user's own (`<user>` or `<user>:*`). It confirms with a fresh session token for that connection (`/session/complete`), so a completion for someone else's connection can't land on this user's.
+  - `POST <base>/events`: the signed events, each to its connection's listeners only.
+- The app's origin must be in `sessions.origins`. ponytail: redirect flows only; API-key forms and device codes wait for the hosted connect pages. `req.url`'s origin unless `connectd({ origin })` says otherwise (behind a proxy).
+- After review:
+  - `return` paths are resolved on the server against the app's origin (the browser drops tabs and newlines, so `/<tab>/evil.test` was an open redirect).
+  - User ids can't contain `:` (it separates a user from their accounts, so `alice` + `x` would otherwise be user `alice:x`'s connection), and numbers are stringified.
+  - `connect` refuses a cross-site start (`Sec-Fetch-Site` other than `same-origin`/`none`), so another site can't connect the signed-in user without them asking.
+  - `connect/:def` is matched first (a definition may be named `return` or `events`), and a bad escape is a 400.
+  - The landing page gets `id` too, and is documented as a hint (check `status()`).
+- Tests: an end-to-end SDK test through the real runtime:
+  - the browser walk, from the connect link through the runtime and the provider to the return page;
+  - confirming refused for another user and from another origin, and single use;
+  - events reaching only their connection's listeners;
+  - accounts; return paths kept same-origin; who may connect;
+  - env defaults read lazily; listener ids checked.
+  - Discovery writes `app.ts`.
+
 **Agreed, not built yet** (the same discussion; each lands in its own PR and updates this entry):
-- App side: `src/oc/<id>/events.ts` holds `listen()` handlers and runs in the app, never in the Worker (discovery leaves it out of the deployed entry). `lib/oc.ts` is the app's client, `openconnect({ user: async (req) => userId | null })`; a generated route file, `export const { GET, POST } = oc.routes` (connect, return, events), is never edited.
 - Hosted connect pages: the runtime serves the connect page; the app links to it (`link()`), so a basic app needs no frontend package.
 - `openconnect add <provider>` (shadcn style): copies the provider's `connection.ts` into `src/oc/<id>/` with a `// openconnect: <provider>@<version>` header, writes an empty `events.ts`, and appends the env names to `.env`. The source is `registry/<provider>.json` in this repo, fetched at the CLI's version tag. No name lists the catalog; `openconnect diff <provider>` shows upstream changes since the copy. Apps then need only `@openconnect/connections`, not the whole providers package.
 - A Node build of the CLI (today it runs on Bun only).

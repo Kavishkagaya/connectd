@@ -1,5 +1,7 @@
 export * from "./client.ts";
 export * from "./events.ts";
+export { listen, type Listener } from "./listen.ts";
+export type { User } from "./routes.ts";
 export * from "./registry.ts";
 export { sign, verify } from "@connectd/runtime/signature";
 export type { ConnectionEvent, LifecycleEvent, Page, Query, Row, SessionArgs, SessionInfo, WebhookData, WebhookEvent } from "@connectd/runtime";

@@ -1,6 +1,6 @@
 # examples/basic
 
-A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`connection.ts`, `actions/`).
+A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`connection.ts`, `actions/`, and `events.ts` for your app).
 
 ## Dev
 
@@ -8,6 +8,33 @@ A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`con
 cp .env.example .env      # one file for your app and connectd
 bun run dev               # connectd dev; only the names the connections read reach the runtime
 ```
+
+## Your app
+
+Your app talks to connectd through one client and one route. `connectd dev` (and `connectd types`)
+writes `.connectd/app.ts` (the folders' `events.ts`) and `.connectd/registry.d.ts` (the types);
+run `connectd types` before building the app in CI.
+
+```ts
+// lib/oc.ts: CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET come from the environment.
+import { connectd } from "@connectd/sdk";
+import { listeners } from "../.connectd/app";
+export const oc = connectd({ user: async (req) => (await getSession(req))?.userId ?? null, listeners });
+
+// app/api/connectd/[...path]/route.ts (Next.js; any framework with Request => Response works)
+import { oc } from "@/lib/oc";
+export const { GET, POST } = oc.routes;
+```
+
+- A link on your pages to `/api/connectd/connect/github?return=/settings` connects the signed-in
+  user's GitHub (connection id = the user's id, which can't contain `:`; `&account=work` gives
+  `<user>:work`, a second account), and comes back to `/settings?connectd=connected&definition=github&id=...`
+  (or `?connectd=error&code=...`). That's a hint for the UI: check `status()` before trusting it.
+- `.connectd/app.ts` imports the folders without file extensions, as a bundler (Next, Vite, Bun) or
+  `moduleResolution: "bundler"` resolves them.
+- Point `events.url` in `oc.config.ts` at `<your app>/api/connectd/events`: events go to the folders'
+  `listen()` handlers. Your app's origin must be in `sessions.origins`.
+- Everything else: `oc.connection("github", userId).actions.profile()`, `.fetch("/user")`, `.status()`.
 
 ## Deploy by hand
 
