@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { main } from "./cli.ts";
 import { deploy, type DeployOptions, NO_WRANGLER } from "./deploy.ts";
 import { generate } from "./generate.ts";
-import { importConfig } from "./load.ts";
+import { loadProject } from "./load.ts";
 
 const TMP = join(import.meta.dir, "..", ".tmp-deploy");
 mkdirSync(TMP, { recursive: true });
@@ -71,8 +71,7 @@ function setup(o: { events?: boolean; vars?: string } = {}) {
   const run = (x: Partial<DeployOptions> = {}) =>
     deploy({
       dir,
-      config: join(dir, "openconnect.config.ts"),
-      load: () => importConfig(join(dir, "openconnect.config.ts"), join(dir, ".openconnect", "build"), ++n),
+      load: (env) => loadProject(dir, join(dir, "openconnect.config.ts"), join(dir, ".openconnect", "build"), ++n, env),
       envFile: ".prod.vars",
       wrangler: bin,
       env,

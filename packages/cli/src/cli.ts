@@ -3,13 +3,15 @@ import { dev, PORT } from "./dev.ts";
 import { join } from "node:path";
 import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
-import { CONFIG_FILES, findConfig, importConfig } from "./load.ts";
+import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
+import { sdkNote } from "./discover.ts";
 
 export const HELP = `openconnect <command> [flags]
 
 Commands
   dev       run the runtime locally: in memory, real clock, state kept in .openconnect/, reloads on save
   deploy    deploy to your Cloudflare account (through wrangler)
+  types     write .openconnect/registry.d.ts (the typed client's registry; dev and deploy write it too)
   help      this text
 
 openconnect dev
@@ -88,8 +90,7 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
         const envFile = str("env-file");
         await deploy({
           dir,
-          config,
-          load: () => importConfig(config, join(workdir(dir), "build"), Date.now()),
+          load: (env) => loadProject(dir, config, join(workdir(dir), "build"), Date.now(), env),
           ...(name ? { name } : {}),
           ...(url ? { url } : {}),
           ...(envFile ? { envFile } : {}),
@@ -98,6 +99,20 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           newKeys: !!a.flags["new-keys"],
           log,
         });
+        return 0;
+      } catch (e) {
+        log((e as Error).message);
+        return 1;
+      }
+    }
+    case "types": {
+      const dir = o.dir ?? process.cwd();
+      try {
+        const config = findConfig(dir, typeof a.flags.config === "string" ? a.flags.config : undefined);
+        const { modules } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), { ...process.env });
+        log(`wrote .openconnect/registry.d.ts (the config${modules.length ? ` and ${modules.length} discovered module${modules.length === 1 ? "" : "s"}` : ""})`);
+        const note = sdkNote(dir);
+        if (note) log(note);
         return 0;
       } catch (e) {
         log((e as Error).message);

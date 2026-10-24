@@ -11,6 +11,7 @@
     "@openconnect/connections": "workspace:*",
     "@openconnect/kernel": "workspace:*",
     "@openconnect/providers": "workspace:*",
-    "@openconnect/runtime": "workspace:*"
+    "@openconnect/runtime": "workspace:*",
+    "@openconnect/sdk": "workspace:*"
   }
 }

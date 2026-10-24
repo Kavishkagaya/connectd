@@ -53,6 +53,13 @@ export const github = connection("github")
   .api({ baseUrl: API, headers: { "user-agent": "openconnect" } })
   .limit({ connection: { count: 5000, periodMs: 3_600_000 } })
   .observe((res, now) => rateHeaders(res, now, { remaining: "x-ratelimit-remaining", reset: "x-ratelimit-reset" }))
+  .identity(async ({ api }) => {
+    const res = await api.fetch("/user", { headers: { accept: "application/vnd.github+json" } });
+    if (!res.ok) throw new Error(`github /user ${res.status}`);
+    const u = (await res.json()) as { id: number; login: string };
+    return { id: String(u.id), login: u.login };
+  })
+  .external((me) => ({ id: me.id }))
   /**
    * Repo hooks (`X-Hub-Signature-256`), on the per-connection route with the connection's own
    * secret. GitHub has no account-wide hooks, so the app subscribes per repo:
@@ -85,11 +92,4 @@ export const github = connection("github")
       const res = await ctx.fetch(`${API}/repos/${repo}/hooks/${id}`, { method: "DELETE", headers: bearer(cred) });
       if (!res.ok && res.status !== 404) throw new Error(`github delete hook ${res.status}`);
     },
-  })
-  .identity(async ({ api }) => {
-    const res = await api.fetch("/user", { headers: { accept: "application/vnd.github+json" } });
-    if (!res.ok) throw new Error(`github /user ${res.status}`);
-    const u = (await res.json()) as { id: number; login: string };
-    return { id: String(u.id), login: u.login };
-  })
-  .external((me) => ({ id: me.id }));
+  });
