@@ -210,7 +210,7 @@ test("events and names (#54): .events() needs schemas and dotless names; actions
   const base = connection("x").config().auth((f) => f.apiKey("key"));
   expect(definitionOf(base.events({ synced: s })).events).toEqual({ synced: s });
   expect(() => base.events({ "a.b": s })).toThrow("event a.b: the name is letters, digits, _ and - only");
-  expect(() => base.events({ synced: {} as StandardSchemaV1 })).toThrow("event synced needs a schema");
+  expect(() => base.events({ synced: {} as StandardSchemaV1<unknown, null> })).toThrow("event synced needs a schema");
   expect(badActionName("connection")).toBe("reserved");
   expect(badActionName("webhook")).toBe("reserved");
   expect(badEventName("synced")).toBeNull();

@@ -62,19 +62,22 @@ export type ActionCtx<Conn = Connection> =
         store: Store;
         /**
          * Send one of the connection's own events (`.events({ ... })`) to the app: checked against its
-         * schema (a throw otherwise), delivered after this connection's earlier events.
+         * schema now (a throw otherwise); sent when the run succeeds, before its `.completed`. A run
+         * that throws sends none, so a retried run doesn't send them twice.
          */
         emit: EmitOf<Conn>;
       } & (true extends A ? { api: Api } : unknown)
     : never;
 
 type Emit = { emit(name: string, data?: Json): Promise<void> }["emit"];
-/** Typed from `.events()`; any name and Json without it. */
-export type EmitOf<Conn> = Conn extends { readonly "~events"?: infer E }
-  ? unknown extends E
-    ? Emit
-    : <N extends Extract<keyof NonNullable<E>, string>>(name: N, data: InputOf<NonNullable<E>[N]>) => Promise<void>
-  : Emit;
+/** Typed from `.events()`; no name for a builder without them; any name and Json for an unannotated `conn`. */
+export type EmitOf<Conn> = "~events" extends keyof Conn
+  ? Conn extends { readonly "~events"?: infer E }
+    ? <N extends Extract<keyof NonNullable<E>, string>>(name: N, data: InputOf<NonNullable<E>[N]>) => Promise<void>
+    : Emit
+  : Conn extends { events(...a: never[]): unknown }
+    ? (name: never, data?: Json) => Promise<void>
+    : Emit;
 
 /** How a run started: an app call, the `every` timer, or the `on` state. */
 export type Trigger = "call" | "every" | "on";
@@ -118,7 +121,8 @@ export const badActionName = (name: string): string | null =>
       ? "reserved"
       : null;
 /** Why `name` can't name a connection's own event, or null. No dots, so it never meets `connection.*`, `webhook.*` or `<action>.completed`. */
-export const badEventName = (name: string): string | null => (!NAME.test(name) ? "letters, digits, _ and - only" : name in Object.prototype ? "reserved" : null);
+export const badEventName = (name: string): string | null =>
+  !NAME.test(name) ? "letters, digits, _ and - only" : name === "connection" || name === "webhook" || name in Object.prototype ? "reserved" : null;
 
 /** An action the app calls with input, checked by the runtime before `run` (a 400 with the schema's issues otherwise). No triggers. */
 export function action<S extends StandardSchemaV1, O extends Json | void>(spec: {

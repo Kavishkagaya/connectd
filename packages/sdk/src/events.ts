@@ -40,7 +40,8 @@ export function events<R = Registry>(o: EventsOptions, connection: (def: string,
 
   return {
     /** Run `handler` for every event of `type` (`"*"`: all events). Several per type run in order. */
-    on<T extends EventType<R> | "*">(type: T, handler: Handler<T extends "*" ? EventsOf<R> : EventFor<R, T>>) {
+    /** `type` must name events the app can get: a typo (`connection.actve`) doesn't compile. */
+    on<T extends EventType<R> | "*">(type: T & (T extends "*" ? unknown : [EventFor<R, T>] extends [never] ? never : unknown), handler: Handler<T extends "*" ? EventsOf<R> : EventFor<R, T>>) {
       handlers.set(type, [...(handlers.get(type) ?? []), handler as Handler<ConnectionEvent>]);
       return this;
     },

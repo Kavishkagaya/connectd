@@ -73,7 +73,8 @@ export type SubscriptionOf<E> = [E] extends [never] ? Json : E extends { connect
 
 type Base<K> = Omit<LifecycleEvent, "type" | "data" | "connection"> & { connection: { definition: K; id: string } };
 type OutOf<S> = S extends { readonly "~standard": { readonly types?: { readonly output: infer O } | undefined } } ? O : Json;
-type TopicsOf<C> = C extends { readonly "~topics"?: infer T } ? (unknown extends T ? string : Extract<T, string>) : string;
+/** Its declared topics, any topic without; none for a connection without `.webhooks()`. */
+type TopicsOf<C> = "~topics" extends keyof C ? (C extends { readonly "~topics"?: infer T } ? (unknown extends T ? string : Extract<T, string>) : string) : never;
 type OwnOf<C> = C extends { readonly "~events"?: infer E } ? (unknown extends E ? {} : NonNullable<E>) : {};
 type ActionEvents<K, N extends string, O> =
   | (Base<K> & { type: `${N}.completed`; data: { action: N; trigger: "every" | "on"; output: O } })
@@ -99,11 +100,19 @@ export type EventsOf<R> = [keyof R] extends [never]
 
 /**
  * The events of one `type`. A pattern type (`webhook.${string}`) counts when `T` fits it; an own
- * event's plain `string` only for a name without dots (theirs never have one).
+ * event's plain `string` only for a name without dots (theirs never have one); `webhook.*` and
+ * `connection.*` only ever name webhooks and lifecycle events.
  */
 export type EventFor<R, T extends string> = EventsOf<R> extends infer E
   ? E extends { type: infer U extends string }
-    ? T extends U
+    ? // `webhook.checkout.session.completed` is a webhook, never an action's `.completed`; `connection.*` likewise.
+      [T, U] extends [`webhook.${string}`, `webhook.${string}`] | [`connection.${string}`, `connection.${string}`]
+      ? T extends U
+        ? E & { type: T }
+        : never
+      : T extends `webhook.${string}` | `connection.${string}`
+        ? never
+        : T extends U
       ? string extends U
         ? T extends `${string}.${string}`
           ? never

@@ -54,7 +54,8 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
     delete: async (key) => void (await cell.update((cur) => (cur && Object.hasOwn(cur, key) ? Object.fromEntries(Object.entries(cur).filter(([k]) => k !== key)) : null))),
   };
   const token = () => h.bound.token();
-  const ctx = async () => {
+  /** A run's context. Its emits wait in `sent` until the run succeeds (`flush`). */
+  const ctx = async (sent: { name: string; data: Json }[]) => {
     const c = {
       config: h.bound.ctx.config,
       fetch: h.bound.ctx.fetch,
@@ -68,7 +69,7 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
         if (!schema) throw new Error(`${h.def.id} has no event ${name}: declare it with .events({ ${name}: schema })`);
         const r = await schema["~standard"].validate(data);
         if (r.issues) throw new Error(`event ${name}: ${r.issues.map((i) => i.message).join("; ")}`);
-        await emit(h, (r.value ?? null) as Json, name);
+        sent.push({ name, data: (r.value ?? null) as Json });
       },
     };
     // A getter that throws, not a missing field: `conn.api.get` would otherwise fail as "undefined is not an object".
@@ -80,6 +81,10 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
         return apiFor(h.bound.ctx, proxy, token);
       },
     });
+  };
+
+  const flush = async (sent: { name: string; data: Json }[]) => {
+    for (const e of sent) await emit(h, e.data, e.name);
   };
 
   /** The state and the record's version, without decrypting the credential. */
@@ -95,8 +100,9 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
   async function scheduled(a: ActionSpec, trigger: "every" | "on", attempt: number): Promise<boolean> {
     if ((await record())?.state !== (trigger === "every" ? "active" : a.on)) return false;
     let output: Json;
+    const sent: { name: string; data: Json }[] = [];
     try {
-      output = await a.run(await ctx(), undefined);
+      output = await a.run(await ctx(sent), undefined);
     } catch (e) {
       if (e instanceof NotActive) return false;
       console.error("action failed", h.instance, a.id, trigger, attempt, e);
@@ -104,6 +110,7 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
       throw e;
     }
     // Outside the try: a failed emit must not run the action again.
+    await flush(sent);
     await emit(h, { action: a.id, trigger, output }, `${a.id}.completed`);
     return true;
   }
@@ -154,7 +161,10 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
         }
         // Not active: the lifecycle's 409 (NotActive), before any action code runs.
         await token();
-        return a.run(await ctx(), input);
+        const sent: { name: string; data: Json }[] = [];
+        const out = await a.run(await ctx(sent), input);
+        await flush(sent);
+        return out;
       },
     ]),
   );

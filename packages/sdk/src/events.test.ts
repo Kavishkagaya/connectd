@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { type ConnectionEvent, type EventOf, sign } from "./index.ts";
+import { type ConnectionEvent, type EventOf, events, sign } from "./index.ts";
 import { SECRET, setup, T0 } from "./testing.ts";
 
 const H = 3_600_000;
@@ -133,4 +133,18 @@ test("dedupe on webhook-id: a redelivery is acked without running handlers; a fa
   expect(await again("conn:keyed:k1:9")).toBe(500);
   console.error = err;
   expect(dedupe.has("conn:keyed:k1:9")).toBe(false);
+});
+
+test("types without a registry: any ConnectionEvent, typos in the known kinds refused", () => {
+  void (() => {
+    const ev = events({ secret: SECRET }, () => ({}) as never);
+    ev.on("connection.active", (e) => e.data.to satisfies string);
+    ev.on("webhook.checkout.session.completed", (e) => e.data.topic satisfies string);
+    ev.on("sync.completed", (e) => e.data.action satisfies string);
+    ev.on("synced", (e) => e.data);
+    // @ts-expect-error not a state
+    ev.on("connection.actve", () => {});
+    // @ts-expect-error not an event kind
+    ev.on("foo.bar", () => {});
+  });
 });

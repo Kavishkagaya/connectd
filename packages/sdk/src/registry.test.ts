@@ -144,8 +144,15 @@ const sync = action({
 });
 const bad = action({ run: async (conn: ActionCtx) => (await conn.emit("synced", { count: "x" }), null) });
 const unknown = action({ run: async (conn: ActionCtx) => (await conn.emit("missing"), null) });
-const nightly = action({ every: 60_000, run: async () => ({ swept: 2 }) });
-type B = { board: Entry<typeof board, { sync: typeof sync; nightly: typeof nightly; bad: typeof bad; unknown: typeof unknown }> };
+const nightly = action({ every: 60_000, run: async (conn: ActionCtx<typeof board>) => (await conn.emit("synced", { count: 9 }), { swept: 2 }) });
+// Emits, then throws: the app call fails and nothing it emitted is sent.
+const broken = action({ run: async (conn: ActionCtx<typeof board>) => (await conn.emit("synced", { count: 1 }), (() => { throw new Error("broke"); })()) as null });
+const plain = connection("plain").config().auth((f) => f.apiKey("key"));
+void (() => {
+  // @ts-expect-error plain declares no events
+  action({ run: async (conn: ActionCtx<typeof plain>) => (await conn.emit("synced"), null) });
+});
+type B = { board: Entry<typeof board, { sync: typeof sync; nightly: typeof nightly; bad: typeof bad; unknown: typeof unknown; broken: typeof broken }> };
 
 test("typed events: webhook.<topic> from the declared topics, <action>.completed, own events via conn.emit", async () => {
   const secret = `whsec_${key(3)}`;
@@ -160,7 +167,7 @@ test("typed events: webhook.<topic> from the declared topics, <action>.completed
     events: { url: "https://app.test/events", secret },
     fetch: (async (url: string, init?: RequestInit) => (url === "https://app.test/events" ? deliver(new Request(url, init)) : new Response(null, { status: 404 }))) as typeof fetch,
   };
-  const rt = runtime({ definitions: { board }, actions: { board: { sync, nightly, bad, unknown } }, settings: async () => settings, extensions: [eventsExt(), webhooks()] });
+  const rt = runtime({ definitions: { board }, actions: { board: { sync, nightly, bad, unknown, broken } }, settings: async () => settings, extensions: [eventsExt(), webhooks()] });
   const w = memory(rt.program);
   const oc = openconnect<B>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
   const ev = oc.events({ secret, now: w.now });
@@ -185,6 +192,7 @@ test("typed events: webhook.<topic> from the declared topics, <action>.completed
   // Checked against the schema, and against the names the connection declares: the app call fails.
   await expect(b.actions.bad()).rejects.toThrow();
   await expect(b.actions.unknown()).rejects.toThrow();
+  await expect(b.actions.broken()).rejects.toThrow();
   const hook = (topic: string) =>
     rt.fetch(new Request("https://oc.test/webhooks/board/u1", { method: "POST", headers: { "x-topic": topic }, body: JSON.stringify({ n: 1 }) }), w.call).then((r) => r.json());
   expect(await hook("card")).toEqual({ delivered: 1 });
@@ -192,5 +200,6 @@ test("typed events: webhook.<topic> from the declared topics, <action>.completed
   expect(await hook("board")).toEqual({ delivered: 0, ignored: "board" });
   await w.advance(60_000);
   await w.advance(1);
-  expect(seen).toEqual(["connection.active active board", "synced 3", 'webhook.card card {"n":1}', "nightly 2"]);
+  // The scheduled run's own event goes out before its .completed.
+  expect(seen).toEqual(["connection.active active board", "synced 3", 'webhook.card card {"n":1}', "synced 9", "nightly 2"]);
 });

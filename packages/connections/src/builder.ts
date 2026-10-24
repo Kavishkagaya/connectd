@@ -92,9 +92,9 @@ interface Built<Id extends string, C, M extends Json, A extends boolean = false>
   /**
    * Its own events, by name (#54): `.events({ synced: z.object({ count: z.number() }) })`. Actions
    * send them with `conn.emit("synced", { count })`, checked against the schema; the app gets them as
-   * events of type `synced`. Names: letters, digits, _ and -.
+   * events of type `synced`. Names: letters, digits, _ and - (not `connection` or `webhook`). A schema's output is what's sent, so it's JSON.
    */
-  events<E extends Record<string, StandardSchemaV1>>(events: E): this & { readonly "~events"?: E };
+  events<E extends Record<string, StandardSchemaV1<any, Json>>>(events: E): this & { readonly "~events"?: E };
 }
 
 /** `external` straight after auth, when the flow brings its own identity (OIDC claims). */
