@@ -40,7 +40,10 @@ packages/connections/
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
-packages/providers/   one connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`); tests against fakes
+packages/providers/   one connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`), importing only @connectd/connections; tests against fakes
+  src/registry.ts     `bun run registry`: writes registry/ (the catalog `connectd add` copies from) from the sources; a test fails when it's stale
+
+registry/             <provider>.json + index.json, generated and committed; the CLI fetches it at its version's tag
 
 packages/runtime/
   src/host.ts         the Program every connection instance runs: one kernel per instance, registry lookup, bind, extensions' hooks (Hosted.k), methods, faults
@@ -87,7 +90,8 @@ packages/cli/         `connectd` bin (#30, #31; Bun only); `@connectd/cli` expor
   src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
   src/dev.ts          `connectd dev`: memory driver on a real clock behind Bun.serve, snapshot in .connectd/state.json, config bundled with Bun.build and swapped in place on save
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
-  src/cli.ts, args.ts commands (dev, deploy, types, keys, help) and a declared-flags parser; src/bin.ts the entry
+  src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) and `connectd diff <id>` (unified diff against the catalog)
+  src/cli.ts, args.ts commands (dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
 
 packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, url })` in oc.config.ts; the adapter deploys through wrangler
   src/index.ts        cloudflare(): a Target, data only (Workers-safe: the config is bundled into the Worker)
@@ -105,6 +109,7 @@ Kernel subpath exports: `@connectd/kernel`, `/memory`, `/do`, `/parity`. Connect
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
 - `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts`, the Cloudflare Worker template + the CLI's `project.ts`, and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect` and `packages/dashboard`
+- Provider changed: `cd packages/providers && bun run registry` (rewrites registry/)
 - Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts`
 - One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`
 - Dev server on the example: `cd examples/basic && bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `connectd --help`)

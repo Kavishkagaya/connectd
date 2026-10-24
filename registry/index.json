@@ -1,0 +1,22 @@
+[
+  {
+    "id": "github",
+    "version": "0.0.0",
+    "description": "GitHub OAuth app: user tokens, the REST API, repo webhook subscriptions"
+  },
+  {
+    "id": "github-app",
+    "version": "0.0.0",
+    "description": "GitHub App: one installation per connection, minted installation tokens, app webhooks"
+  },
+  {
+    "id": "google",
+    "version": "0.0.0",
+    "description": "Google OAuth (OIDC): Calendar and the Google APIs, calendar watch channels"
+  },
+  {
+    "id": "slack",
+    "version": "0.0.0",
+    "description": "Slack OAuth v2: bot and user tokens, Events API webhooks"
+  }
+]
