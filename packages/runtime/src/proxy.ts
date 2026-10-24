@@ -1,4 +1,4 @@
-import type { Credential, Inject } from "@openconnect/connections";
+import { BEARER, type Credential, inject, MissingField } from "@openconnect/connections";
 import type { Json, Limit, Limiter } from "@openconnect/kernel";
 import { type AnyDefinition, Fail, type Hosted, instanceOf } from "./host.ts";
 import { ERROR_HEADER, reply } from "./http.ts";
@@ -26,21 +26,6 @@ function limiters(h: Hosted): Limiter[] {
   const own = h.k.limiter("proxy", r.connection ?? OBSERVE_ONLY);
   // ponytail: one app per deployment (see Settings.config), so the app scope is per definition; key it by app when multi-app.
   return r.app ? [own, h.k.limiter.at(`app:${h.def.id}`, "proxy", r.app)] : [own];
-}
-
-function value(cred: Credential, field?: string): string {
-  if (cred.kind === "oauth2") return cred.accessToken;
-  const v = field ? cred.fields[field] : Object.values(cred.fields)[0];
-  if (v === undefined) throw new Fail("bad_credential", 500, `credential has no field ${field ?? "(any)"}`);
-  return v;
-}
-
-const BEARER: Inject = { header: "authorization", prefix: "Bearer " };
-
-function inject(i: Inject, url: URL, headers: Headers, cred: Credential) {
-  if (typeof i === "function") i(url, headers, cred);
-  else if ("query" in i) url.searchParams.set(i.query, value(cred, i.field));
-  else headers.set(i.header, (i.prefix ?? "") + value(cred, i.field));
 }
 
 /**
@@ -88,7 +73,12 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
 
           const headers = new Headers(req.headers);
           for (const h of STRIP) headers.delete(h);
-          inject(d.proxy.inject ?? BEARER, url, headers, ready.credential);
+          try {
+            inject(d.proxy.inject ?? BEARER, url, headers, ready.credential);
+          } catch (e) {
+            if (e instanceof MissingField) throw new Fail("bad_credential", 500, e.message);
+            throw e;
+          }
 
           // The timeout covers the wait for response headers only; a long download keeps streaming.
           const ac = new AbortController();

@@ -1,5 +1,6 @@
 import { type Auth, type Ctx, InputError } from "./define.ts";
-import { credentialFrom } from "./lifecycle.ts";
+import type { Json } from "@openconnect/kernel";
+import { type Credential, credentialFrom, type OAuth2 } from "./lifecycle.ts";
 import { authorizeUrl, type Client, exchangeCode, OAuthError, pkce, refreshGrant, revoke, type TokenResponse } from "./oauth.ts";
 
 /** Auth step builders for the common flows. Quirks are config when they're data, hooks when they're behaviour. */
@@ -32,11 +33,10 @@ const client = <C extends OAuth2Config>(ctx: Ctx<C>, spec: OAuth2Spec<C>): Clien
   ...(spec.clientAuth ? { auth: spec.clientAuth } : {}),
 });
 
-/** Authorization code (+ PKCE). Scopes: `input.scope`, else `config.scopes`, else `spec.scopes`. */
-export function oauth2<C extends OAuth2Config>(spec: OAuth2Spec<C>): Auth<C> {
-  const shape = spec.token ?? ((t: TokenResponse) => t);
+/** The standard authorization code steps, before any reshaping: what `oauth2()` and the flow builder's overrides (`next`) build on. */
+export function oauth2Steps<C extends OAuth2Config>(spec: OAuth2Spec<C>) {
   return {
-    async start(ctx, input) {
+    start: (async (ctx, input) => {
       const p = spec.pkce === false ? null : await pkce();
       const scope = input.scope ?? (ctx.config.scopes ?? spec.scopes)?.join(spec.scopeSeparator ?? " ");
       const params = {
@@ -48,33 +48,46 @@ export function oauth2<C extends OAuth2Config>(spec: OAuth2Spec<C>): Auth<C> {
         data: p ? { verifier: p.verifier } : null,
         redirect: (state) => authorizeUrl(spec.authorizeUrl, client(ctx, spec), { ...params, state }),
       };
-    },
+    }) satisfies Auth<C>["start"],
 
-    async callback(ctx, params, data) {
+    /** The callback's code for tokens. */
+    async exchange(ctx: Ctx<C>, params: Record<string, string>, data: Json): Promise<TokenResponse> {
       if (params.error) throw new OAuthError(params.error, 400, params);
       if (!params.code) throw new OAuthError("missing_code", 400, params);
       const verifier = (data as { verifier: string } | null)?.verifier;
-      return credentialFrom(shape(await exchangeCode(ctx.fetch, spec.tokenUrl, client(ctx, spec), params.code, verifier)), ctx.now());
+      return exchangeCode(ctx.fetch, spec.tokenUrl, client(ctx, spec), params.code, verifier);
     },
 
-    async refresh(ctx, cred) {
-      try {
-        return shape(await refreshGrant(ctx.fetch, spec.tokenUrl, client(ctx, spec), cred.refreshToken as string));
-      } catch (e) {
-        if (e instanceof OAuthError && spec.invalidGrant?.includes(e.code)) throw new OAuthError("invalid_grant", e.status, e.body);
-        throw e;
-      }
-    },
+    /** The refresh grant, provider error codes as they came. */
+    grant: (ctx: Ctx<C>, cred: OAuth2): Promise<TokenResponse> => refreshGrant(ctx.fetch, spec.tokenUrl, client(ctx, spec), cred.refreshToken as string),
 
-    ...(spec.revokeUrl
-      ? {
-          async revoke(ctx, cred) {
-            if (cred.kind !== "oauth2") return;
-            const url = spec.revokeUrl as string;
-            await revoke(ctx.fetch, url, client(ctx, spec), cred.refreshToken ?? cred.accessToken, cred.refreshToken ? "refresh_token" : "access_token");
-          },
-        }
-      : {}),
+    /** RFC 7009 at `revokeUrl`; nothing without one. */
+    async revoke(ctx: Ctx<C>, cred: Credential): Promise<void> {
+      if (cred.kind !== "oauth2" || !spec.revokeUrl) return;
+      await revoke(ctx.fetch, spec.revokeUrl, client(ctx, spec), cred.refreshToken ?? cred.accessToken, cred.refreshToken ? "refresh_token" : "access_token");
+    },
+  };
+}
+
+/** A provider's codes for a dead refresh token, as the `invalid_grant` the lifecycle acts on. */
+export async function deadAs<T>(codes: string[] | undefined, run: Promise<T>): Promise<T> {
+  try {
+    return await run;
+  } catch (e) {
+    if (e instanceof OAuthError && codes?.includes(e.code)) throw new OAuthError("invalid_grant", e.status, e.body);
+    throw e;
+  }
+}
+
+/** Authorization code (+ PKCE). Scopes: `input.scope`, else `config.scopes`, else `spec.scopes`. */
+export function oauth2<C extends OAuth2Config>(spec: OAuth2Spec<C>): Auth<C> {
+  const shape = spec.token ?? ((t: TokenResponse) => t);
+  const s = oauth2Steps(spec);
+  return {
+    start: s.start,
+    callback: async (ctx, params, data) => credentialFrom(shape(await s.exchange(ctx, params, data)), ctx.now()),
+    refresh: async (ctx, cred) => shape(await deadAs(spec.invalidGrant, s.grant(ctx, cred))),
+    ...(spec.revokeUrl ? { revoke: s.revoke } : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import { type AnyConnection, definitionOf } from "@openconnect/connections";
 import type { Index } from "./directory.ts";
 import { type AnyDefinition, type Hooks, type Hosted, host, type Settings } from "./host.ts";
 import { http, type Route, routes } from "./http.ts";
@@ -13,8 +14,8 @@ export type Extension = {
 };
 
 export type RuntimeOptions = {
-  /** Bundled definitions by id (self-host). Managed loads user code differently (#34). */
-  definitions: Record<string, AnyDefinition>;
+  /** Bundled definitions by id (self-host): `connection(...)` builders or plain definitions. Managed loads user code differently (#34). */
+  definitions: Record<string, AnyDefinition | AnyConnection>;
   settings: () => Promise<Settings>;
   extensions?: Extension[];
   /** The Worker's clock (`api.now`); connection instances use their driver's. Default `Date.now`. */
@@ -30,12 +31,13 @@ export function runtime(o: RuntimeOptions) {
   const settings = () => (loaded ??= o.settings());
   const exts = o.extensions ?? [];
   const index = exts.find((e) => e.index)?.index;
+  const definitions = Object.fromEntries(Object.entries(o.definitions).map(([id, d]) => [id, definitionOf(d)]));
   return {
-    program: host({ definitions: o.definitions, settings, connection: exts.flatMap((e) => (e.connection ? [e.connection] : [])) }),
+    program: host({ definitions, settings, connection: exts.flatMap((e) => (e.connection ? [e.connection] : [])) }),
     // Built-in routes win on a name clash, like built-in methods.
     fetch: http({
       routes: Object.assign({}, ...exts.map((e) => e.routes), routes),
-      definitions: o.definitions,
+      definitions,
       settings,
       internal: new Set(exts.flatMap((e) => e.internal ?? [])),
       ...(index ? { index } : {}),
