@@ -1,4 +1,5 @@
 import { base64url, type Json, routeTicket } from "@connectd/kernel";
+import type { ActionSpec } from "@connectd/connections";
 import { type Index, listing } from "./directory.ts";
 import { type AnyDefinition, COOKIES, Fail, type Fault, fault, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { complete } from "./session.ts";
@@ -13,6 +14,8 @@ export type Api = {
   /** The Worker's clock (webhook timestamp checks); a fake in tests. */
   now(): number;
   definitions: Record<string, AnyDefinition>;
+  /** The actions (#54) by connection id. */
+  actions: Record<string, ActionSpec[]>;
   /** The connection index, if an extension provides one (`directory`). */
   index?: Index;
   /** Method names refused over HTTP (`Extension.internal`). */
@@ -102,6 +105,7 @@ export async function authorized(req: Request, key: string) {
 export function http(o: {
   routes: Record<string, Route>;
   definitions: Record<string, AnyDefinition>;
+  actions?: Record<string, ActionSpec[]>;
   settings: () => Promise<Settings>;
   index?: Index;
   internal?: Set<string>;
@@ -114,7 +118,7 @@ export function http(o: {
       const route = Object.hasOwn(o.routes, name) ? o.routes[name] : undefined;
       if (!route) throw new Fail("not_found", 404, "no such route");
       if (!route.public && !(await authorized(req, settings.apiKey))) throw new Fail("unauthorized", 401, "missing or wrong API key");
-      const api: Api = { settings, now: o.now ?? Date.now, definitions: o.definitions, call: async (i, m, a) => (await call(i, m, a)) as Reply, internal: o.internal ?? new Set(), ...(o.index ? { index: o.index } : {}) };
+      const api: Api = { settings, now: o.now ?? Date.now, definitions: o.definitions, actions: o.actions ?? {}, call: async (i, m, a) => (await call(i, m, a)) as Reply, internal: o.internal ?? new Set(), ...(o.index ? { index: o.index } : {}) };
       return await route.fetch(req, api, path);
     } catch (e) {
       return reply({ error: fault(e, "worker") });
