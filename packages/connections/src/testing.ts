@@ -1,5 +1,6 @@
 import { base64url, importHmacKey, importKeys, type Json, kernel, routeTicket } from "@openconnect/kernel";
 import { memory } from "@openconnect/kernel/memory";
+import { type Connection, definitionOf } from "./builder.ts";
 import { bind, type Definition } from "./define.ts";
 
 /** Test helpers for definitions: run one on the memory driver against a fake provider. Not for production. */
@@ -7,7 +8,8 @@ import { bind, type Definition } from "./define.ts";
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 
 /** One definition on the in-memory driver, with the public /callback route. */
-export async function harness<C, M extends Json>(def: Definition<C, M>, config: C, fetch: typeof globalThis.fetch) {
+export async function harness<C, M extends Json>(d: Definition<C, M> | Connection<string, C, M>, config: C, fetch: typeof globalThis.fetch) {
+  const def = definitionOf(d);
   const opts = { config, fetch, redirectUri: "https://oc.test/callback" };
   const keys = { keys: await importKeys({ 1: key(1) }, 1), stateKey: await importHmacKey(key(9)) };
   const bound = new Map<string, ReturnType<typeof bind<C, M>>>();

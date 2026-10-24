@@ -1,6 +1,7 @@
 import { dashboard } from "@openconnect/dashboard";
 import { importHmacKey, importKeys } from "@openconnect/kernel";
 import { ENV } from "./keys.ts";
+import { type AnyConnection, definitionOf } from "@openconnect/connections";
 import {
   type AnyDefinition,
   directory,
@@ -26,7 +27,8 @@ import {
  *   }));
  */
 export type Project = {
-  definitions: AnyDefinition[];
+  /** `connection(...)` builders, or plain definitions. */
+  definitions: (AnyConnection | AnyDefinition)[];
   /** Connector config by definition id (client id/secret). Definitions with no callback step (`apiKey`) default to null. */
   config?: Record<string, unknown>;
   /** Where lifecycle and webhook events are POSTed (#24); signed with `OPENCONNECT_EVENTS_SECRET`. */
@@ -58,15 +60,15 @@ export function resolve(config: Config, env: Env): Project & { registry: Record<
   if (!p || !Array.isArray(p.definitions)) throw new Error("the config must export { definitions: [...] }");
   const registry: Record<string, AnyDefinition> = {};
   for (const d of p.definitions) {
-    if (!d?.id || typeof d.id !== "string") throw new Error("every definition needs an id (defineConnection({ id, ... }))");
+    if (!d?.id || typeof d.id !== "string") throw new Error("every definition needs an id (connection(id))");
     if (Object.hasOwn(registry, d.id)) throw new Error(`two definitions with id ${d.id}`);
-    registry[d.id] = d;
+    registry[d.id] = definitionOf(d);
   }
   return { ...p, registry };
 }
 
 /** Definitions that need connector config and have none: they answer `not_configured`. */
-export const unconfigured = (p: Project) => p.definitions.filter((d) => !d.auth.fields && p.config?.[d.id] == null).map((d) => d.id);
+export const unconfigured = (p: Project) => p.definitions.filter((d) => !definitionOf(d).auth.fields && p.config?.[d.id] == null).map((d) => d.id);
 
 function need(env: Env, name: string) {
   const v = env[name];
@@ -81,7 +83,7 @@ export async function settings(p: Project, env: Env): Promise<Settings> {
   if (!versions.length) throw new Error(`${ENV.key}1 is not set`);
   const keys = Object.fromEntries(versions.map((v) => [v, env[`${ENV.key}${v}`] as string]));
   const config: Record<string, unknown> = {};
-  for (const d of p.definitions) if (d.auth.fields) config[d.id] = null;
+  for (const d of p.definitions) if (definitionOf(d).auth.fields) config[d.id] = null;
   return {
     keys: await importKeys(keys, Math.max(...versions)),
     stateKey: await importHmacKey(need(env, ENV.state)),

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { hmacHex, type OAuth2 } from "@openconnect/connections";
+import { definitionOf, hmacHex, type OAuth2 } from "@openconnect/connections";
 import { fakeOAuth, harness } from "@openconnect/connections/testing";
 import { base64url, type Json } from "@openconnect/kernel";
 import { github } from "./github.ts";
@@ -148,7 +148,7 @@ const NOW = 1_700_000_000_000;
 const at = { now: () => NOW };
 
 test("github webhooks: X-Hub-Signature-256 with the connection's secret, ping is a handshake", async () => {
-  const w = github.webhooks!;
+  const w = definitionOf(github).webhooks!;
   const body = JSON.stringify({ action: "opened", number: 1 });
   const sig = `sha256=${await hmacHex("s3cret", body)}`;
   const ok = hook({ "x-hub-signature-256": sig, "x-github-event": "pull_request", "x-github-delivery": "d-1" }, body);
@@ -159,11 +159,11 @@ test("github webhooks: X-Hub-Signature-256 with the connection's secret, ping is
   expect(await w.verify(ctx, { ...ok, body: `${body} ` }, "s3cret")).toBe(false);
   expect(w.parse(ok)).toEqual({ topic: "pull_request", delivery: "d-1", payload: { action: "opened", number: 1 } });
   expect(w.parse(hook({ "x-github-event": "ping" }, "{}"))).toEqual({ reply: null });
-  expect(github.webhooks!.register).toBeUndefined();
+  expect(definitionOf(github).webhooks!.register).toBeUndefined();
 });
 
 test("slack webhooks: v0 signing secret with a 5 min window, url_verification, routed by team", async () => {
-  const w = slack.webhooks!;
+  const w = definitionOf(slack).webhooks!;
   const config = { clientId: "1.2", signingSecret: "ss" };
   const body = JSON.stringify({ type: "event_callback", team_id: "T9", event_id: "Ev1", event: { type: "message", text: "hi" } });
   const signed = async (ts: number, b = body) => hook({ "x-slack-request-timestamp": String(ts), "x-slack-signature": `v0=${await hmacHex("ss", `v0:${ts}:${b}`)}` }, b);
@@ -178,7 +178,7 @@ test("slack webhooks: v0 signing secret with a 5 min window, url_verification, r
   // No team: nothing ties it to a connection, so it's refused (a 400 at the route) on either route.
   expect(() => w.parse(hook({}, JSON.stringify({ type: "event_callback", event: { type: "message" } })))).toThrow("no team_id");
   // Routes by what `external` indexes.
-  expect(slack.external!({ teamId: "T9", teamName: "", userId: null, botUserId: null })).toEqual({ teamId: "T9" });
+  expect(definitionOf(slack).external!({ teamId: "T9", teamName: "", userId: null, botUserId: null })).toEqual({ teamId: "T9" });
 });
 
 test("google webhooks: calendar channel registered with the secret as token, stopped on unregister", async () => {
@@ -196,7 +196,7 @@ test("google webhooks: calendar channel registered with the secret as token, sto
   const { get, callback } = await harness(google, { clientId: "x", watchCalendar: true }, p.fetch);
   const c = await get("conn:g");
   await callback(p.approve((await c.connect())!));
-  const w = google.webhooks!;
+  const w = definitionOf(google).webhooks!;
   const cred = await c.token();
   const r = await w.register!(c.ctx, cred, { url: "https://oc.test/webhooks/google/g1", secret: "tok" });
   expect(r).toEqual({ hook: { id: "ch1", resourceId: "res1" }, expiresAt: NOW + 7 * 86_400_000 });
