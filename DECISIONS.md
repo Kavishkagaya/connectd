@@ -596,6 +596,12 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
   - `POST <base>/return`: refused unless the Origin is the app's and the id is the signed-in user's own (`<user>` or `<user>:*`). It confirms with a fresh session token for that connection (`/session/complete`), so a completion for someone else's connection can't land on this user's.
   - `POST <base>/events`: the signed events, each to its connection's listeners only.
 - The app's origin must be in `sessions.origins`. ponytail: redirect flows only; API-key forms and device codes wait for the hosted connect pages. `req.url`'s origin unless `connectd({ origin })` says otherwise (behind a proxy).
+- After review:
+  - `return` paths are resolved on the server against the app's origin (the browser drops tabs and newlines, so `/<tab>/evil.test` was an open redirect).
+  - User ids can't contain `:` (it separates a user from their accounts, so `alice` + `x` would otherwise be user `alice:x`'s connection), and numbers are stringified.
+  - `connect` refuses a cross-site start (`Sec-Fetch-Site` other than `same-origin`/`none`), so another site can't connect the signed-in user without them asking.
+  - `connect/:def` is matched first (a definition may be named `return` or `events`), and a bad escape is a 400.
+  - The landing page gets `id` too, and is documented as a hint (check `status()`).
 - Tests: an end-to-end SDK test through the real runtime:
   - the browser walk, from the connect link through the runtime and the provider to the return page;
   - confirming refused for another user and from another origin, and single use;

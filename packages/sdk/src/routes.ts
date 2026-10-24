@@ -12,12 +12,15 @@ import type { SessionArgs } from "@connectd/runtime";
  *   POST <base>/events                          signed events from the runtime, to the folders' `listen()` handlers
  *
  * The connection id is the user's id, or `<user>:<account>` with `?account=` (several accounts of
- * one provider). The flow is a redirect-mode session (#29): bound to this browser by the runtime's
+ * one provider; so user ids can't contain `:`). Connect links only work from the app's own pages
+ * (`Sec-Fetch-Site`). The page the user lands on gets `?connectd=connected&definition=&id=` (or
+ * `error&code=`): a hint for the UI, not proof; read `status()` for the truth. The flow is a redirect-mode session (#29): bound to this browser by the runtime's
  * cookie, and confirmed here only for the user it was started for. The app's origin must be in the
  * config's `sessions.origins`.
  */
 
-export type User = (req: Request) => string | null | undefined | Promise<string | null | undefined>;
+/** The signed-in user's id (no `:`), or null. */
+export type User = (req: Request) => string | number | null | undefined | Promise<string | number | null | undefined>;
 
 type Deps = {
   /** The runtime's base URL and fetch, read on each request (env may be set after import). */
@@ -35,8 +38,19 @@ const ACCOUNT = /^[A-Za-z0-9_-]{1,64}$/;
 
 const fail = (status: number, code: string, message: string) => Response.json({ error: { code, message } }, { status });
 
-/** A same-origin path: `/settings`, never `//evil.test` or `/\evil.test`. */
-const local = (p: string | null) => (p && p.startsWith("/") && !p.startsWith("//") && !p.startsWith("/\\") ? p : "/");
+/**
+ * A path on `origin` (`/settings?tab=1`), resolved the way the browser will (it drops tabs and
+ * newlines, so `/<tab>/evil.test` is `//evil.test`): anything off this origin is `/`.
+ */
+function local(p: string | null, origin: string): string {
+  if (!p || !p.startsWith("/")) return "/";
+  try {
+    const u = new URL(p, origin);
+    return u.origin === origin ? u.pathname + u.search : "/";
+  } catch {
+    return "/";
+  }
+}
 
 /** The page on `<base>/return`: reads the outcome from the fragment, confirms it, then goes on. */
 function returnPage(to: string): Response {
@@ -55,6 +69,7 @@ function returnPage(to: string): Response {
   }
   to.searchParams.set("connectd", status === "connected" ? "connected" : "error");
   if (f.get("definition")) to.searchParams.set("definition", f.get("definition"));
+  if (f.get("id")) to.searchParams.set("id", f.get("id"));
   if (status !== "connected") to.searchParams.set("code", code || "unknown");
   location.replace(to.href);
 })();</script>`;
@@ -75,15 +90,26 @@ export function routes(d: Deps) {
     const url = new URL(req.url);
     const s = url.pathname.split("/");
     const last = s.at(-1);
+    // connect/:def first: a definition may be named `return` or `events`.
+    if (s.at(-2) === "connect" && last) {
+      let def: string | null = null;
+      try {
+        def = decodeURIComponent(last);
+      } catch {}
+      return { url, route: "connect" as const, def, base: s.slice(0, -2).join("/") };
+    }
     if (last === "events" || last === "return") return { url, route: last, base: s.slice(0, -1).join("/") };
-    if (s.at(-2) === "connect" && last) return { url, route: "connect" as const, def: decodeURIComponent(last), base: s.slice(0, -2).join("/") };
     return { url, route: null, base: "" };
   }
 
   async function signedIn(req: Request) {
     if (!d.user) throw new Error("connectd({ user }) is not set: oc.routes needs to know who is signed in");
     const user = await d.user(req);
-    return user || null;
+    if (user === null || user === undefined || user === "") return null;
+    const id = String(user);
+    // `<user>:<account>` names a user's other accounts: a `:` in a user id would let one user's account be another user's connection.
+    if (id.includes(":")) throw new Error(`connectd({ user }): user ids can't contain ":" (${JSON.stringify(id)}); it separates a user from their accounts`);
+    return id;
   }
 
   /** A session token for this browser's flow (`returnUrl`), or for confirming it (`origin`). */
@@ -110,14 +136,18 @@ export function routes(d: Deps) {
   async function get(req: Request): Promise<Response> {
     const m = match(req);
     const origin = d.origin ?? m.url.origin;
-    if (m.route === "return") return returnPage(local(m.url.searchParams.get("return")));
-    if (m.route !== "connect" || !m.def) return fail(404, "not_found", "no such route");
+    if (m.route === "return") return returnPage(local(m.url.searchParams.get("return"), origin));
+    if (m.route !== "connect") return fail(404, "not_found", "no such route");
+    if (!m.def) return fail(400, "bad_request", "bad definition in the path");
+    // Started from this app's pages (or typed in), never from another site: a cross-site link would connect the signed-in user without them asking.
+    const site = req.headers.get("sec-fetch-site");
+    if (site && site !== "same-origin" && site !== "none") return fail(403, "forbidden", "start connecting from this app's pages");
     const user = await signedIn(req);
     if (!user) return fail(401, "unauthorized", "sign in first");
     const account = m.url.searchParams.get("account");
     if (account !== null && !ACCOUNT.test(account)) return fail(400, "bad_request", "account: letters, digits, _ and - only");
     const id = account ? `${user}:${account}` : user;
-    const to = local(m.url.searchParams.get("return"));
+    const to = local(m.url.searchParams.get("return"), origin);
     const { token } = await session(m.def, id, { returnUrl: `${origin}${m.base}/return?return=${encodeURIComponent(to)}` });
     // ponytail: redirect flows only; API-key forms and device codes wait for the hosted connect pages.
     const t = await browser(origin, token, "authorize", { mode: "redirect", nonce: "" });

@@ -56,11 +56,11 @@ packages/runtime/
   src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
-  src/client.ts       connectd<R = Registry>({ url, apiKey }): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, ConnectdError
+  src/client.ts       connectd<R = Registry>({ url?, apiKey?, user?, listeners? }) (CONNECTD_* env defaults, read on first use): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, ConnectdError
   src/registry.ts     interface Registry (filled by the CLI's generated .connectd/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types, EventsOf (the events the app gets, typed per connection)
   src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
   src/listen.ts       listen(id).on(type, handler): a folder's events.ts (app side), one connection's events
-  src/routes.ts       oc.routes { GET, POST } (#54, app side): connect/:def (server-started redirect session), return (page + confirm), events (to listeners); connectd({ user, listeners }), env defaults
+  src/routes.ts       oc.routes { GET, POST } (#54, app side): connect/:def (server-started redirect session), return (page + confirm), events (to listeners)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
   src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
 

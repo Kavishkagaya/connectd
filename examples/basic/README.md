@@ -26,9 +26,12 @@ import { oc } from "@/lib/oc";
 export const { GET, POST } = oc.routes;
 ```
 
-- A link to `/api/connectd/connect/github?return=/settings` connects the signed-in user's GitHub
-  (connection id = the user's id; `&account=work` gives `<user>:work`, a second account), and comes
-  back to `/settings?connectd=connected` (or `?connectd=error&code=...`).
+- A link on your pages to `/api/connectd/connect/github?return=/settings` connects the signed-in
+  user's GitHub (connection id = the user's id, which can't contain `:`; `&account=work` gives
+  `<user>:work`, a second account), and comes back to `/settings?connectd=connected&definition=github&id=...`
+  (or `?connectd=error&code=...`). That's a hint for the UI: check `status()` before trusting it.
+- `.connectd/app.ts` imports the folders without file extensions, as a bundler (Next, Vite, Bun) or
+  `moduleResolution: "bundler"` resolves them.
 - Point `events.url` in `oc.config.ts` at `<your app>/api/connectd/events`: events go to the folders'
   `listen()` handlers. Your app's origin must be in `sessions.origins`.
 - Everything else: `oc.connection("github", userId).actions.profile()`, `.fetch("/user")`, `.status()`.

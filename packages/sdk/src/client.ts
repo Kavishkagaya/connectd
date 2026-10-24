@@ -26,7 +26,7 @@ export type Options = {
   apiKey?: string;
   /** Who is signed in, for `routes` (#54): the user's id, or null. Their connection ids are it (or `<id>:<account>`). */
   user?: User;
-  /** The folders' `listen()` handlers by connection id, for `routes`' events: `import { listeners } from "../.connectd/app.ts"`. */
+  /** The folders' `listen()` handlers by connection id, for `routes`' events: `import { listeners } from "../.connectd/app"`. */
   listeners?: Record<string, Listener>;
   /** Event delivery for `routes` (default secret: `CONNECTD_EVENTS_SECRET`). */
   events?: Partial<EventsOptions>;

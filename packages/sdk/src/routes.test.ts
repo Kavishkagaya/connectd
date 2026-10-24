@@ -95,3 +95,33 @@ test("connectd(): env defaults, listeners checked against their ids", () => {
   expect(() => oc.connection("example", "u1").status()).toThrow("CONNECTD_URL is not set");
   if (before !== undefined) process.env.CONNECTD_URL = before;
 });
+
+test("app route, refused: return paths off the origin (tabs and newlines too), cross-site starts, odd paths, no Origin, bad signatures", async () => {
+  const t = await wired();
+  for (const r of ["/%09/evil.test", "/%0A/evil.test", "/%0D/evil.test", "//evil.test", "/\\evil.test", "https://evil.test/x"])
+    expect(await (await t.get(`/return?return=${r}`)).text()).toContain('new URL("/", location.origin)');
+  expect(await (await t.get("/return?return=/settings%3Ftab%3D1")).text()).toContain('new URL("/settings?tab=1", location.origin)');
+  // A link from another site can't start a connect for the signed-in user.
+  const cross = await t.app.routes.GET(new Request(`${APP}/api/connectd/connect/example`, { headers: { "x-user": "u1", "sec-fetch-site": "cross-site" } }));
+  expect(cross.status).toBe(403);
+  // connect/:def first: a definition named `return` is a connect (here unknown), not the page.
+  expect((await t.get("/connect/return", "u1")).status).toBe(404);
+  expect((await t.get("/connect/%E0", "u1")).status).toBe(400);
+  const noOrigin = await t.app.routes.POST(new Request(`${APP}/api/connectd/return`, { method: "POST", headers: { "x-user": "u1" }, body: "{}" }));
+  expect(noOrigin.status).toBe(403);
+  expect((await t.app.routes.POST(new Request(`${APP}/api/connectd/events`, { method: "POST", body: "{}" }))).status).toBe(401);
+});
+
+test("app route: user ids are strings without ':' (numbers are fine)", async () => {
+  const t = await setup();
+  const fetch = (input: string, init: RequestInit) => t.rt.fetch(new Request(input, init), t.w.call);
+  const colon = connectd({ url: "https://oc.test", apiKey: "secret", fetch, user: () => "org:1" });
+  await expect(colon.routes.GET(new Request(`${APP}/api/connectd/connect/example`))).rejects.toThrow("user ids can't contain");
+  const numeric = connectd({ url: "https://oc.test", apiKey: "secret", fetch, user: () => 42 });
+  const r = await numeric.routes.GET(new Request(`${APP}/api/connectd/connect/example`));
+  expect(r.status).toBe(303);
+  void (() => {
+    // @ts-expect-error a typo'd type, refused without a registry too
+    listen("example").on("connection.actve", () => {});
+  });
+});
