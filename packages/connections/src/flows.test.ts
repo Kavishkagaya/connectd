@@ -197,3 +197,80 @@ test("jwt: PKCS#1 keys import (GitHub App keys), and a signature verifies", asyn
   expect(await verifyJwt(t, [k.jwk])).toEqual({ iss: "123" });
   expect(base64url(new Uint8Array([1]))).toBe("AQ");
 });
+
+test("device flow: revoke stops polling; a reconnect wins over a poll that lands late; a network error is retried", async () => {
+  let release: (r: Response) => void = () => {};
+  let calls = 0;
+  let down = false;
+  const codes: string[] = [];
+  const fetch = (async (url: string, init?: RequestInit) => {
+    const p = new URLSearchParams(String(init?.body));
+    if (url === "https://dev.test/device") {
+      const dc = `dc${codes.length + 1}`;
+      codes.push(dc);
+      return json({ device_code: dc, user_code: dc.toUpperCase(), verification_uri: "https://dev.test/a", expires_in: 900, interval: 0 });
+    }
+    calls++;
+    if (down) throw new TypeError("network down");
+    const dc = p.get("device_code");
+    // dc1 hangs until released; dc2 is approved; dc3 is pending forever.
+    if (dc === "dc1") return new Promise<Response>((r) => (release = r));
+    if (dc === "dc2") return json({ access_token: "fresh", refresh_token: "r", expires_in: 3600 });
+    return json({ error: "authorization_pending" });
+  }) as typeof globalThis.fetch;
+  const tv = connection("tv")
+    .config<{ clientId: string }>()
+    .auth((f) => f.device({ deviceUrl: "https://dev.test/device", tokenUrl: "https://dev.test/token" }));
+  const { w, get } = await harness(tv, { clientId: "cid" }, fetch);
+  const c = await get("conn:tv");
+
+  // interval 0 is clamped to the 5 s default.
+  await c.connect();
+  expect((await c.device())?.intervalMs).toBe(5000);
+  const late = w.advance(5000); // dc1's poll is now in flight
+  while (calls === 0) await new Promise((r) => setTimeout(r, 1));
+  await c.connect(); // dc2 replaces it
+  release(json({ access_token: "stale", refresh_token: "r", expires_in: 3600 }));
+  await late;
+  expect((await c.conn.read())?.state).toBe("pending");
+  expect((await c.device())?.userCode).toBe("DC2");
+  await w.advance(5000);
+  expect((await c.conn.read())?.state).toBe("active");
+  expect(((await c.token()) as OAuth2).accessToken).toBe("fresh");
+
+  // A network error doesn't end the attempt: the next interval polls again.
+  const d = await get("conn:tv2");
+  await d.connect(); // dc3
+  down = true;
+  await w.advance(5000);
+  expect((await d.device())?.userCode).toBe("DC3");
+  down = false;
+  const before = calls;
+  await w.advance(5000);
+  expect(calls).toBe(before + 1);
+
+  // Revoke: the attempt is gone and nothing polls.
+  await d.revoke();
+  expect(await d.device()).toBeNull();
+  const after = calls;
+  await w.advance(5000);
+  await w.advance(5000);
+  expect(calls).toBe(after);
+});
+
+test("jwt: ES256, no kid (every fitting key tried), encryption keys skipped", async () => {
+  const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"])) as CryptoKeyPair;
+  const jwk = (await crypto.subtle.exportKey("jwk", pair.publicKey)) as Jwk;
+  const input = `${base64url(new TextEncoder().encode(JSON.stringify({ alg: "ES256" })))}.${base64url(new TextEncoder().encode(JSON.stringify({ sub: "x" })))}`;
+  const sig = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, pair.privateKey, new TextEncoder().encode(input)));
+  const es = `${input}.${base64url(sig)}`;
+  const other = (await rsa("r")).jwk;
+  expect(await verifyJwt(es, [other, { ...jwk, kid: "e1" }])).toEqual({ sub: "x" });
+  expect(await verifyJwt(es, [{ ...jwk, use: "enc" }])).toBeNull();
+
+  const a = await rsa("a");
+  const b = await rsa("b");
+  const t = await signJwt({ sub: "y" }, b.key);
+  expect(await verifyJwt(t, [{ ...a.jwk, kid: undefined }, { ...b.jwk, kid: undefined }])).toEqual({ sub: "y" });
+  await expect(verifyJwt(t, [{ ...a.jwk, kid: undefined }])).rejects.toThrow("bad JWT signature");
+});

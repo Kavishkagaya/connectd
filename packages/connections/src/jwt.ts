@@ -25,6 +25,8 @@ const RSA_ALG = [0x02, 0x01, 0x00, 0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x8
 
 /** A PEM private key for RS256: PKCS#8 (`BEGIN PRIVATE KEY`, Google) or PKCS#1 (`BEGIN RSA PRIVATE KEY`, GitHub Apps). */
 export async function importPrivateKey(pem: string): Promise<CryptoKey> {
+  // A PEM pasted into .env often has literal `\n`s.
+  pem = pem.replace(/\\n/g, "\n");
   const body = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
   let der = Uint8Array.from(atob(body), (c) => c.charCodeAt(0));
   if (pem.includes("BEGIN RSA PRIVATE KEY")) {
@@ -33,6 +35,21 @@ export async function importPrivateKey(pem: string): Promise<CryptoKey> {
     der = new Uint8Array([0x30, ...len(inner.length), ...inner]);
   }
   return crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
+}
+
+const signing = new Map<string, Promise<CryptoKey>>();
+
+/** `importPrivateKey`, once per key per isolate (a rejected import is dropped, so a fixed key gets another try). */
+export function signingKey(pem: string): Promise<CryptoKey> {
+  let p = signing.get(pem);
+  if (!p) {
+    // ponytail: rotated-out keys stay until the isolate goes; a small cap keeps that bounded.
+    if (signing.size >= 16) signing.clear();
+    p = importPrivateKey(pem);
+    signing.set(pem, p);
+    p.catch(() => signing.delete(pem));
+  }
+  return p;
 }
 
 /** Sign `claims` with RS256. */
@@ -46,24 +63,31 @@ export async function signJwt(claims: Claims, key: CryptoKey, header: Claims = {
 export type Jwk = { kty: string; kid?: string; alg?: string; [k: string]: unknown };
 
 type Alg = Parameters<typeof crypto.subtle.importKey>[2];
-const ALGS: Record<string, { import: Alg; verify: Parameters<typeof crypto.subtle.verify>[0] }> = {
-  RS256: { import: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, verify: "RSASSA-PKCS1-v1_5" },
-  ES256: { import: { name: "ECDSA", namedCurve: "P-256" }, verify: { name: "ECDSA", hash: "SHA-256" } },
+const ALGS: Record<string, { kty: string; import: Alg; verify: Parameters<typeof crypto.subtle.verify>[0] }> = {
+  RS256: { kty: "RSA", import: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, verify: "RSASSA-PKCS1-v1_5" },
+  ES256: { kty: "EC", import: { name: "ECDSA", namedCurve: "P-256" }, verify: { name: "ECDSA", hash: "SHA-256" } },
 };
 
 /**
- * Check a JWT's signature against a key set and return its claims. Null if no key has its `kid`
- * (the caller refetches the keys once: they rotate). Throws on a bad signature or an unsupported `alg`.
- * Checks no claims: that's the caller's (iss, aud, exp, nonce).
+ * Check a JWT's signature against a key set and return its claims. Null if no signing key fits its
+ * `kid` and `alg` (the caller refetches the keys once: they rotate); with no `kid`, every key that
+ * fits is tried. Throws on a bad signature or an unsupported `alg`. Checks no claims: that's the
+ * caller's (iss, aud, exp, nonce).
  */
 export async function verifyJwt(token: string, keys: Jwk[]): Promise<Claims | null> {
   const { header, claims } = decodeJwt(token);
   const alg = ALGS[String(header.alg)];
   if (!alg) throw new Error(`unsupported JWT alg ${String(header.alg)}`);
-  const jwk = keys.find((k) => (header.kid === undefined || k.kid === header.kid) && (k.alg === undefined || k.alg === header.alg));
-  if (!jwk) return null;
-  const key = await crypto.subtle.importKey("jwk", jwk as never, alg.import, false, ["verify"]);
+  const fits = keys.filter(
+    (k) => k.kty === alg.kty && k.use !== "enc" && (header.kid === undefined || k.kid === header.kid) && (k.alg === undefined || k.alg === header.alg),
+  );
+  if (!fits.length) return null;
   const [h, c, s] = token.split(".");
-  if (!(await crypto.subtle.verify(alg.verify, key, fromBase64url(s ?? ""), utf8.encode(`${h}.${c}`)))) throw new Error("bad JWT signature");
-  return claims;
+  const sig = fromBase64url(s ?? "");
+  const input = utf8.encode(`${h}.${c}`);
+  for (const jwk of fits) {
+    const key = await crypto.subtle.importKey("jwk", jwk as never, alg.import, false, ["verify"]).catch(() => null);
+    if (key && (await crypto.subtle.verify(alg.verify, key, sig, input))) return claims;
+  }
+  throw new Error("bad JWT signature");
 }

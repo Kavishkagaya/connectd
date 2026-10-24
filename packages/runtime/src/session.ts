@@ -291,6 +291,8 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
     /** Mint a single-use ticket for this connection; the route checked the token and the Origin. */
     "session.ticket": async (a) => {
       if (!h.settings.sessions) throw off();
+      // ponytail: device flows show a code the browser would need to display; start them from the server (connect) for now.
+      if (h.def.auth.poll) throw bad("device flows don't run in a browser session; connect from the server and show the code");
       const mode = str(a, "mode");
       if (mode !== "popup" && mode !== "redirect") throw bad("mode must be popup or redirect");
       const target: Stored = { mode, nonce: str(a, "nonce"), origin: str(a, "origin"), ...((a as { returnUrl?: Json }).returnUrl ? { returnUrl: str(a, "returnUrl") } : {}) };

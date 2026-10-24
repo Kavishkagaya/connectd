@@ -132,8 +132,8 @@ export function lifecycle(k: Kernel, opts: LifecycleOptions = {}) {
 
   /** A refresh can get a new token: a refresh token, or a flow that mints. */
   const renewable = (c: OAuth2) => !!opts.refresh && (!!c.refreshToken || !!opts.mints);
-  /** Still the credential a refresh started from (refresh token; access token for minted ones, which have none). */
-  const sameCred = (a: OAuth2, b: OAuth2) => (opts.mints && !b.refreshToken ? a.accessToken === b.accessToken : a.refreshToken === b.refreshToken);
+  /** Still the credential a refresh started from: its refresh token, or for minted ones (no refresh token to go by) its access token. */
+  const sameCred = (a: OAuth2, b: OAuth2) => (opts.mints ? a.accessToken === b.accessToken : a.refreshToken === b.refreshToken);
 
   // ponytail: timer and cell writes aren't atomic. A crash between them leaves no timer; token() still refreshes on demand.
   async function arm(state: State, c: Credential | null) {

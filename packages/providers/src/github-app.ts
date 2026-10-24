@@ -3,12 +3,12 @@ import {
   credentialFrom,
   exchangeCode,
   hmacHex,
-  importPrivateKey,
   type OAuth2,
   type OAuth2Config,
   OAuthError,
   rateHeaders,
   safeEqual,
+  signingKey,
   signJwt,
   type TokenResponse,
 } from "@openconnect/connections";
@@ -20,21 +20,57 @@ const headers = (auth: string) => ({ authorization: auth, accept: "application/v
 /**
  * `appId`, `slug` (the app's URL name) and `privateKey` (the PEM GitHub generates) from the app's
  * settings. `clientId`/`clientSecret` too: "Request user authorization (OAuth) during installation"
- * must be on, so the callback can check the installing user can see the installation. The
+ * must be on, so the callback can check who installed it (their account, or an org they're an admin
+ * of; the app needs the "Members: read" organization permission for the org check). The
  * webhook secret is the app's (one URL for the app: `/webhooks/github-app`).
  */
 export type GitHubAppConfig = OAuth2Config & { appId: string; slug: string; privateKey: string; webhookSecret?: string };
 
 type Data = { installationId: number; account: string };
 
-const keys = new Map<string, Promise<CryptoKey>>();
-
 /** The app's own JWT (10 min, backdated a minute for clock drift), which mints installation tokens. */
 async function appJwt(c: GitHubAppConfig, now: number) {
-  let key = keys.get(c.privateKey);
-  if (!key) keys.set(c.privateKey, (key = importPrivateKey(c.privateKey)));
   const iat = Math.floor(now / 1000) - 60;
-  return signJwt({ iat, exp: iat + 600, iss: c.appId }, await key);
+  return signJwt({ iat, exp: iat + 600, iss: c.appId }, await signingKey(c.privateKey));
+}
+
+type Installation = { id: number; account: { login: string; id: number; type: string } };
+
+/**
+ * Whether the user behind `token` may connect installation `id`: it's on their own account, or on
+ * an org they're an admin of. Seeing it (`/user/installations`) isn't enough: that lists every
+ * installation with a repo the user can access, so any org member would get the bot's access.
+ */
+async function claimable(f: typeof fetch, token: string, id: number): Promise<Installation | null> {
+  const get = async <T>(path: string) => {
+    const res = await f(`${API}${path}`, { headers: headers(`Bearer ${token}`) });
+    return res.ok ? ((await res.json()) as T) : null;
+  };
+  let found: Installation | undefined;
+  for (let page = 1; !found; page++) {
+    const r = await get<{ installations: Installation[] }>(`/user/installations?per_page=100&page=${page}`);
+    if (!r) throw new Error("github /user/installations failed");
+    found = r.installations.find((i) => i.id === id);
+    if (r.installations.length < 100) break;
+  }
+  if (!found) return null;
+  if (found.account.type === "User") return (await get<{ id: number }>("/user"))?.id === found.account.id ? found : null;
+  // Fails closed: a 404 or 403 (not a member, or no access to memberships) is a no.
+  const m = await get<{ role: string; state: string }>(`/user/memberships/orgs/${encodeURIComponent(found.account.login)}`);
+  return m?.role === "admin" && m.state === "active" ? found : null;
+}
+
+/** The user token was only for the check above: revoke it (best effort). */
+async function dropUserToken(ctx: { config: GitHubAppConfig; fetch: typeof fetch }, token: string) {
+  const { clientId, clientSecret } = ctx.config;
+  if (!clientSecret) return;
+  await ctx
+    .fetch(`${API}/applications/${encodeURIComponent(clientId)}/token`, {
+      method: "DELETE",
+      headers: { ...headers(`Basic ${btoa(`${clientId}:${clientSecret}`)}`), "content-type": "application/json" },
+      body: JSON.stringify({ access_token: token }),
+    })
+    .catch((e) => console.error("github: revoking the installing user's token failed", e));
 }
 
 /** An installation token (1 h). Uninstalled or suspended: `invalid_grant`, so the connection needs a new install. */
@@ -43,7 +79,9 @@ async function mint(ctx: { config: GitHubAppConfig; fetch: typeof fetch; now(): 
     method: "POST",
     headers: headers(`Bearer ${await appJwt(ctx.config, ctx.now())}`),
   });
-  if (res.status === 404 || res.status === 403) throw new OAuthError("invalid_grant", res.status, null);
+  // 404: uninstalled; 403: suspended, unless it's a rate limit (try again later).
+  const limited = res.headers.get("x-ratelimit-remaining") === "0" || res.headers.has("retry-after");
+  if (res.status === 404 || (res.status === 403 && !limited)) throw new OAuthError("invalid_grant", res.status, null);
   if (!res.ok) throw new Error(`github installation token ${res.status}`);
   const b = (await res.json()) as { token: string; expires_at: string };
   return { access_token: b.token, expires_in: Math.floor((Date.parse(b.expires_at) - ctx.now()) / 1000) };
@@ -51,8 +89,8 @@ async function mint(ctx: { config: GitHubAppConfig; fetch: typeof fetch; now(): 
 
 /**
  * GitHub Apps (#56): one connection per installation (an org or a user account), acting as the
- * app's bot there. Connect sends the user to install the app; the callback checks the installing
- * user can see that installation (so nobody can claim another org's), then mints installation
+ * app's bot there. Connect sends the user to install the app; the callback checks the installation
+ * is the user's own or an org they administer (so a member can't claim their org's), then mints installation
  * tokens from the app's key, again on every expiry, with no refresh token.
  */
 // ponytail: revoke is local only; uninstalling is the org admin's call (DELETE /app/installations/{id} would remove the app for everyone there).
@@ -75,10 +113,9 @@ export const githubApp = connection("github-app")
           { clientId: ctx.config.clientId, ...(ctx.config.clientSecret ? { clientSecret: ctx.config.clientSecret } : {}), redirectUri: ctx.redirectUri },
           params.code,
         );
-        const res = await ctx.fetch(`${API}/user/installations`, { headers: headers(`Bearer ${user.access_token as string}`) });
-        if (!res.ok) throw new Error(`github /user/installations ${res.status}`);
-        const found = ((await res.json()) as { installations: { id: number; account: { login: string } }[] }).installations.find((i) => i.id === id);
-        if (!found) throw new OAuthError("access_denied", 403, "the installing user can't see that installation");
+        const token = user.access_token as string;
+        const found = await claimable(ctx.fetch, token, id).finally(() => dropUserToken(ctx, token));
+        if (!found) throw new OAuthError("access_denied", 403, "the installation isn't on the user's account or an org they administer");
         const data: Data = { installationId: id, account: found.account.login };
         return { ...credentialFrom(await mint(ctx, id), ctx.now()), data };
       },

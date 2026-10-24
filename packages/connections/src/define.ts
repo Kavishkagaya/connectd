@@ -155,39 +155,67 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
   const conn = lifecycle(k, refresh ? { refresh: (c: OAuth2) => refresh(ctx, c), mints: !!def.auth.mints } : {});
   /** Who the credential belongs to; `{ m: null }` for a definition without `metadata`. */
   const metaCell = k.cell<{ m: Json }>("meta");
-  /** A device flow in progress: what the user was shown, and what `poll` needs. */
-  const deviceCell = k.cell<{ device: Device; data: Json }>("device");
+  /**
+   * A device flow in progress: what the user was shown, what `poll` needs, and its attempt id (a
+   * later connect or a revoke replaces or clears it, and a poll that lands late acts on nothing).
+   * `claimed`: approved, the credential being activated. `pollAt`: when the next poll is due.
+   */
+  const deviceCell = k.cell<{ attempt: string; device: Device; data: Json; pollAt: number; claimed?: true }>("device");
+  const live = async (attempt?: string) => {
+    const d = (await deviceCell.read())?.value;
+    return d && !d.claimed && (attempt === undefined || d.attempt === attempt) ? d : null;
+  };
+  /** Set the next poll, if the attempt is still the current one. */
+  async function schedule(attempt: string, intervalMs: number) {
+    const pollAt = k.now() + intervalMs;
+    const d = await deviceCell.update((cur) => (cur?.attempt === attempt && !cur.claimed ? { ...cur, pollAt, device: { ...cur.device, intervalMs } } : null));
+    if (d?.attempt === attempt && !d.claimed) await devicePoll.set(pollAt, attempt);
+  }
+  /** Tokens nobody will use (the attempt was replaced): revoke them at the provider, best effort. */
+  const discard = (cred: Credential) => def.auth.revoke?.(ctx, cred).catch((e) => console.error("device flow: revoking a stale credential failed", k.instance, e));
   // ponytail: an expired or denied device attempt leaves the connection pending (no reason recorded); connect() again starts over.
-  const devicePoll = k.timer("device", {
-    async handle(): Promise<void> {
-      const d = (await deviceCell.read())?.value;
+  const devicePoll = k.timer<string>("device", {
+    async handle(attempt): Promise<void> {
+      const d = await live(attempt);
       if (!d || !def.auth.poll) return;
       if (k.now() >= d.device.expiresAt) {
-        await deviceCell.delete();
+        if (await live(attempt)) await deviceCell.delete();
         return;
       }
       let cred: Credential | null;
       try {
         cred = await def.auth.poll(ctx, d.data);
       } catch (e) {
-        if (e instanceof OAuthError && e.code === "slow_down") {
-          const device = { ...d.device, intervalMs: d.device.intervalMs + 5000 };
-          await deviceCell.put({ ...d, device });
-          await devicePoll.set(k.now() + device.intervalMs);
-          return;
+        if (e instanceof OAuthError && e.code === "slow_down") return schedule(attempt, d.device.intervalMs + 5000);
+        // A network failure or a provider 5xx: try again at the next interval, until the code expires.
+        if (!(e instanceof OAuthError) || e.status >= 500) {
+          console.error("device poll failed, retrying", k.instance, e);
+          return schedule(attempt, d.device.intervalMs);
         }
         console.error("device flow ended", k.instance, e);
-        await deviceCell.delete();
+        if (await live(attempt)) await deviceCell.delete();
         return;
       }
-      if (!cred) {
-        await devicePoll.set(k.now() + d.device.intervalMs);
+      if (!cred) return schedule(attempt, d.device.intervalMs);
+      // Claim the attempt: of a late poll and a reconnect (or revoke), only one goes on.
+      let won = false;
+      await deviceCell.update((cur) => {
+        won = cur?.attempt === attempt && !cur.claimed;
+        return won && cur ? { ...cur, claimed: true } : null;
+      });
+      if (!won) {
+        await discard(cred);
         return;
       }
-      await deviceCell.delete();
       await finish(cred).catch((e) => console.error("device flow: credential rejected", k.instance, e));
     },
   });
+  /** A new connect or a revoke: the device attempt in progress (if any) stops. */
+  async function endDevice() {
+    if ((await deviceCell.read()) === null) return;
+    await deviceCell.delete();
+    await devicePoll.cancel();
+  }
 
   /** Take the handshake a callback's `state` names, at most once: the start step's data and `connect`'s `extra`. */
   async function handshake(params: Record<string, string>): Promise<Handshake> {
@@ -223,14 +251,17 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
       const s = await conn.read();
       if (s?.state === "revoked") throw new NotActive("revoked", s.reason);
       const step = await def.auth.start(ctx, input);
+      await endDevice();
       if ("credential" in step) {
         await finish(step.credential);
         return null;
       }
       if (!s) await conn.pend();
       if ("device" in step) {
-        await deviceCell.put({ device: step.device, data: step.data });
-        await devicePoll.set(k.now() + step.device.intervalMs);
+        const attempt = crypto.randomUUID();
+        const pollAt = k.now() + step.device.intervalMs;
+        await deviceCell.put({ attempt, device: step.device, data: step.data, pollAt });
+        await devicePoll.set(pollAt, attempt);
         return step.device.verificationUriComplete ?? step.device.verificationUri;
       }
       return step.redirect(await conn.handshake.open({ data: step.data, ...(extra === undefined ? {} : { extra }) }));
@@ -238,8 +269,16 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
 
     handshake,
 
-    /** The device code to show the user while a device flow waits for approval; null otherwise. */
-    device: async (): Promise<Device | null> => (await deviceCell.read())?.value.device ?? null,
+    /**
+     * The device code to show the user while a device flow waits for approval; null otherwise. Also
+     * the on-demand path: a poll overdue by a whole interval (its timer was lost) is set again.
+     */
+    async device(): Promise<Device | null> {
+      const d = await live();
+      if (!d || k.now() >= d.device.expiresAt) return null;
+      if (k.now() > d.pollAt + d.device.intervalMs) await devicePoll.set(k.now(), d.attempt);
+      return d.device;
+    },
 
     /** The provider redirected back. `params` is the callback query, `state` included; `hs` if already taken. */
     async callback(params: Record<string, string>, hs?: Handshake) {
@@ -257,6 +296,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
     meta: metaCell,
 
     async revoke(reason?: string) {
+      await endDevice();
       const s = await conn.read();
       if (s?.credential && revoke) await revoke(ctx, s.credential).catch((e) => console.error("provider revoke failed", k.instance, e));
       return conn.revoke(reason);

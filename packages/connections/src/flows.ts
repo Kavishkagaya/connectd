@@ -1,7 +1,7 @@
 import type { Json } from "@openconnect/kernel";
 import { apiKey as apiKeySteps, deadAs, type OAuth2Config, type OAuth2Spec, oauth2Steps } from "./auth.ts";
 import type { Auth, Ctx } from "./define.ts";
-import { type Claims, decodeJwt, importPrivateKey, type Jwk, signJwt, verifyJwt } from "./jwt.ts";
+import { type Claims, decodeJwt, type Jwk, signingKey, signJwt, verifyJwt } from "./jwt.ts";
 import { type Credential, credentialFrom, type OAuth2 } from "./lifecycle.ts";
 import { type Client, clientCredentials, deviceAuthorize, devicePoll, OAuthError, refreshGrant, type TokenResponse } from "./oauth.ts";
 
@@ -99,10 +99,22 @@ async function json<T>(f: typeof fetch, url: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-const discover = (f: typeof fetch, issuer: string) =>
-  cached(discovered, issuer, () => json<Discovery>(f, `${issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`));
+const trim = (u: string) => u.replace(/\/+$/, "");
 
-/** An id_token's claims, after checking its signature (keys refetched once on an unknown `kid`), issuer, audience, expiry and nonce. */
+/** The issuer's metadata, which must name the issuer it was fetched from (OIDC Discovery §4.3). */
+const discover = (f: typeof fetch, issuer: string) =>
+  cached(discovered, issuer, async () => {
+    const d = await json<Discovery>(f, `${trim(issuer)}/.well-known/openid-configuration`);
+    // Microsoft's multi-tenant endpoints (`common`, `organizations`) answer with a `{tenantid}` template instead.
+    if (!d.issuer.includes("{tenantid}") && trim(d.issuer) !== trim(issuer)) throw new Error(`discovery for ${issuer} names issuer ${d.issuer}`);
+    return d;
+  });
+
+/**
+ * An id_token's claims, after checking its signature (keys refetched once on an unknown `kid`),
+ * issuer, audience (and `azp` with several), expiry and nonce. On Microsoft's multi-tenant
+ * endpoints any tenant passes: an app that serves only some restricts on the `tid` claim.
+ */
 export async function verifyIdToken(f: typeof fetch, d: Discovery, token: string, o: { clientId: string; nonce: string; now: number }): Promise<Claims> {
   const keys = () => cached(keySets, d.jwks_uri, async () => (await json<{ keys: Jwk[] }>(f, d.jwks_uri)).keys);
   let claims = await verifyJwt(token, await keys());
@@ -119,6 +131,8 @@ export async function verifyIdToken(f: typeof fetch, d: Discovery, token: string
       ? "iss"
       : !aud.includes(o.clientId)
         ? "aud"
+        : aud.length > 1 && claims.azp !== o.clientId
+          ? "azp"
         : typeof claims.exp !== "number" || claims.exp * 1000 < o.now - 60_000
           ? "exp"
           : claims.nonce !== o.nonce
@@ -229,8 +243,6 @@ function clientCredentialsFlow(st: MintState): MintFlow<OAuth2Config> {
 /** A service account's key (Google's JSON key file: `client_email`, `private_key`). */
 export type ServiceAccount = { clientEmail: string; privateKey: string; scopes?: string[] };
 
-const keys = new Map<string, Promise<CryptoKey>>();
-
 /** JWT bearer: scopes only (the key is the client's authentication). */
 export interface JwtFlow<C> extends Flow<C> {
   scopes(...scopes: string[]): JwtFlow<C>;
@@ -238,7 +250,7 @@ export interface JwtFlow<C> extends Flow<C> {
 
 function jwtBearerFlow(st: MintState): JwtFlow<ServiceAccount> {
   const mint = async (ctx: Ctx<ServiceAccount>, data: Json | undefined) => {
-    const key = await cached(keys, ctx.config.privateKey, () => importPrivateKey(ctx.config.privateKey));
+    const key = await signingKey(ctx.config.privateKey);
     const iat = Math.floor(ctx.now() / 1000);
     const scope = (ctx.config.scopes ?? st.scopes)?.join(" ");
     const subject = (data as { subject?: string } | undefined)?.subject;
@@ -281,8 +293,9 @@ function deviceFlow(st: DeviceState): DeviceFlow<OAuth2Config> {
           userCode: a.user_code,
           verificationUri: a.verification_uri,
           ...(a.verification_uri_complete ? { verificationUriComplete: a.verification_uri_complete } : {}),
-          expiresAt: ctx.now() + a.expires_in * 1000,
-          intervalMs: (a.interval ?? 5) * 1000,
+          // RFC 8628 requires expires_in; 15 min if a provider leaves it out. Interval: 5 s by default, never under 1 s.
+          expiresAt: ctx.now() + (Number(a.expires_in) > 0 ? Number(a.expires_in) : 900) * 1000,
+          intervalMs: Math.max(1, Number(a.interval) || 5) * 1000,
         },
         data: { deviceCode: a.device_code },
       };
