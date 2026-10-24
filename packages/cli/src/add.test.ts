@@ -45,9 +45,32 @@ test("add: the provider as source in its folder, an empty events.ts, its env nam
   await add({ ...p.o, provider: "slack", id: "slack2" });
   const env = readFileSync(join(p.dir, ".env"), "utf8");
   expect(env.match(/SLACK_SIGNING_SECRET/g)?.length).toBe(1);
-  expect(env).toContain("# SLACK_SIGNING_SECRET=   (optional)");
+  expect(env).toContain("# optional:\n# SLACK_SIGNING_SECRET=\n");
   expect(env.match(/GITHUB_CLIENT_ID/g)?.length).toBe(1);
   await expect(add({ ...p.o, provider: "nope" })).rejects.toThrow("nope isn't in the catalog");
+});
+
+test("add: .env edge cases; a malformed catalog entry is refused before anything is written", async () => {
+  // No trailing newline, CRLF, an optional name listed indented, a required one only commented out.
+  const p = project("A=1\r\n  # SLACK_SIGNING_SECRET=\r\n# SLACK_CLIENT_ID=old");
+  await add({ ...p.o, provider: "slack" });
+  const env = readFileSync(join(p.dir, ".env"), "utf8");
+  expect(env.match(/SLACK_SIGNING_SECRET/g)?.length).toBe(1);
+  expect(env).toContain("\nSLACK_CLIENT_ID=\n");
+  // Uncommented with a value, the optional line reads as just that value.
+  const { parseEnv } = await import("./env.ts");
+  expect(parseEnv("# optional:\nSLACK_SIGNING_SECRET=abc\n").SLACK_SIGNING_SECRET).toBe("abc");
+
+  const bad = project();
+  const reg = mkdtempSync(join(TMP, "reg-"));
+  writeFileSync(join(reg, "evil.json"), JSON.stringify({ id: "evil", version: "1", env: ["X=\nCONNECTD_API_KEY=attacker"], optionalEnv: [], files: { "connection.ts": "" } }));
+  writeFileSync(join(reg, "empty.json"), JSON.stringify({ id: "empty", version: "1", env: [], optionalEnv: [], files: {} }));
+  writeFileSync(join(reg, "junk.json"), "<html>");
+  await expect(add({ ...bad.o, registry: reg, provider: "evil" })).rejects.toThrow("evil.json: not a catalog entry");
+  await expect(add({ ...bad.o, registry: reg, provider: "empty" })).rejects.toThrow("empty.json: not a catalog entry");
+  await expect(add({ ...bad.o, registry: reg, provider: "junk" })).rejects.toThrow("junk.json isn't JSON");
+  expect(existsSync(join(bad.dir, "src/oc/evil"))).toBe(false);
+  expect(existsSync(join(bad.dir, ".env"))).toBe(false);
 });
 
 test("diff: yours against the catalog's, hunks with context; unchanged says so", async () => {
@@ -62,6 +85,9 @@ test("diff: yours against the catalog's, hunks with context; unchanged says so",
   expect(out).toContain("--- src/oc/google/connection.ts (yours, from google@0.0.0)");
   expect(out).toContain('-export const google = connection("google") // mine');
   expect(out).toContain('+export const google = connection("google")');
+  // A CRLF checkout of an unchanged copy still matches.
+  writeFileSync(file, readFileSync(file, "utf8").replace(" // mine", "").replace(/\n/g, "\r\n"));
+  expect(await diff({ ...p.o, id: "google" })).toBe(false);
   writeFileSync(join(p.dir, "src/oc/google/connection.ts"), "export default 1;\n");
   await expect(diff({ ...p.o, id: "google" })).rejects.toThrow("wasn't copied by `connectd add`");
 });
@@ -91,6 +117,8 @@ test("cli: add and diff", async () => {
   expect(await run("add", "github", "--id", "gh")).toBe(0);
   expect(await run("diff", "gh")).toBe(0);
   expect(lines.at(-1)).toBe("gh matches github@0.0.0");
+  writeFileSync(join(p.dir, "src/oc/gh/connection.ts"), `${readFileSync(join(p.dir, "src/oc/gh/connection.ts"), "utf8")}// mine\n`);
+  expect(await run("diff", "gh")).toBe(1);
   expect(await run("diff")).toBe(2);
   expect(await run("add", "a", "b")).toBe(2);
   expect(await run("add", "github", "--id", "gh")).toBe(1);

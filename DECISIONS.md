@@ -622,6 +622,12 @@ Replaces #17's `defineConnection` object. Builds on #53: capabilities declare ke
 - `connectd add <provider> [--id <folder>] [--force]`: writes `<dir>/<id>/connection.ts` with the first line `// connectd: <provider>@<version>. ...`, writes an empty `events.ts` (`listen("<id>")`) if there's none, and appends the env names to `.env` once. Optional names are added commented out. An existing `connection.ts` is refused unless `--force` (diff first). With no name, `add` lists the catalog. `<dir>` is the config's `dir`, else `src/oc`.
 - `connectd diff <id>`: the folder's file (minus its first line) against the catalog's current one, as a unified diff, or "matches". The first line names the provider, so a renamed folder still diffs. ponytail: it compares yours with the latest, not the version you copied with the latest (no three-way view); an LCS line diff, fine for files of hundreds of lines.
 - Source: `--registry <url|folder>`, else `CONNECTD_REGISTRY`, else `https://raw.githubusercontent.com/Kavishkagaya/connectd/<v{version} | main while 0.0.0>/registry`.
+- After review:
+  - A catalog entry is shape-checked before anything is written: a string `connection.ts`, and env names that are names (they become `.env` lines). JSON errors name the URL.
+  - Optional names go in as `# optional:` and `# NAME=` on separate lines, so uncommenting one reads as just its value. A required name that is only commented out is added again.
+  - `diff` normalizes CRLF and exits 1 when the files differ.
+  - `add` prints where the code came from.
+  - ponytail: the catalog is fetched over HTTPS from the repo at a tag (`main` while unreleased), with no hash pinning. The code becomes the app's own and runs with its OAuth secrets, so it should be read like any copied code. Pin by commit SHA, or put a sha256 in `index.json`, once there are releases.
 - Tests: add (header, events.ts, `.env` lines once, refused twice, `--id`, optional names; the copied provider discovered, bundled and its env read), diff (matches, a hunk, a file `add` didn't write), the catalog over a fake HTTP fetch at a URL, the CLI commands, and `unified`.
 
 **Agreed, not built yet** (the same discussion; each lands in its own PR and updates this entry):

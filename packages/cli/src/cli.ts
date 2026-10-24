@@ -130,7 +130,8 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
       try {
         if (a.command === "diff") {
           if (!name) return log("connectd diff <id>: the connection folder to compare"), 2;
-          await diff({ ...base, id: name });
+          // 1 when they differ, like diff(1).
+          return (await diff({ ...base, id: name })) ? 1 : 0;
         } else if (!name) await list(base);
         else await add({ ...base, provider: name, ...(str("id") ? { id: str("id") } : {}), force: !!a.flags.force });
         return 0;

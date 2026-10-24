@@ -42,11 +42,28 @@ async function read<T>(o: AddOptions, name: string): Promise<T> {
     const res = await (o.fetch ?? fetch)(url);
     if (res.status === 404) throw new Error(`${name.replace(/\.json$/, "")} isn't in the catalog (${url}); \`connectd add\` lists it`);
     if (!res.ok) throw new Error(`fetching ${url}: HTTP ${res.status}`);
-    return (await res.json()) as T;
+    return json<T>(await res.text(), url);
   }
   const file = resolve(o.dir, base, name);
   if (!existsSync(file)) throw new Error(`${name.replace(/\.json$/, "")} isn't in the catalog (${file}); \`connectd add\` lists it`);
-  return JSON.parse(readFileSync(file, "utf8")) as T;
+  return json<T>(readFileSync(file, "utf8"), file);
+}
+
+function json<T>(text: string, from: string): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${from} isn't JSON`);
+  }
+}
+
+const NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+/** An entry as the catalog must shape it: a connection.ts, env names that are names (they go into .env as lines). */
+function checked(e: Entry, from: string): Entry {
+  const names = (v: unknown) => Array.isArray(v) && v.every((n) => typeof n === "string" && NAME.test(n));
+  if (!e || typeof e.files?.["connection.ts"] !== "string" || !names(e.env) || !names(e.optionalEnv) || typeof e.version !== "string")
+    throw new Error(`${from}: not a catalog entry (files["connection.ts"], env, optionalEnv, version)`);
+  return e;
 }
 
 /** The connection folders' parent: the config's `dir`, else `src/oc` (created). */
@@ -72,7 +89,7 @@ export async function add(o: AddOptions & { provider: string; id?: string; force
   if (!ID.test(o.provider)) throw new Error(`no provider ${o.provider}: \`connectd add\` lists them`);
   const id = o.id ?? o.provider;
   if (!ID.test(id)) throw new Error("--id: letters, digits, _ and - only (it's the connection's id)");
-  const e = await read<Entry>(o, `${o.provider}.json`);
+  const e = checked(await read<Entry>(o, `${o.provider}.json`), `${o.provider}.json`);
   const folder = join(await foldersDir(o), id);
   const file = join(folder, "connection.ts");
   if (existsSync(file) && !o.force) throw new Error(`${shown(o, file)} exists: \`connectd diff ${id}\` shows what changed upstream, --force overwrites it`);
@@ -91,18 +108,20 @@ export async function add(o: AddOptions & { provider: string; id?: string; force
   const envFile = join(o.dir, ".env");
   const before = existsSync(envFile) ? readFileSync(envFile, "utf8") : "";
   const have = parseEnv(before);
-  // Set, or listed already (an optional one stays commented out until it's wanted).
-  const names = [...e.env, ...e.optionalEnv].filter((n) => !Object.hasOwn(have, n) && !before.split("\n").some((l) => l.replace(/^#\s*/, "").startsWith(`${n}=`)));
+  // Required: unless set. Optional: unless set or listed commented out (it stays so until it's wanted).
+  const listed = (n: string) => before.split(/\r?\n/).some((l) => l.replace(/^\s*#\s*/, "").replace(/\s+=/, "=").startsWith(`${n}=`));
+  const names = [...e.env.filter((n) => !Object.hasOwn(have, n)), ...e.optionalEnv.filter((n) => !Object.hasOwn(have, n) && !listed(n))];
   if (names.length) {
-    const lines = [`# ${id} (connectd add ${o.provider})`, ...e.env.filter((n) => names.includes(n)).map((n) => `${n}=`), ...e.optionalEnv.filter((n) => names.includes(n)).map((n) => `# ${n}=   (optional)`)];
+    const lines = [`# ${id} (connectd add ${o.provider})`, ...e.env.filter((n) => names.includes(n)).map((n) => `${n}=`), ...e.optionalEnv.filter((n) => names.includes(n)).flatMap((n) => ["# optional:", `# ${n}=`])];
     appendFileSync(envFile, `${before && !before.endsWith("\n") ? "\n" : ""}${before ? "\n" : ""}${lines.join("\n")}\n`);
     wrote.push(".env");
   }
   log(
     [
       `added ${o.provider}@${e.version} as ${id}: ${wrote.join(", ")}`,
+      `  from ${registryOf(o)}: it's code your app runs; read it before you deploy`,
       e.env.length ? `  set ${e.env.join(", ")} in .env` : "",
-      "  it imports only @connectd/connections (bun add @connectd/connections if it's missing)",
+      "  connection.ts imports @connectd/connections, events.ts @connectd/sdk (bun add them if they're missing)",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -118,10 +137,11 @@ export async function diff(o: AddOptions & { id: string }): Promise<boolean> {
   if (!ID.test(o.id)) throw new Error(`no connection folder ${o.id}`);
   const file = join(await foldersDir(o), o.id, "connection.ts");
   if (!existsSync(file)) throw new Error(`no ${shown(o, file)}`);
-  const [first = "", ...body] = readFileSync(file, "utf8").split("\n");
+  // CRLF (a Windows checkout) would differ on every line.
+  const [first = "", ...body] = readFileSync(file, "utf8").replace(/\r\n/g, "\n").split("\n");
   const m = HEADER.exec(first);
   if (!m) throw new Error(`${shown(o, file)} wasn't copied by \`connectd add\` (no "// connectd: <provider>@<version>" first line)`);
-  const e = await read<Entry>(o, `${m[1]}.json`);
+  const e = checked(await read<Entry>(o, `${m[1]}.json`), `${m[1]}.json`);
   const ours = body.join("\n");
   const theirs = e.files["connection.ts"] ?? "";
   if (ours === theirs) {
