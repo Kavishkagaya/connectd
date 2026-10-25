@@ -1,7 +1,8 @@
 import { parse } from "./args.ts";
 import { dev, PORT } from "./dev.ts";
 import { join } from "node:path";
-import { add, diff, list } from "./add.ts";
+import { add, custom, diff, list } from "./add.ts";
+import { TEMPLATES } from "./templates.ts";
 import { init } from "./init.ts";
 import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
@@ -16,7 +17,7 @@ Commands
   dev       run the runtime locally: in memory, real clock, state kept in .connectd/, reloads on save
   deploy    deploy to your Cloudflare account (through wrangler)
   types     write .connectd/registry.d.ts (the typed client's registry; dev and deploy write it too)
-  add       copy a provider into the project: connectd add github (no name: the catalog)
+  add       copy a provider into the project: connectd add github (no name: the catalog; --custom: your own)
   diff      what changed upstream in a copied provider: connectd diff github
   keys      print a new CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET (for CI secrets and your app's host)
   help      this text
@@ -38,6 +39,11 @@ connectd add <provider>
   --force          overwrite an existing connection.ts (diff first)
   --registry <src> the catalog: a base URL or a folder (default CONNECTD_REGISTRY, else the connectd repo at this version)
   Writes <dir>/<id>/connection.ts and an empty events.ts, and adds its env names to .env.
+
+connectd add --custom <id>
+  --template <flow> ${TEMPLATES.join(", ")} (default oauth2)
+  --force          overwrite an existing connection.ts
+  A provider the catalog doesn't have: the same files, from a template to fill in.
 
 connectd deploy
   --env <name>     the environment (default production): reads .env.<name>, deploys its own Worker and
@@ -71,6 +77,8 @@ const SPEC = {
   id: "string",
   force: "boolean",
   registry: "string",
+  custom: "string",
+  template: "string",
   "app-url": "string",
 } as const;
 
@@ -156,7 +164,11 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           if (!name) return log("connectd diff <id>: the connection folder to compare"), 2;
           // 1 when they differ, like diff(1).
           return (await diff({ ...base, id: name })) ? 1 : 0;
-        } else if (!name) await list(base);
+        } else if (str("custom") !== undefined) {
+          if (name) return log("connectd add --custom <id> takes no provider"), 2;
+          await custom({ ...base, id: str("custom")!, ...(str("template") ? { template: str("template") } : {}), force: !!a.flags.force });
+        } else if (str("template")) return log("--template goes with --custom <id>"), 2;
+        else if (!name) await list(base);
         else await add({ ...base, provider: name, ...(str("id") ? { id: str("id") } : {}), force: !!a.flags.force });
         return 0;
       } catch (e) {

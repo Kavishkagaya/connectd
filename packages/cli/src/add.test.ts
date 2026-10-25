@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { add, diff, list, registryOf, unified } from "./add.ts";
+import { add, custom, diff, list, registryOf, unified } from "./add.ts";
+import { TEMPLATES } from "./templates.ts";
 import { main } from "./cli.ts";
 import { loadProject } from "./load.ts";
 import { resolve } from "./project.ts";
@@ -122,6 +123,46 @@ test("cli: add and diff", async () => {
   expect(await run("diff")).toBe(2);
   expect(await run("add", "a", "b")).toBe(2);
   expect(await run("add", "github", "--id", "gh")).toBe(1);
+});
+
+test("add --custom: every template is a connection folder the project runs; its env names in .env; no upstream to diff", async () => {
+  const p = project();
+  for (const t of TEMPLATES) await custom({ ...p.o, id: `my-${t}`, template: t });
+  const src = readFileSync(join(p.dir, "src/oc/my-oauth2/connection.ts"), "utf8");
+  expect(src.split("\n")[0]).toBe("// connectd: custom (oauth2 template). Written by `connectd add --custom`; yours to edit.");
+  expect(src).toContain('env("MY_OAUTH2_CLIENT_ID")');
+  expect(readFileSync(join(p.dir, "src/oc/my-oauth2/events.ts"), "utf8")).toContain('export default listen("my-oauth2");');
+  const env = readFileSync(join(p.dir, ".env"), "utf8");
+  expect(env).toContain("# my-oauth2 (connectd add --custom my-oauth2)\nMY_OAUTH2_CLIENT_ID=\nMY_OAUTH2_CLIENT_SECRET=\n");
+  expect(env).toContain("MY_JWT_BEARER_PRIVATE_KEY=");
+  expect(env).not.toContain("MY_API_KEY");
+
+  const r = await loadProject(p.dir, join(p.dir, "oc.config.ts"), join(p.dir, ".connectd", "build"), 1, {});
+  expect(r.found.map((f) => f.id).sort()).toEqual(TEMPLATES.map((t) => `my-${t}`).sort());
+  const res = resolve(r.config, {});
+  expect(res.missing["my-device"]).toEqual(["MY_DEVICE_CLIENT_ID", "MY_DEVICE_CLIENT_SECRET"]);
+  expect(res.missing["my-api-key"]).toBeUndefined();
+
+  await expect(custom({ ...p.o, id: "my-oauth2" })).rejects.toThrow("src/oc/my-oauth2/connection.ts exists: --force overwrites it");
+  await custom({ ...p.o, id: "my-oauth2", template: "api-key", force: true });
+  expect(readFileSync(join(p.dir, "src/oc/my-oauth2/connection.ts"), "utf8")).toContain("f.apiKey(");
+  await expect(diff({ ...p.o, id: "my-oauth2" })).rejects.toThrow("is a custom connection");
+  await expect(custom({ ...p.o, id: "x", template: "saml" })).rejects.toThrow("no template saml: oauth2, oidc, api-key");
+  await expect(custom({ ...p.o, id: "a/b" })).rejects.toThrow("--custom: letters, digits");
+});
+
+test("cli: add --custom", async () => {
+  const p = project();
+  const lines: string[] = [];
+  const run = (...argv: string[]) => main(argv, { dir: p.dir, log: (l) => void lines.push(l) });
+  expect(await run("add", "--custom", "crm", "--template", "client-credentials")).toBe(0);
+  expect(lines.at(-1)).toContain("added crm from the client-credentials template");
+  expect(readFileSync(join(p.dir, "src/oc/crm/connection.ts"), "utf8")).toContain("f.clientCredentials(");
+  expect(await run("add", "--custom", "crm2")).toBe(0);
+  expect(readFileSync(join(p.dir, "src/oc/crm2/connection.ts"), "utf8")).toContain(".oauth2({");
+  expect(await run("add", "github", "--custom", "crm3")).toBe(2);
+  expect(await run("add", "github", "--template", "oidc")).toBe(2);
+  expect(await run("add", "--custom", "crm", "--template", "nope")).toBe(1);
 });
 
 test("unified: hunks, context, merged nearby changes", () => {

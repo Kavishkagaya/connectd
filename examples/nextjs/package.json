@@ -13,7 +13,6 @@
     "@connectd/cloudflare": "workspace:*",
     "@connectd/connections": "workspace:*",
     "@connectd/kernel": "workspace:*",
-    "@connectd/providers": "workspace:*",
     "@connectd/runtime": "workspace:*",
     "@connectd/sdk": "workspace:*",
     "next": "16.0.10",
