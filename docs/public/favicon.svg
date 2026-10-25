@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 40" fill="none">
+  <rect width="40" height="40" rx="10" fill="#16171A"/>
+  <!-- a "c" whose open end meets a live node -->
+  <path d="M25.9 14.2A9 9 0 1 0 25.9 25.8" stroke="#F4F5F3" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="29.6" cy="20" r="3.3" fill="#FFD23F"/>
+</svg>

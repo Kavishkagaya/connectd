@@ -1,0 +1,750 @@
+/*
+ * connectd docs theme: Signal.
+ *
+ * Graphite and cool paper, with one highlighter yellow: the light that says a connection is live.
+ * Yellow is a fill (highlights, the active page, the wordmark's "d", primary buttons), never text on
+ * a light background. Full palette and rationale: contributing/brand.
+ *
+ *   signal     #FFD23F   soft #FFF4C7 (light) · rgb(255 210 63 / 0.12) (dark)   edge #D9A900
+ *   graphite   #16171A   ink 2 #3B3E44   muted #5A5D63   line #E0E1DD   paper #F4F5F3   white
+ *   night      #111214   surface #18191C   raised #1F2023   line #2A2C30   text #ECEDEA   muted #9DA0A6
+ *   status     success #2F9E5B · caution #E8590C · danger #D6334A
+ *
+ * Type: Schibsted Grotesk (headings), IBM Plex Sans (text), IBM Plex Mono (code, the wordmark).
+ * Starlight's naming: --sl-color-white is the strongest text and --sl-color-black the page background.
+ */
+
+/* ======================================================================
+   Tokens: dark (Starlight's default)
+   ====================================================================== */
+:root {
+  --oc-display: "Schibsted Grotesk Variable", "IBM Plex Sans Variable", system-ui, sans-serif;
+  --sl-font: "IBM Plex Sans Variable", system-ui, sans-serif;
+  --sl-font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --oc-signal: #ffd23f;
+  --oc-signal-soft: rgb(255 210 63 / 0.12);
+  --oc-signal-edge: #ffd23f;
+  --oc-link: #ffd23f;
+
+  --oc-bg: #111214;
+  --oc-surface: #18191c;
+  --oc-raised: #1f2023;
+  --oc-border: #2a2c30;
+  --oc-border-strong: #3a3d42;
+  --oc-text: #ecedea;
+  --oc-text-2: #c9cbc7;
+  --oc-muted: #9da0a6;
+
+  --sl-color-accent-low: #3a3110;
+  --sl-color-accent: #ffd23f;
+  --sl-color-accent-high: #ffe58a;
+
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: var(--oc-text);
+  --sl-color-gray-2: var(--oc-text-2);
+  --sl-color-gray-3: var(--oc-muted);
+  --sl-color-gray-4: #6e7178;
+  --sl-color-gray-5: var(--oc-border);
+  --sl-color-gray-6: var(--oc-raised);
+  --sl-color-black: var(--oc-bg);
+
+  --sl-color-text: var(--oc-text-2);
+  --sl-color-text-accent: var(--oc-link);
+  --sl-color-bg: var(--oc-bg);
+  --sl-color-bg-nav: var(--oc-bg);
+  --sl-color-bg-sidebar: var(--oc-bg);
+  --sl-color-bg-inline-code: var(--oc-raised);
+  --sl-color-hairline: var(--oc-border);
+  --sl-color-hairline-light: var(--oc-border);
+  --sl-color-hairline-shade: var(--oc-border);
+
+  /* Callouts: note is the brand's own; the rest are status colours. */
+  --oc-note: #ffd23f;    --oc-note-bg: rgb(255 210 63 / 0.08); --oc-note-text: #ffe58a;
+  --oc-tip: #4fcb86;     --oc-tip-bg: rgb(79 203 134 / 0.09);  --oc-tip-text: #b6f0ce;
+  --oc-caution: #ff8a4c; --oc-caution-bg: rgb(255 138 76 / 0.09); --oc-caution-text: #ffd2b8;
+  --oc-danger: #ff6b80;  --oc-danger-bg: rgb(255 107 128 / 0.09); --oc-danger-text: #ffc9d1;
+
+  /* Diagrams: a notebook sketch, graphite lines on a quiet card. */
+  --oc-d-canvas: var(--oc-surface);
+  --oc-d-node: var(--oc-raised);
+  --oc-d-node-border: #6b6e74;
+  --oc-d-text: var(--oc-text);
+  --oc-d-edge: #7e8187;
+  --oc-d-label: var(--oc-surface);
+  --oc-d-label-text: var(--oc-text-2);
+  --oc-d-group: rgb(255 255 255 / 0.025);
+  --oc-d-group-border: var(--oc-border-strong);
+  --oc-d-note: rgb(255 210 63 / 0.12);
+  --oc-d-note-border: #b8961f;
+
+  --oc-focus: #ffd23f;
+  --oc-radius: 0.6rem;
+
+  /* Layout: 272px navigation, 240px table of contents, 720px of text. */
+  --sl-sidebar-width: 17rem;
+  --sl-content-width: 45rem;
+
+  /* Type scale: h1 32 → 40px, h2 24, h3 18, body 16 at 1.7. */
+  --sl-line-height: 1.7;
+  --sl-text-body: 1rem;
+  --sl-text-code: 0.875rem;
+  --sl-text-h1: 2rem;
+  --sl-text-h2: 1.5rem;
+  --sl-text-h3: 1.125rem;
+  --sl-text-h4: 1rem;
+  --sl-text-h5: 1rem;
+}
+
+@media (min-width: 50em) {
+  :root {
+    --sl-text-h1: 2.5rem;
+    --sl-text-h2: 1.5rem;
+    --sl-text-h3: 1.125rem;
+    --sl-text-h4: 1rem;
+  }
+}
+
+/* ======================================================================
+   Tokens: light
+   ====================================================================== */
+:root[data-theme="light"] {
+  --oc-signal: #ffd23f;
+  --oc-signal-soft: #fff4c7;
+  --oc-signal-edge: #d9a900;
+  --oc-link: #16171a;
+
+  --oc-bg: #f4f5f3;
+  --oc-surface: #ffffff;
+  --oc-raised: #ecede9;
+  --oc-border: #e0e1dd;
+  --oc-border-strong: #c8cac4;
+  --oc-text: #16171a;
+  --oc-text-2: #3b3e44;
+  --oc-muted: #5a5d63;
+
+  --sl-color-accent-low: #fff4c7;
+  --sl-color-accent: #16171a;
+  --sl-color-accent-high: #16171a;
+
+  --sl-color-white: #16171a;
+  --sl-color-gray-1: #16171a;
+  --sl-color-gray-2: #3b3e44;
+  --sl-color-gray-3: #5a5d63;
+  --sl-color-gray-4: #8a8d93;
+  --sl-color-gray-5: #c8cac4;
+  --sl-color-gray-6: #e0e1dd;
+  --sl-color-gray-7: #ecede9;
+  --sl-color-black: #f4f5f3;
+
+  --sl-color-text: #3b3e44;
+  --sl-color-text-accent: #16171a;
+  --sl-color-bg-nav: #f4f5f3;
+  --sl-color-bg-sidebar: #f4f5f3;
+  --sl-color-bg-inline-code: #ffffff;
+
+  --oc-note: #d9a900;    --oc-note-bg: #fff8dc;    --oc-note-text: #16171a;
+  --oc-tip: #2f9e5b;     --oc-tip-bg: #edf7f0;     --oc-tip-text: #1d6b3c;
+  --oc-caution: #e8590c; --oc-caution-bg: #fff1e8; --oc-caution-text: #9a3a06;
+  --oc-danger: #d6334a;  --oc-danger-bg: #fdeef0;  --oc-danger-text: #9b1b30;
+
+  --oc-d-canvas: #ffffff;
+  --oc-d-node: #ffffff;
+  --oc-d-node-border: #3b3e44;
+  --oc-d-text: #16171a;
+  --oc-d-edge: #8a8d93;
+  --oc-d-label: #ffffff;
+  --oc-d-label-text: #3b3e44;
+  --oc-d-group: #f6f7f4;
+  --oc-d-group-border: #d5d7d1;
+  --oc-d-note: #fff4c7;
+  --oc-d-note-border: #d9a900;
+
+  --oc-focus: #16171a;
+}
+
+/* ======================================================================
+   Base
+   ====================================================================== */
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::selection {
+  background: color-mix(in srgb, #ffd23f 55%, transparent);
+  color: #16171a;
+}
+
+:focus-visible {
+  outline: 2px solid var(--oc-focus) !important;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* ======================================================================
+   Header
+   ====================================================================== */
+header.header {
+  border-bottom: 1px solid var(--oc-border);
+}
+
+site-search button[data-open-modal] {
+  background: var(--oc-surface);
+  border: 1px solid var(--oc-border);
+  border-radius: 0.5rem;
+  color: var(--oc-muted);
+}
+site-search button[data-open-modal]:hover {
+  border-color: var(--oc-border-strong);
+  color: var(--oc-text-2);
+}
+site-search kbd {
+  font-family: var(--sl-font-mono);
+  background: var(--oc-bg);
+  border: 1px solid var(--oc-border);
+  border-radius: 0.3rem;
+}
+
+/* ======================================================================
+   Sidebar
+   ====================================================================== */
+#starlight__sidebar {
+  border-inline-end: 1px solid var(--oc-border);
+}
+
+nav.sidebar .group-label .large,
+nav.sidebar details > summary .large {
+  font: 600 0.7rem/1.2 var(--sl-font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--oc-muted);
+}
+
+nav.sidebar ul ul {
+  border-inline-start: 1px solid var(--oc-border);
+}
+
+nav.sidebar a {
+  font-size: 0.9rem;
+  color: var(--oc-text-2);
+  border-radius: 0.4rem;
+  padding-block: 0.3rem;
+}
+nav.sidebar a:hover {
+  color: var(--oc-text);
+  background: var(--oc-raised);
+}
+/* The current page is highlighted, like a marked line in a notebook. */
+nav.sidebar a[aria-current="page"],
+nav.sidebar a[aria-current="page"]:hover,
+nav.sidebar a[aria-current="page"]:focus {
+  background: var(--oc-signal);
+  color: #16171a;
+  font-weight: 600;
+}
+
+/* ======================================================================
+   Table of contents (right)
+   ====================================================================== */
+.right-sidebar-panel h2 {
+  font: 600 0.7rem/1.2 var(--sl-font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--oc-muted);
+}
+.right-sidebar-panel a {
+  color: var(--oc-muted);
+}
+.right-sidebar-panel a[aria-current="true"] {
+  color: var(--oc-text);
+  font-weight: 600;
+  box-shadow: inset 2px 0 0 var(--oc-signal-edge);
+}
+
+/* ======================================================================
+   Content
+   ====================================================================== */
+.content-panel + .content-panel {
+  border-top-color: var(--oc-border);
+}
+
+h1#_top,
+.sl-markdown-content :is(h1, h2, h3, h4),
+.card .title,
+.sl-link-card .title {
+  font-family: var(--oc-display);
+}
+
+h1#_top {
+  font-size: var(--sl-text-h1);
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  color: var(--oc-text);
+}
+.sl-markdown-content h2 {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--oc-text);
+}
+.sl-markdown-content h3 {
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--oc-text);
+}
+.sl-markdown-content :not(h1, h2, h3, h4, h5, h6, .sl-heading-wrapper) + :is(.sl-heading-wrapper.level-h2) {
+  margin-top: 2.5em;
+}
+
+/* Links: graphite text with a highlighter underline (yellow text in dark mode). */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--oc-link);
+  text-decoration: underline;
+  text-decoration-color: var(--oc-signal-edge);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 0.18em;
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  background: var(--oc-signal-soft);
+  border-radius: 2px;
+}
+
+.sl-markdown-content strong {
+  color: var(--oc-text);
+  font-weight: 600;
+}
+
+/* Inline code: 85% of the body size, on a quiet card with a hairline. */
+.sl-markdown-content :not(pre) > code {
+  font-size: 0.85em;
+  padding: 0.12em 0.38em;
+  border-radius: 0.3rem;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface);
+  color: var(--oc-text);
+  overflow-wrap: break-word;
+}
+
+/* No ligatures in code. */
+code,
+pre,
+kbd,
+.expressive-code {
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+/* Heading anchors appear on hover or keyboard focus. */
+@media (hover: hover) {
+  .sl-markdown-content .sl-anchor-link {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+  .sl-markdown-content .sl-heading-wrapper:hover .sl-anchor-link,
+  .sl-markdown-content .sl-anchor-link:focus-visible {
+    opacity: 1;
+  }
+}
+
+/* Tables: a bordered card with a tinted header row. */
+.sl-markdown-content table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--oc-radius);
+  overflow: hidden;
+  font-size: 0.925rem;
+  background: var(--oc-surface);
+}
+.sl-markdown-content :is(th, td) {
+  border-bottom: 1px solid var(--oc-border);
+  padding: 0.6rem 0.9rem;
+  vertical-align: top;
+}
+.sl-markdown-content th {
+  background: var(--oc-raised);
+  color: var(--oc-text);
+  font: 600 0.75rem/1.3 var(--sl-font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.sl-markdown-content tr:last-child td {
+  border-bottom: 0;
+}
+@media (max-width: 50em) {
+  .sl-markdown-content table {
+    display: block;
+    overflow-x: auto;
+  }
+}
+
+/* ======================================================================
+   Code blocks (Expressive Code; colours in astro.config.mjs)
+   ====================================================================== */
+.expressive-code .ec-lang::before {
+  content: "·";
+  margin-inline: 0.5em;
+}
+.expressive-code .ec-lang {
+  opacity: 0.6;
+}
+.expressive-code .frame.is-terminal .header {
+  justify-content: flex-start;
+  padding-inline-start: 4.25rem;
+}
+
+/* ======================================================================
+   Callouts: 4px left border on a desaturated tint
+   ====================================================================== */
+.starlight-aside {
+  border-inline-start-width: 4px;
+  border-radius: 0 var(--oc-radius) var(--oc-radius) 0;
+  padding: 0.9rem 1.1rem;
+}
+.starlight-aside__title {
+  font-family: var(--oc-display);
+  font-size: 0.95rem;
+}
+.starlight-aside--note    { --sl-color-asides-border: var(--oc-note);    --sl-color-asides-text-accent: var(--oc-note-text);    background-color: var(--oc-note-bg); }
+.starlight-aside--tip     { --sl-color-asides-border: var(--oc-tip);     --sl-color-asides-text-accent: var(--oc-tip-text);     background-color: var(--oc-tip-bg); }
+.starlight-aside--caution { --sl-color-asides-border: var(--oc-caution); --sl-color-asides-text-accent: var(--oc-caution-text); background-color: var(--oc-caution-bg); }
+.starlight-aside--danger  { --sl-color-asides-border: var(--oc-danger);  --sl-color-asides-text-accent: var(--oc-danger-text);  background-color: var(--oc-danger-bg); }
+
+/* ======================================================================
+   Cards, link cards, pagination, buttons
+   ====================================================================== */
+.card {
+  border: 1px solid var(--oc-border) !important;
+  border-radius: var(--oc-radius);
+  background: var(--oc-surface) !important;
+}
+.card .title {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--oc-text);
+}
+.card .icon {
+  border-radius: 0.4rem;
+  border: 0 !important;
+  background: var(--oc-signal) !important;
+  color: #16171a !important;
+  padding: 0.3rem;
+}
+.card .body {
+  color: var(--oc-text-2);
+}
+
+.sl-link-card {
+  border: 1px solid var(--oc-border) !important;
+  border-radius: var(--oc-radius) !important;
+  background: var(--oc-surface);
+  box-shadow: none !important;
+}
+.sl-link-card:hover {
+  border-color: var(--oc-text) !important;
+}
+.sl-link-card .icon {
+  color: var(--oc-text) !important;
+}
+
+.pagination-links a {
+  border: 1px solid var(--oc-border);
+  border-radius: var(--oc-radius);
+  box-shadow: none;
+  background: var(--oc-surface);
+}
+.pagination-links a:hover {
+  border-color: var(--oc-text);
+}
+.pagination-links .link-title {
+  font-family: var(--oc-display);
+  color: var(--oc-text);
+  font-weight: 700;
+}
+
+.sl-link-button.primary {
+  background: var(--oc-signal) !important;
+  border-color: var(--oc-signal) !important;
+  color: #16171a !important;
+  border-radius: 0.5rem;
+  font-weight: 600;
+}
+.sl-link-button.primary:hover {
+  background: #ffdd66 !important;
+}
+.sl-link-button.minimal,
+.sl-link-button.secondary {
+  border-radius: 0.5rem;
+  font-weight: 600;
+  color: var(--oc-text) !important;
+}
+
+/* ======================================================================
+   Diagrams (Mermaid, `base` theme; every colour comes from the tokens above)
+   ====================================================================== */
+.sl-markdown-content pre.mermaid {
+  display: flex;
+  justify-content: center;
+  overflow-x: auto;
+  margin-block: 1.75rem;
+  padding: 1.5rem 1rem;
+  background: var(--oc-d-canvas);
+  border: 1px solid var(--oc-border);
+  border-radius: var(--oc-radius);
+}
+.sl-markdown-content pre.mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
+pre.mermaid svg * {
+  filter: none !important;
+}
+
+pre.mermaid svg :is(.node, .actor-man) :is(rect, circle, ellipse, polygon, path):not(.state-start):not(.state-end) {
+  fill: var(--oc-d-node) !important;
+  stroke: var(--oc-d-node-border) !important;
+  stroke-width: 1.25px !important;
+}
+pre.mermaid svg :is(.nodeLabel, .node .label, .node text, .nodeLabel *, .node foreignObject div) {
+  color: var(--oc-d-text) !important;
+  fill: var(--oc-d-text) !important;
+}
+pre.mermaid svg .nodeLabel b {
+  font-weight: 650;
+}
+
+pre.mermaid svg .cluster :is(rect, polygon) {
+  fill: var(--oc-d-group) !important;
+  stroke: var(--oc-d-group-border) !important;
+  stroke-dasharray: 4 3;
+  rx: 8px;
+}
+pre.mermaid svg :is(.cluster-label, .cluster text, .cluster .nodeLabel, .cluster-label *) {
+  color: var(--oc-muted) !important;
+  fill: var(--oc-muted) !important;
+  font-weight: 600;
+}
+
+pre.mermaid svg :is(.flowchart-link, .edgePath .path, .transition, path.relation, .messageLine0, .messageLine1) {
+  stroke: var(--oc-d-edge) !important;
+  stroke-width: 1.4px !important;
+}
+pre.mermaid svg :is(marker path, marker circle, .arrowheadPath, .marker) {
+  fill: var(--oc-d-edge) !important;
+  stroke: var(--oc-d-edge) !important;
+}
+pre.mermaid svg :is(.edgeLabel, .edgeLabel p, .edgeLabel span, .labelBkg) {
+  background-color: var(--oc-d-label) !important;
+  color: var(--oc-d-label-text) !important;
+  fill: var(--oc-d-label-text) !important;
+}
+pre.mermaid svg .edgeLabel rect {
+  fill: var(--oc-d-label) !important;
+  opacity: 1 !important;
+}
+
+pre.mermaid svg rect.actor {
+  fill: var(--oc-d-node) !important;
+  stroke: var(--oc-d-node-border) !important;
+  rx: 6px;
+}
+pre.mermaid svg :is(text.actor, text.actor tspan) {
+  fill: var(--oc-d-text) !important;
+  font-weight: 600 !important;
+}
+pre.mermaid svg .actor-line {
+  stroke: var(--oc-border-strong) !important;
+  stroke-dasharray: 3 4;
+}
+pre.mermaid svg :is(.messageText, .labelText, .loopText) {
+  fill: var(--oc-d-label-text) !important;
+  stroke: none !important;
+}
+pre.mermaid svg .sequenceNumber {
+  fill: var(--oc-d-canvas) !important;
+}
+pre.mermaid svg :is(.note, rect.note) {
+  fill: var(--oc-d-note) !important;
+  stroke: var(--oc-d-note-border) !important;
+}
+pre.mermaid svg :is(.noteText, .noteText tspan) {
+  fill: var(--oc-d-text) !important;
+}
+
+pre.mermaid svg :is(.state-start, circle.state-start) {
+  fill: var(--oc-d-text) !important;
+  stroke: var(--oc-d-text) !important;
+}
+pre.mermaid svg .state-end {
+  fill: var(--oc-d-text) !important;
+  stroke: var(--oc-d-canvas) !important;
+}
+
+/* ======================================================================
+   Landing page
+   ====================================================================== */
+[data-has-hero] .main-pane {
+  isolation: isolate;
+}
+[data-has-hero] .main-pane::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 34rem;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(36rem 20rem at 16% -8%, color-mix(in srgb, #ffd23f 16%, transparent), transparent 70%);
+}
+
+.hero {
+  padding-block: 3rem 2.5rem;
+  gap: 2.5rem;
+}
+.hero h1#_top {
+  font-size: clamp(2.5rem, 5vw, 3.6rem);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+}
+/* "handled." gets the highlighter. */
+.hero h1#_top mark {
+  background: linear-gradient(transparent 56%, #ffd23f 56%, #ffd23f 92%, transparent 92%);
+  color: inherit;
+  padding-inline: 0.04em;
+}
+:root:not([data-theme="light"]) .hero h1#_top mark {
+  background: none;
+  color: #ffd23f;
+}
+.hero .tagline {
+  font-size: 1.15rem;
+  line-height: 1.6;
+  color: var(--oc-text-2);
+  max-width: 34rem;
+}
+
+@media (max-width: 50em) {
+  .hero .hero-html {
+    order: 2;
+  }
+}
+
+/* The hero's code window: graphite in both themes, like every code block. */
+.oc-hero-code {
+  width: min(100%, 35rem);
+  border-radius: 0.75rem;
+  border: 1px solid #2a2c30;
+  background: #16171a;
+  box-shadow: 0 30px 60px -32px rgb(17 18 20 / 0.55);
+  overflow: hidden;
+  text-align: start;
+}
+.oc-hero-code__bar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.65rem 0.9rem;
+  background: #111214;
+  border-bottom: 1px solid #2a2c30;
+}
+.oc-hero-code__bar i {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  background: #3a3d42;
+}
+.oc-hero-code__bar i:last-of-type {
+  background: #ffd23f;
+}
+.oc-hero-code__bar span {
+  margin-inline-start: 0.6rem;
+  font: 500 0.78rem/1 var(--sl-font-mono);
+  color: #9da0a6;
+}
+.oc-hero-code pre {
+  margin: 0;
+  padding: 1rem 1.1rem 1.15rem;
+  font: 0.76rem/1.75 var(--sl-font-mono);
+  font-variant-ligatures: none;
+  color: #c9cbc7;
+  background: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 0;
+}
+.oc-hero-code .k { color: #ffd23f; }
+.oc-hero-code .f { color: #ecedea; }
+.oc-hero-code .s { color: #a7c4a0; }
+.oc-hero-code .c { color: #6e7178; font-style: italic; }
+.oc-hero-code .p { color: #ffd23f; }
+.oc-hero-code hr {
+  border: 0;
+  border-top: 1px dashed #2a2c30;
+  margin: 0.6rem 0;
+}
+
+/* ======================================================================
+   Brand page (contributing/brand)
+   ====================================================================== */
+.oc-brand-hero {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1.5rem;
+  border: 1px solid var(--oc-border);
+  border-radius: var(--oc-radius);
+  background: var(--oc-surface);
+}
+.oc-brand-hero p {
+  margin: 0;
+}
+.oc-brand-word {
+  font: 600 2rem/1.1 var(--sl-font-mono);
+  letter-spacing: -0.03em;
+  color: var(--oc-text);
+}
+.oc-brand-word span {
+  background: #ffd23f;
+  color: #16171a;
+  padding: 0 0.1em;
+  border-radius: 0.12em;
+}
+.oc-brand-sub {
+  color: var(--oc-muted);
+  font-size: 0.95rem;
+}
+.oc-swatches {
+  display: grid;
+  gap: 0.75rem;
+}
+.oc-swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0 !important;
+}
+.oc-swatch-name {
+  width: 4.5rem;
+  font: 600 0.7rem var(--sl-font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--oc-muted);
+}
+.oc-swatch-row i {
+  display: inline-flex;
+  align-items: flex-end;
+  width: 3.6rem;
+  height: 3rem;
+  padding: 0.3rem;
+  border-radius: 0.45rem;
+  background: var(--c);
+  border: 1px solid rgb(0 0 0 / 0.1);
+  font: normal 600 0.66rem/1 var(--sl-font-mono);
+  color: #16171a;
+  margin: 0 !important;
+}
+.oc-swatch-row i.d {
+  color: #ffffff;
+}
