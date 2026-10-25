@@ -16,6 +16,11 @@ export type CloudflareOptions = {
   name?: string;
   /** Its public URL when it isn't the workers.dev one (a custom domain, served at its root). `--url` overrides it. */
   url?: string;
+  /**
+   * Per `--env` (staging, preview): the Worker's name (default `<name>-<env>`) and URL (default its
+   * workers.dev one). Production is the plain `name` and `url` above.
+   */
+  environments?: Record<string, { name?: string; url?: string }>;
 };
 
 export const cloudflare = (options: CloudflareOptions = {}): Target => ({ adapter: "@connectd/cloudflare/adapter", options });

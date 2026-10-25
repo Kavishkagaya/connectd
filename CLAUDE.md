@@ -88,7 +88,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bu
   src/load.ts         findConfig, importConfig (esbuild bundle to .mjs + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
-  src/deploy.ts       `connectd deploy`, what every target shares: production env (--env-file, .env.production, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
+  src/deploy.ts       `connectd deploy`, what every target shares: the environment (--env <name>, default production: .env.<name> or --env-file, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
   src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, keys from .env (init's; never made here), port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save (watcher skips build output, hidden dirs, generated types)
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) and `connectd diff <id>` (unified diff against the catalog)
@@ -96,7 +96,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bu
 
 packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, url })` in oc.config.ts; the adapter deploys through wrangler
   src/index.ts        cloudflare(): a Target, data only (Workers-safe: the config is bundled into the Worker)
-  src/adapter.ts      deploy(ctx) (`/adapter` export, Node): wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
+  src/adapter.ts      deploy(ctx) (`/adapter` export, Node): per environment its own Worker/D1 (`<name>-<env>`, cloudflare({ environments })) and state file; wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
   src/generate.ts     deploy's files in .connectd/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)

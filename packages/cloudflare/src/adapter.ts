@@ -38,16 +38,21 @@ export type CloudflareDeployed = Deployed & { generated: Generated };
 export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
   const { log, env, project, entry, secrets, rotate } = o;
   const opt = o.options as CloudflareOptions;
-  const statePath = join(workdir(o.dir), "deploy", "state.json");
+  // Each environment is its own Worker and database (`<name>-staging`), with its own state file;
+  // production keeps the plain name (and state.json, as before environments).
+  const prod = o.environment === "production";
+  const per = prod ? {} : (opt.environments?.[o.environment] ?? {});
+  const statePath = join(workdir(o.dir), "deploy", prod ? "state.json" : `state.${o.environment}.json`);
   const state: State = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, "utf8")) as State) : {};
 
-  const name = workerName(o.name ?? opt.name ?? state.name ?? basename(resolvePath(o.dir)));
-  const fixed = o.url ?? opt.url;
+  const suffix = prod ? "" : `-${o.environment}`;
+  const name = workerName(o.name ?? per.name ?? (opt.name ? opt.name + suffix : (state.name ?? basename(resolvePath(o.dir)) + suffix)));
+  const fixed = o.url ?? (prod ? opt.url : per.url);
   let url = fixed ? publicUrl(fixed) : state.name === name ? state.url : undefined;
   const db = `${name}-index`;
   log(
     [
-      `\nconnectd deploy ${name}${o.dryRun ? "  (dry run: nothing is sent to Cloudflare)" : ""}`,
+      `\nconnectd deploy ${name} (${o.environment})${o.dryRun ? "  (dry run: nothing is sent to Cloudflare)" : ""}`,
       `  public URL   ${url ?? "the workers.dev URL (read from the first deploy, then deployed again with it)"}`,
       ...o.summary,
       "  steps        wrangler secret list · d1 list (create if missing) · d1 migrations apply --remote · deploy --secrets-file (0600 temp file)",
@@ -74,8 +79,6 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
       `Worker ${name} exists, but its public URL isn't known here (.connectd/deploy/state.json from its first deploy is missing, e.g. in CI): pass --url https://${name}.<your-subdomain>.workers.dev (or its custom domain), or set cloudflare({ url }) in the config. Deploying without it would drop its CONNECTD_PUBLIC_URL.`,
     );
   const have = new Set(list === null ? [] : json<{ name: string }[]>(list).map((s) => s.name));
-  if (project.events && !secrets[ENV.events] && !have.has(ENV.events))
-    throw new Error(`events are on: set ${ENV.events}=whsec_<base64 of 32 random bytes> in .env.production (or --env-file, or the shell environment) and give the same value to your app`);
 
   const fresh = generateKeys();
   const push: Record<string, string> = { ...secrets };
@@ -86,6 +89,9 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
   // Never in CI: there the key comes from a CI secret (the CLI checked it's in `secrets`).
   const newApiKey = !o.ci && !secrets[ENV.apiKey] && (!have.has(ENV.apiKey) || rotate.includes("api-key")) ? (fresh[ENV.apiKey] as string) : undefined;
   if (newApiKey) push[ENV.apiKey] = newApiKey;
+  // The events secret, likewise: generated once per environment unless the env file sets it (CI always does).
+  const newEventsSecret = project.events && !o.ci && !secrets[ENV.events] && (!have.has(ENV.events) || rotate.includes("events")) ? (fresh[ENV.events] as string) : undefined;
+  if (newEventsSecret) push[ENV.events] = newEventsSecret;
 
   // The index database: found by name, so a deploy from another machine finds the same one.
   const find = async () => json<{ uuid: string; name: string }[]>(await w(["d1", "list", "--json"])).find((d) => d.name === db)?.uuid;
@@ -129,7 +135,8 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
     const hint = newApiKey
       ? `\nThe new API key was not shown. If the deploy went through anyway (wrangler secret list --name ${name} shows ${ENV.apiKey}), re-run with --rotate api-key to get one you can see.`
       : "";
-    throw new Error(`${(e as Error).message}${hint}`);
+    const hint2 = newEventsSecret ? `\nThe new events secret was not shown either: if the deploy went through, --rotate events makes one you can see.` : "";
+    throw new Error(`${(e as Error).message}${hint}${hint2}`);
   } finally {
     process.off("SIGINT", abort);
     process.off("SIGTERM", abort);
@@ -157,7 +164,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
       `  secrets set   ${Object.keys(push).sort().join(", ") || "none (all present)"}`,
     ].join("\n"),
   );
-  return { name, url, dryRun: false as const, generated: g, pushed: Object.keys(push), apiKey: newApiKey };
+  return { name, url, dryRun: false as const, generated: g, pushed: Object.keys(push), apiKey: newApiKey, eventsSecret: newEventsSecret };
 }
 
 /** Run wrangler; resolves to its stdout, rejects with stdout + stderr on a non-zero exit. Output is echoed except listings (it never holds a secret: those only go in through a file). */
