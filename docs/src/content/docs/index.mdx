@@ -1,0 +1,75 @@
+---
+title: OAuth connections, handled.
+description: connectd holds your users' tokens for GitHub, Slack, Google or any API, refreshes them, receives the webhooks and tells your app what happened. Open source, on your own Cloudflare account.
+template: splash
+hero:
+  title: 'OAuth connections, <mark>handled.</mark>'
+  tagline: Let your users connect GitHub, Slack, Google or any API. connectd holds the tokens, refreshes them, receives the webhooks and tells your app what happened. Your app keeps a user id.
+  image:
+    html: |
+      <div class="oc-hero-code" aria-hidden="true">
+        <div class="oc-hero-code__bar"><i></i><i></i><i></i><span>src/oc/github/connection.ts</span></div>
+        <pre><span class="k">export default</span> <span class="f">connection</span>()
+        .<span class="f">auth</span>((f) <span class="p">=&gt;</span> f.<span class="f">oauth2</span>(endpoints).<span class="f">scopes</span>(<span class="s">"repo"</span>))
+        .<span class="f">api</span>({ baseUrl: <span class="s">"https://api.github.com"</span> })
+        .<span class="f">identity</span>(({ api }) <span class="p">=&gt;</span> api.<span class="f">get</span>(<span class="s">"/user"</span>));
+      <hr><span class="c">// your app: no tokens, just a user id</span>
+      <span class="k">const</span> gh = oc.<span class="f">connection</span>(<span class="s">"github"</span>, user.id);
+      <span class="k">const</span> repos = <span class="k">await</span> gh.<span class="f">fetch</span>(<span class="s">"/user/repos"</span>);</pre>
+      </div>
+  actions:
+    - text: Get started
+      link: /start/quickstart/
+      icon: right-arrow
+    - text: How it works
+      link: /concepts/mental-model/
+      variant: minimal
+---
+
+import { Card, CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+export const at = (path) => import.meta.env.BASE_URL.replace(/\/$/, "") + path;
+
+## How it works
+
+```mermaid
+flowchart LR
+  APP["Your app"] -- "oc.connection(…)" --> CD["connectd"]
+  CD -- "signed events" --> APP
+  CD -- "OAuth · refresh" --> P[("GitHub · Slack · Google")]
+  P -- "webhooks" --> CD
+```
+
+You write one small file per provider. connectd runs each connection as its own small server, holding its token, timers and event queue. Your app names a connection and asks it to do things.
+
+## What you get
+
+<CardGrid>
+  <Card title="Tokens never touch your app" icon="seti:lock">
+    Credentials are encrypted inside connectd. Your app calls the provider through a proxy that adds the token, or runs an action next to it.
+  </Card>
+  <Card title="Refresh and re-auth, handled" icon="random">
+    Tokens refresh before they expire, failures retry with backoff, and a connection that needs a new login tells your app with an event.
+  </Card>
+  <Card title="Webhooks in, events out" icon="rocket">
+    Provider webhooks are verified and routed to the right connection. Your app gets signed, ordered, retried events, using the Standard Webhooks format.
+  </Card>
+  <Card title="One file per provider" icon="pencil">
+    A typed builder: `connection().config().auth().api().identity()`. Copy one from the catalog with `connectd add`, or write your own.
+  </Card>
+  <Card title="Runs where you run" icon="cloud-download">
+    `connectd dev` runs in memory on your laptop. `connectd deploy` puts it on your own Cloudflare account, with one Durable Object per connection.
+  </Card>
+  <Card title="Open source" icon="open-book">
+    Apache-2.0. The whole runtime is in the repo, so you can read it, fork it, or self-host it without the CLI.
+  </Card>
+</CardGrid>
+
+## Start here
+
+<CardGrid>
+  <LinkCard title="Quickstart" description="Connect GitHub in a Next.js app, running locally, in about ten minutes." href={at("/start/quickstart/")} />
+  <LinkCard title="The mental model" description="Connections, instances and the three directions of traffic." href={at("/concepts/mental-model/")} />
+  <LinkCard title="Defining connections" description="The connection() builder, step by step." href={at("/guides/defining-connections/")} />
+  <LinkCard title="Contributing" description="How the repo is laid out, and how to add a provider." href={at("/contributing/overview/")} />
+</CardGrid>
