@@ -3,6 +3,7 @@ import { join, relative, resolve } from "node:path";
 import { dirOf } from "./discover.ts";
 import { parseEnv } from "./env.ts";
 import { findConfig, importConfig } from "./load.ts";
+import { type Template, TEMPLATES, template } from "./templates.ts";
 import { workdir } from "./workdir.ts";
 
 /**
@@ -90,11 +91,46 @@ export async function add(o: AddOptions & { provider: string; id?: string; force
   const id = o.id ?? o.provider;
   if (!ID.test(id)) throw new Error("--id: letters, digits, _ and - only (it's the connection's id)");
   const e = checked(await read<Entry>(o, `${o.provider}.json`), `${o.provider}.json`);
+  const wrote = await write(o, id, `${header(e, id)}\n${e.files["connection.ts"]}`, e.env, e.optionalEnv, `connectd add ${o.provider}`, !!o.force);
+  log(
+    [
+      `added ${o.provider}@${e.version} as ${id}: ${wrote.join(", ")}`,
+      `  from ${registryOf(o)}: it's code your app runs; read it before you deploy`,
+      e.env.length ? `  set ${e.env.join(", ")} in .env` : "",
+      "  connection.ts imports @connectd/connections, events.ts @connectd/sdk (install them if they're missing)",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+/** `connectd add --custom <id> [--template <flow>]`: a provider the catalog doesn't have, from a template; written like a copied one. */
+export async function custom(o: AddOptions & { id: string; template?: string; force?: boolean }): Promise<void> {
+  const log = o.log ?? console.log;
+  if (!ID.test(o.id)) throw new Error("--custom: letters, digits, _ and - only (it's the connection's id)");
+  const t = (o.template ?? "oauth2") as Template;
+  if (!TEMPLATES.includes(t)) throw new Error(`no template ${o.template}: ${TEMPLATES.join(", ")}`);
+  const { source, env } = template(t, o.id);
+  const wrote = await write(o, o.id, `// connectd: custom (${t} template). Written by \`connectd add --custom\`; yours to edit.\n${source}`, env, [], `connectd add --custom ${o.id}`, !!o.force);
+  log(
+    [
+      `added ${o.id} from the ${t} template: ${wrote.join(", ")}`,
+      "  fill in the example.com URLs (the provider's endpoints and API), scopes and identity",
+      env.length ? `  set ${env.join(", ")} in .env` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+  );
+}
+
+/** A connection folder: its connection.ts, an empty events.ts beside it, its env names into .env. What was written, as shown. */
+async function write(o: AddOptions, id: string, source: string, required: string[], optional: string[], by: string, force: boolean): Promise<string[]> {
   const folder = join(await foldersDir(o), id);
   const file = join(folder, "connection.ts");
-  if (existsSync(file) && !o.force) throw new Error(`${shown(o, file)} exists: \`connectd diff ${id}\` shows what changed upstream, --force overwrites it`);
+  if (existsSync(file) && !force)
+    throw new Error(`${shown(o, file)} exists: ${HEADER.test(readFileSync(file, "utf8")) ? `\`connectd diff ${id}\` shows what changed upstream, ` : ""}--force overwrites it`);
   mkdirSync(folder, { recursive: true });
-  writeFileSync(file, `${header(e, id)}\n${e.files["connection.ts"]}`);
+  writeFileSync(file, source);
   const wrote = [shown(o, file)];
   const events = join(folder, "events.ts");
   if (!existsSync(events)) {
@@ -110,22 +146,13 @@ export async function add(o: AddOptions & { provider: string; id?: string; force
   const have = parseEnv(before);
   // Required: unless set. Optional: unless set or listed commented out (it stays so until it's wanted).
   const listed = (n: string) => before.split(/\r?\n/).some((l) => l.replace(/^\s*#\s*/, "").replace(/\s+=/, "=").startsWith(`${n}=`));
-  const names = [...e.env.filter((n) => !Object.hasOwn(have, n)), ...e.optionalEnv.filter((n) => !Object.hasOwn(have, n) && !listed(n))];
+  const names = [...required.filter((n) => !Object.hasOwn(have, n)), ...optional.filter((n) => !Object.hasOwn(have, n) && !listed(n))];
   if (names.length) {
-    const lines = [`# ${id} (connectd add ${o.provider})`, ...e.env.filter((n) => names.includes(n)).map((n) => `${n}=`), ...e.optionalEnv.filter((n) => names.includes(n)).flatMap((n) => ["# optional:", `# ${n}=`])];
+    const lines = [`# ${id} (${by})`, ...required.filter((n) => names.includes(n)).map((n) => `${n}=`), ...optional.filter((n) => names.includes(n)).flatMap((n) => ["# optional:", `# ${n}=`])];
     appendFileSync(envFile, `${before && !before.endsWith("\n") ? "\n" : ""}${before ? "\n" : ""}${lines.join("\n")}\n`);
     wrote.push(".env");
   }
-  log(
-    [
-      `added ${o.provider}@${e.version} as ${id}: ${wrote.join(", ")}`,
-      `  from ${registryOf(o)}: it's code your app runs; read it before you deploy`,
-      e.env.length ? `  set ${e.env.join(", ")} in .env` : "",
-      "  connection.ts imports @connectd/connections, events.ts @connectd/sdk (install them if they're missing)",
-    ]
-      .filter(Boolean)
-      .join("\n"),
-  );
+  return wrote;
 }
 
 const header = (e: Entry, id: string) =>
@@ -140,6 +167,7 @@ export async function diff(o: AddOptions & { id: string }): Promise<boolean> {
   // CRLF (a Windows checkout) would differ on every line.
   const [first = "", ...body] = readFileSync(file, "utf8").replace(/\r\n/g, "\n").split("\n");
   const m = HEADER.exec(first);
+  if (first.startsWith("// connectd: custom")) throw new Error(`${shown(o, file)} is a custom connection (\`connectd add --custom\`): there's no upstream to diff`);
   if (!m) throw new Error(`${shown(o, file)} wasn't copied by \`connectd add\` (no "// connectd: <provider>@<version>" first line)`);
   const e = checked(await read<Entry>(o, `${m[1]}.json`), `${m[1]}.json`);
   const ours = body.join("\n");

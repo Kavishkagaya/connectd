@@ -721,3 +721,12 @@ Each environment's keys come from one explicit step (see the Next.js entry): `in
 - **Its own deployment.** The Cloudflare adapter deploys `<name>-<env>` with its own D1 (`<name>-<env>-index`) and `.connectd/deploy/state.<env>.json`. `cloudflare({ environments: { staging: { name, url } } })` names an environment's Worker or URL; `cloudflare({ url })` is production's only.
 - **Its own keys.** Runtime keys are generated on an environment's first deploy and live only in its Worker's secrets. The app's two values are generated too unless the env file sets them: the API key (as before) and now the events secret, each printed once under "your app's env for <env>". `--rotate events` makes a new events secret. CI never generates either: both come from CI secrets (`connectd keys`).
 - Env files are the one source for now; pulling an environment's values from elsewhere (Vercel, a secrets manager) can come later as a contribution.
+
+## #54 Providers are copied, never imported — decided
+
+A connection definition is the app's code, shadcn style: a catalog provider is copied in with `connectd add` and edited like any other file, and from there a catalog connection and a custom one are the same thing.
+
+- `@connectd/providers` is private (`"private": true`, so `scripts/pack.ts` skips it). It stays in the repo as the catalog's source and its tests; `bun run registry` turns it into `registry/`. An installable package would be a second way to use a provider, with upgrades that change auth code under the app.
+- The examples (basic, nextjs) hold copied provider files (`// connectd: github@0.0.0. ...` first line, `connectd diff` works on them) and no longer depend on `@connectd/providers`.
+- `connectd add --custom <id> [--template <flow>]`: the same folder `add` writes (connection.ts, an empty events.ts, the env names in `.env`), from a template instead of the catalog. Templates, one per flow: `oauth2` (default), `oidc`, `api-key`, `client-credentials`, `jwt-bearer`, `device`. Env names are `<ID>_CLIENT_ID`/`<ID>_CLIENT_SECRET` (`<ID>_CLIENT_EMAIL`/`<ID>_PRIVATE_KEY` for jwt-bearer; none for api-key). example.com URLs mark what to fill in. The first line, `// connectd: custom (<flow> template). ...`, tells `diff` there's no upstream. An existing connection.ts is refused unless `--force`.
+- Tests: `cli/src/add.test.ts` writes every template into a project, loads it (discovered, bundled, its env names read), and runs the CLI flags. Each template also passed the root typecheck inside examples/basic.

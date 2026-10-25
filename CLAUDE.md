@@ -40,7 +40,7 @@ packages/connections/
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
-packages/providers/   one connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`), importing only @connectd/connections; tests against fakes
+packages/providers/   private (not published): the catalog's source. One connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`), importing only @connectd/connections; tests against fakes; `bun run registry` writes registry/. Apps never import it: `connectd add` copies a provider in
   src/registry.ts     `bun run registry`: writes registry/ (the catalog `connectd add` copies from) from the sources; a test fails when it's stale
 
 registry/             <provider>.json + index.json, generated and committed; the CLI fetches it at its version's tag
@@ -91,7 +91,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bu
   src/deploy.ts       `connectd deploy`, what every target shares: the environment (--env <name>, default production: .env.<name> or --env-file, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
   src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, keys from .env (init's; never made here), port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save (watcher skips build output, hidden dirs, generated types)
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
-  src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) and `connectd diff <id>` (unified diff against the catalog)
+  src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) `connectd add --custom <id> --template <flow>` (the same folder from src/templates.ts: oauth2, oidc, api-key, client-credentials, jwt-bearer, device) and `connectd diff <id>` (unified diff against the catalog)
   src/cli.ts, args.ts commands (init, dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
 
 packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, url })` in oc.config.ts; the adapter deploys through wrangler
@@ -105,7 +105,7 @@ examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` ch
 
 scripts/pack.ts       `bun run pack`: every package built to JavaScript (tsc in the Node, Workers and DOM type environments), staged with exports and bin on dist/, npm-packed into .pack/
 
-examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers, one local, github/actions/profile.ts)
+examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers copied in by `connectd add`, one custom, github/actions/profile.ts)
 ```
 
 Kernel subpath exports: `@connectd/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@connectd/connections`. Runtime: `@connectd/runtime`, `/cloudflare`, `/signature`. CLI: `@connectd/cli` (`defineConfig`, project helpers, target types), `/keys`, `/workdir`, bin `connectd`. Cloudflare target: `@connectd/cloudflare`, `/adapter`. SDK: `@connectd/sdk`, `/node`. Browser: `@connectd/connect`. Dashboard: `@connectd/dashboard`.
