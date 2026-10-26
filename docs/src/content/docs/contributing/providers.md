@@ -18,7 +18,7 @@ flowchart TB
 ## 1. Write the connection
 
 ```ts title="packages/providers/src/acme.ts"
-import { connection, type OAuth2Config, rateHeaders } from "@kavishkagaya/connectd-connections";
+import { connection, type OAuth2Config, rateHeaders } from "@kavishkagaya/connectd/connections";
 
 /**
  * Acme. What's unusual about it: …
@@ -37,7 +37,7 @@ export const acme = connection("acme")
 
 Guidelines:
 
-- **Import only `@kavishkagaya/connectd-connections`.** The file is copied into users' apps as is.
+- **Import only `@kavishkagaya/connectd/connections`.** The file is copied into users' apps as is.
 - **Read config from env** with `.config((env) => …)`, using `<PROVIDER>_CLIENT_ID`-style names. Use `env.optional` for extras.
 - **Comment the quirks.** The doc comment at the top should say what's unusual, and why each override exists. Users read this file.
 - **Mark known limits** with `// ponytail:`, naming the limit and the upgrade path.

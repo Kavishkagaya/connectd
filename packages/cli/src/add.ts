@@ -9,7 +9,7 @@ import { workdir } from "./workdir.ts";
 /**
  * `connectd add <provider>` and `connectd diff <id>` (#54, shadcn style). A provider is copied into
  * the project as source, `<dir>/<id>/connection.ts`, and is then the app's to edit: no
- * `@kavishkagaya/connectd-providers` dependency, only `@kavishkagaya/connectd-connections`. The catalog is `registry/` in the
+ * `@kavishkagaya/connectd-providers` dependency, only `@kavishkagaya/connectd/connections`. The catalog is `registry/` in the
  * connectd repo (`registry/<provider>.json`), fetched at this CLI's version tag (`main` while
  * unreleased); `--registry <url or folder>` or `CONNECTD_REGISTRY` points elsewhere.
  */
@@ -97,7 +97,7 @@ export async function add(o: AddOptions & { provider: string; id?: string; force
       `added ${o.provider}@${e.version} as ${id}: ${wrote.join(", ")}`,
       `  from ${registryOf(o)}: it's code your app runs; read it before you deploy`,
       e.env.length ? `  set ${e.env.join(", ")} in .env` : "",
-      "  connection.ts imports @kavishkagaya/connectd-connections, events.ts @kavishkagaya/connectd-sdk (install them if they're missing)",
+      "  connection.ts imports @kavishkagaya/connectd/connections, events.ts @kavishkagaya/connectd/sdk (npm i @kavishkagaya/connectd if it's missing)",
     ]
       .filter(Boolean)
       .join("\n"),
@@ -136,7 +136,7 @@ async function write(o: AddOptions, id: string, source: string, required: string
   if (!existsSync(events)) {
     writeFileSync(
       events,
-      `import { listen } from "@kavishkagaya/connectd-sdk";\n\n// Your app's handlers for ${id}'s events (runs in your app, through oc.routes).\nexport default listen(${JSON.stringify(id)});\n`,
+      `import { listen } from "@kavishkagaya/connectd/sdk";\n\n// Your app's handlers for ${id}'s events (runs in your app, through oc.routes).\nexport default listen(${JSON.stringify(id)});\n`,
     );
     wrote.push(shown(o, events));
   }

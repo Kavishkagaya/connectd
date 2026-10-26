@@ -21,7 +21,7 @@ npx connectd add --custom acme --template device
 This writes `src/oc/acme/connection.ts`, an empty `events.ts`, and the env names (`ACME_CLIENT_ID`, `ACME_CLIENT_SECRET`) in `.env`. `example.com` URLs mark what to fill in:
 
 ```ts title="src/oc/acme/connection.ts (oauth2 template, filled in)"
-import { connection, type OAuth2Config } from "@kavishkagaya/connectd-connections";
+import { connection, type OAuth2Config } from "@kavishkagaya/connectd/connections";
 
 export default connection()
   .config<OAuth2Config>((env) => ({ clientId: env("ACME_CLIENT_ID"), clientSecret: env("ACME_CLIENT_SECRET") }))
@@ -76,12 +76,12 @@ Each catalog provider is a worked example, worth reading in the [registry](https
 
 ## Testing
 
-`@kavishkagaya/connectd-connections/testing` runs your connection on the in-memory driver against a fake authorization server. No network, and a clock you control:
+`@kavishkagaya/connectd/connections/testing` runs your connection on the in-memory driver against a fake authorization server. No network, and a clock you control:
 
 ```ts title="src/oc/acme/connection.test.ts"
 import { expect, test } from "bun:test";   // or vitest
-import type { OAuth2 } from "@kavishkagaya/connectd-connections";
-import { fakeOAuth, harness } from "@kavishkagaya/connectd-connections/testing";
+import type { OAuth2 } from "@kavishkagaya/connectd/connections";
+import { fakeOAuth, harness } from "@kavishkagaya/connectd/connections/testing";
 import acme from "./connection.ts";
 
 test("acme: connect, refresh, dead refresh token", async () => {

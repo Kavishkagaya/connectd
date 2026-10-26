@@ -23,7 +23,7 @@ flowchart TB
 ## The shape
 
 ```ts
-import type { Extension } from "@kavishkagaya/connectd-runtime";
+import type { Extension } from "@kavishkagaya/connectd/runtime";
 
 type Extension = {
   /** Worker routes, keyed by first path segment: { audit: â€¦ } serves /audit/*. API key required unless public. */
@@ -53,8 +53,8 @@ What a connection looks like from inside (`Hosted`):
 Count proxied calls per connection, expose the count as a method, and serve a summary route:
 
 ```ts title="src/usage.ts"
-import type { Extension } from "@kavishkagaya/connectd-runtime";
-import { instanceOf } from "@kavishkagaya/connectd-runtime";
+import type { Extension } from "@kavishkagaya/connectd/runtime";
+import { instanceOf } from "@kavishkagaya/connectd/runtime";
 
 export function usage(): Extension {
   return {
@@ -106,9 +106,9 @@ await oc.connection("github", "alice").call("usage.get");   // { n: 42, since: â
 - **Everything that races goes through `cell.update`.** Handlers interleave at every `await`. `update(f)` re-runs `f` on fresh data until its compare-and-swap lands. Keep `f` synchronous and free of side effects.
 - **Timers are nudges.** Timer and cell writes aren't atomic. Make every timer-driven job also reachable on demand (from `after`, or the next method call), and re-check state in the handler.
 - **Time is `h.k.now()`**, never `Date.now()`, so tests can move the clock.
-- **Args and results are JSON.** Errors cross as data: throw `new Fail(code, status, message)` (exported from `@kavishkagaya/connectd-runtime`) for a clean HTTP error.
+- **Args and results are JSON.** Errors cross as data: throw `new Fail(code, status, message)` (exported from `@kavishkagaya/connectd/runtime`) for a clean HTTP error.
 - **Built-ins win.** A method or route name that clashes with a built-in one is shadowed.
-- **Emitting events:** `emit(h, data, type)` from `@kavishkagaya/connectd-runtime` queues an event on the connection, ordered after its lifecycle events.
+- **Emitting events:** `emit(h, data, type)` from `@kavishkagaya/connectd/runtime` queues an event on the connection, ordered after its lifecycle events.
 
 ## Kernel tools at a glance
 

@@ -40,7 +40,7 @@ packages/connections/
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
-packages/providers/   private (not published): the catalog's source. One connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`), importing only @kavishkagaya/connectd-connections; tests against fakes; `bun run registry` writes registry/. Apps never import it: `connectd add` copies a provider in
+packages/providers/   private (not published): the catalog's source. One connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`), importing only @kavishkagaya/connectd/connections (what an app has); tests against fakes; `bun run registry` writes registry/. Apps never import it: `connectd add` copies a provider in
   src/registry.ts     `bun run registry`: writes registry/ (the catalog `connectd add` copies from) from the sources; a test fails when it's stale
 
 registry/             <provider>.json + index.json, generated and committed; the CLI fetches it at its version's tag
@@ -80,7 +80,7 @@ packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /
   src/fake.ts         the real runtime + dashboard() on the memory driver and a fake DOM, for the tests and e2e
   e2e/chromium.ts     real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 
-packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed); `@kavishkagaya/connectd` exports project.ts; runtime/kernel/connections are peer deps
+packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed). `@kavishkagaya/connectd`, the one package an app installs: exports project.ts, and src/sdk.ts, sdk-node.ts, connections.ts, connections-testing.ts, runtime*.ts, kernel*.ts re-export the private packages (`/sdk`, `/sdk/node`, `/connections`, `/connections/testing`, `/runtime`, `/runtime/cloudflare`, `/runtime/signature`, `/kernel`, `/kernel/memory`, `/kernel/do`); `bun run pack` carries those packages inside it
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), resolve() (connections' env config, `envNames`, `missing`), workerEnv(), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
   src/env.ts          dotenv parsing; dev's env (.env < process env; .dev.vars refused)
@@ -103,18 +103,18 @@ packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, ur
 
 examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` checks it): github (OAuth app), oc.routes, APP_URL in .env; `connectd dev` and `next dev` run side by side
 
-scripts/pack.ts       `bun run pack`: every package built to JavaScript (tsc in the Node, Workers and DOM type environments), staged with exports and bin on dist/, npm-packed into .pack/
+scripts/pack.ts       `bun run pack`: the two published packages built to JavaScript (tsc in the Node, Workers and DOM type environments), each carrying its private workspace dependencies (imports rewritten to relative paths), npm-packed into .pack/
 
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers copied in by `connectd add`, one custom, github/actions/profile.ts)
 ```
 
-Kernel subpath exports: `@kavishkagaya/connectd-kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@kavishkagaya/connectd-connections`. Runtime: `@kavishkagaya/connectd-runtime`, `/cloudflare`, `/signature`. CLI: `@kavishkagaya/connectd` (`defineConfig`, project helpers, target types), `/keys`, `/workdir`, bin `connectd`. Cloudflare target: `@kavishkagaya/connectd-cloudflare`, `/adapter`. SDK: `@kavishkagaya/connectd-sdk`, `/node`. Browser: `@kavishkagaya/connectd-connect`. Dashboard: `@kavishkagaya/connectd-dashboard`.
+Published: `@kavishkagaya/connectd` and `@kavishkagaya/connectd-cloudflare` only; kernel, connections, runtime, sdk, dashboard and connect are private workspace packages (`connect` is unpublished for now). Code outside the core (generated files, the Cloudflare target, docs) imports the core's subpaths: `@kavishkagaya/connectd` (`defineConfig`, project helpers, target types), `/sdk`, `/sdk/node`, `/connections`, `/connections/testing`, `/runtime`, `/runtime/cloudflare`, `/runtime/signature`, `/kernel`, `/kernel/memory`, `/kernel/do`, `/keys`, `/workdir`, bin `connectd`. Inside the workspace, packages import each other by their own names (`@kavishkagaya/connectd-kernel`, `-connections`, `-runtime`, `-sdk`, `-dashboard`); Connection types (`State`, `Credential`, `NotActive`, OAuth) come from connections. Cloudflare target: `@kavishkagaya/connectd-cloudflare`, `/adapter`.
 
 ## Commands
 
 - `bun run test`: bun tests under `src/` plus vitest (workerd) under `test/`
 - `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts`, the Cloudflare Worker template + the CLI's `project.ts`, and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect` and `packages/dashboard`
-- Packages as npm tarballs that run on Node: `bun run pack` (into .pack/; install them in a scratch project to try `npx connectd` without Bun)
+- Packages as npm tarballs that run on Node: `bun run pack` (into .pack/: `@kavishkagaya/connectd` and `-cloudflare`; install them in a scratch project to try `npx connectd` without Bun)
 - Provider changed: `cd packages/providers && bun run registry` (rewrites registry/)
 - Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts`
 - One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`

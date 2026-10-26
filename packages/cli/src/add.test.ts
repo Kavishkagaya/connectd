@@ -27,7 +27,7 @@ test("add: the provider as source in its folder, an empty events.ts, its env nam
   await add({ ...p.o, provider: "github" });
   const src = readFileSync(join(p.dir, "src/oc/github/connection.ts"), "utf8");
   expect(src.split("\n")[0]).toBe("// connectd: github@0.0.0. Copied by `connectd add`; yours to edit. `connectd diff github` shows what changed upstream.");
-  expect(src).toContain('from "@kavishkagaya/connectd-connections";');
+  expect(src).toContain('from "@kavishkagaya/connectd/connections";');
   expect(src).not.toContain("@kavishkagaya/connectd-kernel");
   expect(readFileSync(join(p.dir, "src/oc/github/events.ts"), "utf8")).toContain('export default listen("github");');
   expect(readFileSync(join(p.dir, ".env"), "utf8")).toBe("APP_ORIGIN=http://localhost:3000\n\n# github (connectd add github)\nGITHUB_CLIENT_ID=\nGITHUB_CLIENT_SECRET=\n");

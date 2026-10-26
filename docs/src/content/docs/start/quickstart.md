@@ -38,22 +38,25 @@ sequenceDiagram
 ## 2. Install
 
 ```sh
-npm i @kavishkagaya/connectd-sdk @kavishkagaya/connectd-connections @kavishkagaya/connectd @kavishkagaya/connectd-cloudflare @kavishkagaya/connectd-runtime @kavishkagaya/connectd-kernel
+npm i @kavishkagaya/connectd
 ```
 
-| Package | What it's for |
+`@kavishkagaya/connectd` is the `connectd` command (`init`, `add`, `dev`, `deploy`) and everything your code imports. The deploy target is its own package, since it's the part you can swap: `connectd init` asks where you'll deploy and installs it.
+
+| Import | What it's for |
 | --- | --- |
-| `@kavishkagaya/connectd-sdk` | The client your app uses: `connectd()`, `oc.routes`, `listen()` |
-| `@kavishkagaya/connectd-connections` | What connection files import: `connection()`, `action()` |
-| `@kavishkagaya/connectd` | The `connectd` command: `init`, `add`, `dev`, `deploy` |
+| `@kavishkagaya/connectd` | `defineConfig` for `oc.config.ts` |
+| `@kavishkagaya/connectd/sdk` | The client your app uses: `connectd()`, `oc.routes`, `listen()` |
+| `@kavishkagaya/connectd/connections` | What connection files import: `connection()`, `action()` |
 | `@kavishkagaya/connectd-cloudflare` | The deploy target for `connectd deploy` |
-| `@kavishkagaya/connectd-runtime`, `@kavishkagaya/connectd-kernel` | The runtime that `dev` and `deploy` run |
 
 ## 3. Set up the project
 
 ```sh
 npx connectd init
 ```
+
+It asks where connectd runs when you deploy. Pick Cloudflare Workers and it installs `@kavishkagaya/connectd-cloudflare` and `wrangler` with your package manager, or decide later. Without a terminal (CI), pass `--target cloudflare` or `--target none`.
 
 `init` writes only what's missing and never overwrites:
 
@@ -96,7 +99,7 @@ The callback goes to **connectd** (port 8787), not to your app. connectd does th
 Open `src/lib/oc.ts` and return your signed-in user's id. That id becomes the connection id, so every user gets their own GitHub connection:
 
 ```ts title="src/lib/oc.ts"
-import { connectd } from "@kavishkagaya/connectd-sdk";
+import { connectd } from "@kavishkagaya/connectd/sdk";
 import { listeners } from "../../.connectd/app";
 
 export const oc = connectd({
@@ -139,7 +142,7 @@ export default async function Page() {
 ## 7. React to events
 
 ```ts title="src/oc/github/events.ts"
-import { listen } from "@kavishkagaya/connectd-sdk";
+import { listen } from "@kavishkagaya/connectd/sdk";
 
 export default listen("github")
   .on("connection.active", (e) => console.log(`github connected for ${e.connection.id}`))

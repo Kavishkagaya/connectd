@@ -1,4 +1,4 @@
-import { ConnectdError } from "@kavishkagaya/connectd-sdk";
+import { ConnectdError } from "@kavishkagaya/connectd/sdk";
 import { disconnect, signIn, signOut } from "./actions";
 import { currentUser, oc } from "../lib/oc";
 

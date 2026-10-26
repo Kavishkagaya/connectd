@@ -27,6 +27,8 @@
     "packages/runtime/src/cloudflare.ts",
     "packages/cloudflare/src/worker.ts",
     "packages/connect",
+    "packages/cli/src/runtime-cloudflare.ts",
+    "packages/cli/src/kernel-do.ts",
     "packages/dashboard",
     "examples/nextjs"
   ]

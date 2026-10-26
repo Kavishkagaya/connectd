@@ -51,7 +51,7 @@ sequenceDiagram
 `gh.fetch` throws **only** when connectd itself refused. Those responses carry a `connectd-error` header, which the SDK turns into a `ConnectdError`:
 
 ```ts
-import { ConnectdError } from "@kavishkagaya/connectd-sdk";
+import { ConnectdError } from "@kavishkagaya/connectd/sdk";
 
 try {
   const res = await gh.fetch("/user");

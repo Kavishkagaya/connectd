@@ -8,7 +8,7 @@ sidebar:
 A connection file describes one provider with a typed, ordered builder:
 
 ```ts title="src/oc/github/connection.ts"
-import { connection, type OAuth2Config, rateHeaders } from "@kavishkagaya/connectd-connections";
+import { connection, type OAuth2Config, rateHeaders } from "@kavishkagaya/connectd/connections";
 
 export default connection()
   .config<OAuth2Config>((env) => ({ clientId: env("GITHUB_CLIENT_ID"), clientSecret: env("GITHUB_CLIENT_SECRET") }))
@@ -159,7 +159,7 @@ Any [Standard Schema](https://standardschema.dev) library works (zod, valibot, a
 
 ## Helpers you'll reach for
 
-All of these come from `@kavishkagaya/connectd-connections`, so a connection file needs no other dependency:
+All of these come from `@kavishkagaya/connectd/connections`, so a connection file needs no other dependency:
 
 | Helper | Use |
 | --- | --- |
@@ -173,4 +173,4 @@ All of these come from `@kavishkagaya/connectd-connections`, so a connection fil
 
 ## Trying changes
 
-`connectd dev` reloads connection files on save, without losing state. Unit tests use `@kavishkagaya/connectd-connections/testing`, which provides a harness and a fake OAuth provider. See [testing connections](/extending/custom-providers/#testing).
+`connectd dev` reloads connection files on save, without losing state. Unit tests use `@kavishkagaya/connectd/connections/testing`, which provides a harness and a fake OAuth provider. See [testing connections](/extending/custom-providers/#testing).

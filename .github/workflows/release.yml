@@ -1,7 +1,7 @@
-# After CI passes on main: every package whose version isn't on npm yet is published (from the
-# tarballs `bun run pack` makes), and the CLI's version gets its `v<version>` tag + GitHub release
+# After CI passes on main: each published package (@kavishkagaya/connectd, -cloudflare) whose version
+# isn't on npm yet is published (from the tarballs `bun run pack` makes), and the CLI's version gets its `v<version>` tag + GitHub release
 # (`connectd add` fetches registry/ at that tag). Version 0.0.0 means unreleased and is skipped.
-# To release: bump the versions in packages/*/package.json in a PR, merge it.
+# To release: bump the version in packages/cli and packages/cloudflare package.json in a PR, merge it.
 # Publishes with npm trusted publishing (OIDC, no token): every package on npmjs.com trusts this
 # repo's release.yml. A package's first version is published by hand (npm can only trust an
 # existing package); provenance is added automatically.
@@ -39,8 +39,8 @@ jobs:
 
       - name: Publish new versions to npm
         run: |
-          # Dependencies first, so a half-finished run never leaves a package pointing at a missing version.
-          for p in kernel connections runtime dashboard cli cloudflare sdk connect; do
+          # The core first: the Cloudflare target peer-depends on it.
+          for p in cli cloudflare; do
             name=$(node -p "require('./packages/$p/package.json').name")
             version=$(node -p "require('./packages/$p/package.json').version")
             if [ "$version" = "0.0.0" ]; then echo "$name: unreleased (0.0.0), skipped"; continue; fi

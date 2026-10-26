@@ -1,8 +1,6 @@
 import { existsSync, type FSWatcher, readFileSync, renameSync, rmSync, watch, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
-import type { ReadableStream as NodeReadableStream } from "node:stream/web";
+import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@kavishkagaya/connectd-kernel";
@@ -88,6 +86,27 @@ export function ignored(path: string) {
 const IGNORED = /(^|[/\\])(node_modules|\.connectd|\.git)([/\\]|$)/;
 const HOP = ["connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-connection"];
 
+/**
+ * A response body streamed to the client, as the proxy streams the provider's (SSE, downloads). A body
+ * that fails partway resets the client's connection (it sees an error, not a short success); a client
+ * that goes away cancels the body. Read by hand: Bun's Readable.fromWeb lets the body's error escape.
+ */
+async function stream(body: ReadableStream<Uint8Array>, res: ServerResponse) {
+  const reader = body.getReader();
+  const closed = once(res, "close").catch(() => {});
+  closed.then(() => reader.cancel().catch(() => {}));
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return void res.end();
+      if (res.destroyed) return;
+      if (!res.write(value)) await Promise.race([once(res, "drain"), closed]);
+    }
+  } catch {
+    res.destroy();
+  }
+}
+
 export async function serve(port: number, handle: (req: Request) => Promise<Response>) {
   const run = async (req: IncomingMessage, res: ServerResponse) => {
     const chunks: Uint8Array[] = [];
@@ -106,9 +125,7 @@ export async function serve(port: number, handle: (req: Request) => Promise<Resp
     if (out.statusText) res.writeHead(out.status, out.statusText, head);
     else res.writeHead(out.status, head);
     if (!out.body || method === "HEAD") return void res.end();
-    // Streamed, as the proxy streams the provider's response (SSE, downloads).
-    // pipeline: an upstream that fails partway resets the client's connection, a client that goes away stops the upstream.
-    await pipeline(Readable.fromWeb(out.body as NodeReadableStream), res).catch(() => {});
+    await stream(out.body, res);
   };
   const server = createServer((req, res) =>
     run(req, res).catch((e) => {

@@ -12,6 +12,7 @@
     "registry": "bun src/registry.ts"
   },
   "dependencies": {
+    "@kavishkagaya/connectd": "workspace:*",
     "@kavishkagaya/connectd-connections": "workspace:*"
   },
   "devDependencies": {

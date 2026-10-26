@@ -1,6 +1,6 @@
 {
   "name": "@kavishkagaya/connectd",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Kavishkagaya/connectd.git",
@@ -13,6 +13,16 @@
   },
   "exports": {
     ".": "./src/index.ts",
+    "./sdk": "./src/sdk.ts",
+    "./sdk/node": "./src/sdk-node.ts",
+    "./connections": "./src/connections.ts",
+    "./connections/testing": "./src/connections-testing.ts",
+    "./runtime": "./src/runtime.ts",
+    "./runtime/cloudflare": "./src/runtime-cloudflare.ts",
+    "./runtime/signature": "./src/runtime-signature.ts",
+    "./kernel": "./src/kernel.ts",
+    "./kernel/memory": "./src/kernel-memory.ts",
+    "./kernel/do": "./src/kernel-do.ts",
     "./keys": "./src/keys.ts",
     "./workdir": "./src/workdir.ts"
   },
@@ -20,19 +30,14 @@
     "test": "bun test src"
   },
   "dependencies": {
+    "@kavishkagaya/connectd-connections": "workspace:*",
     "@kavishkagaya/connectd-dashboard": "workspace:*",
+    "@kavishkagaya/connectd-kernel": "workspace:*",
+    "@kavishkagaya/connectd-runtime": "workspace:*",
+    "@kavishkagaya/connectd-sdk": "workspace:*",
     "esbuild": "^0.28.2"
   },
   "devDependencies": {
-    "@kavishkagaya/connectd-cloudflare": "workspace:*",
-    "@kavishkagaya/connectd-connections": "workspace:*",
-    "@kavishkagaya/connectd-kernel": "workspace:*",
-    "@kavishkagaya/connectd-runtime": "workspace:*",
-    "@kavishkagaya/connectd-sdk": "workspace:*"
-  },
-  "peerDependencies": {
-    "@kavishkagaya/connectd-connections": "workspace:*",
-    "@kavishkagaya/connectd-kernel": "workspace:*",
-    "@kavishkagaya/connectd-runtime": "workspace:*"
+    "@kavishkagaya/connectd-cloudflare": "workspace:*"
   }
 }

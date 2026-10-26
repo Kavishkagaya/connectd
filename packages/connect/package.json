@@ -1,11 +1,7 @@
 {
   "name": "@kavishkagaya/connectd-connect",
-  "version": "0.1.0",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Kavishkagaya/connectd.git",
-    "directory": "packages/connect"
-  },
+  "private": true,
+  "version": "0.2.0",
   "license": "Apache-2.0",
   "type": "module",
   "exports": {

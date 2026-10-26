@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
+import { createInterface } from "node:readline/promises";
 import { parseEnv } from "./env.ts";
 import { generateKeys } from "./keys.ts";
 import { CONFIG_FILES, loadProject } from "./load.ts";
@@ -16,7 +17,8 @@ const PORT = 8787;
  *   .env               the runtime's generated keys, CONNECTD_URL (where dev runs) and APP_URL (the
  *                      app's origin): the one file the app and connectd share
  *   .gitignore         `.env`, since it holds the keys now
- *   oc.config.ts       sessions.origins and events.url from env.APP_URL; connections in <src>/oc/
+ *   oc.config.ts       sessions.origins and events.url from env.APP_URL; connections in <src>/oc/;
+ *                      the deploy target (`--target`, asked in a terminal), its packages installed
  *   <src>/lib/oc.ts    the client: connectd({ user, listeners })
  *   app/api/connectd/[...path]/route.ts   oc.routes, for a Next.js app (App Router)
  *
@@ -25,7 +27,35 @@ const PORT = 8787;
  * `deploy`.
  */
 
-export type InitOptions = { dir: string; port?: number; appUrl?: string; log?: (line: string) => void };
+/**
+ * Where the runtime runs: what `init --target` installs and writes into the config. Packages are
+ * installed with the project's package manager. A Node server target joins this list later.
+ */
+export const TARGETS = {
+  cloudflare: {
+    label: "Cloudflare Workers",
+    packages: ["@kavishkagaya/connectd-cloudflare", "wrangler"],
+    import: 'import { cloudflare } from "@kavishkagaya/connectd-cloudflare";',
+    call: (name: string) => `cloudflare({ name: ${JSON.stringify(name)} })`,
+    next: "to Cloudflare (once: npx wrangler login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)",
+  },
+} as const;
+export type TargetName = keyof typeof TARGETS;
+
+export type InitOptions = {
+  dir: string;
+  port?: number;
+  appUrl?: string;
+  /** The deploy target, or "none". Default: asked in a terminal; else the one already installed, else none. */
+  target?: TargetName | "none";
+  /** Don't install the target's packages (only write the config). */
+  skipInstall?: boolean;
+  /** Asks which target (tests pass one). Default: a prompt when stdin and stdout are a terminal (not CI, not a test run). */
+  ask?: (question: string, choices: { value: string; label: string }[]) => Promise<string>;
+  /** Runs the install command; resolves to its exit code (tests pass one). */
+  run?: (cmd: string, args: string[], cwd: string) => number;
+  log?: (line: string) => void;
+};
 
 const VERSIONED = /^CONNECTD_KEY_V\d+$/;
 
@@ -72,6 +102,38 @@ const uses = (dir: string, name: string) => {
   const p = pkg(dir);
   return !!(p?.dependencies?.[name] ?? p?.devDependencies?.[name]);
 };
+
+/**
+ * The package manager the project uses: its lockfile's (`npx connectd` in a pnpm project is still
+ * pnpm's), else the one running us (npx, pnpm dlx, bunx, yarn), else npm.
+ */
+export function packageManager(dir: string, agent = process.env.npm_config_user_agent ?? ""): "npm" | "pnpm" | "yarn" | "bun" {
+  if (existsSync(join(dir, "bun.lock")) || existsSync(join(dir, "bun.lockb"))) return "bun";
+  if (existsSync(join(dir, "pnpm-lock.yaml"))) return "pnpm";
+  if (existsSync(join(dir, "yarn.lock"))) return "yarn";
+  if (existsSync(join(dir, "package-lock.json"))) return "npm";
+  return (/^(npm|pnpm|yarn|bun)\//.exec(agent)?.[1] as "npm" | "pnpm" | "yarn" | "bun" | undefined) ?? "npm";
+}
+
+/** The dev-dependency install command for `packages`. */
+export const installCommand = (pm: ReturnType<typeof packageManager>, packages: string[]): [string, string[]] =>
+  pm === "npm" ? ["npm", ["install", "-D", ...packages]] : pm === "bun" ? ["bun", ["add", "-d", ...packages]] : [pm, ["add", "-D", ...packages]];
+
+const cliVersion = () => (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }).version;
+
+async function prompt(question: string, choices: { value: string; label: string }[]): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    const list = choices.map((c, i) => `  ${i + 1}) ${c.label}`).join("\n");
+    for (;;) {
+      const a = (await rl.question(`${question}\n${list}\nChoose [1]: `)).trim();
+      const c = a === "" ? choices[0] : choices[Number(a) - 1];
+      if (c) return c.value;
+    }
+  } finally {
+    rl.close();
+  }
+}
 
 /** `import x from "<from → to>"`, without the extension (as Next and TS resolve it). */
 const spec = (from: string, to: string) => {
@@ -139,20 +201,53 @@ export async function init(o: InitOptions): Promise<void> {
   // src/ when the app has one (Next's src/app), else the root.
   const src = existsSync(join(dir, "src")) ? join(dir, "src") : dir;
   const folders = relative(dir, join(src, "oc")).split("\\").join("/");
-  const cloudflare = uses(dir, "@kavishkagaya/connectd-cloudflare");
   const name = (pkg(dir) as { name?: string } | null)?.name?.replace(/^@[^/]+\//, "") ?? "connectd";
   const config = CONFIG_FILES.map((f) => join(dir, f)).find((f) => existsSync(f));
+
+  // The deploy target: --target, else asked in a terminal, else the one already installed. Only for a
+  // new config (an existing one keeps its target).
+  const installed = (Object.keys(TARGETS) as TargetName[]).find((t) => uses(dir, TARGETS[t].packages[0]));
+  // Not in CI, nor under `bun test` (it sets NODE_ENV=test), where a prompt would wait forever.
+  const interactive = !!(process.stdin.isTTY && process.stdout.isTTY && !process.env.CI && process.env.NODE_ENV !== "test");
+  const ask = o.ask ?? (interactive ? prompt : undefined);
+  let chosen: TargetName | "none" = "none";
+  // Installs only for a target chosen now (--target or the prompt), not one found installed.
+  let chosenNow = false;
+  if (!config) {
+    if (o.target) (chosen = o.target), (chosenNow = true);
+    else if (installed) chosen = installed;
+    else if (ask) {
+      const choices = (Object.keys(TARGETS) as TargetName[]).map((t) => ({ value: t, label: `${TARGETS[t].label}  (installs ${TARGETS[t].packages.join(" and ")})` }));
+      chosen = (await ask("Where will connectd run when you deploy?", [...choices, { value: "none", label: "Decide later" }])) as TargetName | "none";
+      chosenNow = true;
+    }
+  }
+  const target = chosen === "none" ? undefined : chosen;
+  let installFailed = "";
+  if (target && chosenNow && !o.skipInstall) {
+    const missing = TARGETS[target].packages.filter((p) => !uses(dir, p));
+    const version = cliVersion();
+    // Our own packages at this CLI's version (0.0.0 is the workspace: whatever resolves).
+    const specs = missing.map((p) => (p.startsWith("@kavishkagaya/") && version !== "0.0.0" ? `${p}@^${version}` : p));
+    if (specs.length) {
+      const [cmd, args] = installCommand(packageManager(dir), specs);
+      log(`installing ${missing.join(", ")}: ${cmd} ${args.join(" ")}`);
+      const code = (o.run ?? ((c, a, cwd) => spawnSync(c, a, { cwd, stdio: "inherit", shell: process.platform === "win32" }).status ?? 1))(cmd, args, dir);
+      if (code !== 0) installFailed = `${cmd} ${args.join(" ")}`;
+    }
+  }
+
   if (config) kept.push(relative(dir, config));
   else
     write(
       join(dir, CONFIG_FILES[0] as string),
       `import { defineConfig } from "@kavishkagaya/connectd";
-${cloudflare ? 'import { cloudflare } from "@kavishkagaya/connectd-cloudflare";\n' : ""}
+${target ? `${TARGETS[target].import}\n` : ""}
 // Your connections are the folders in ${folders}/ (\`connectd add github\` adds one). APP_URL, in .env, is
 // your app's origin: where the connect flow returns and where events are posted (oc.routes).
 export default defineConfig((env) => ({
   dir: "${folders}",
-${cloudflare ? `  target: cloudflare({ name: ${JSON.stringify(name)} }),\n` : ""}  events: { url: \`\${env.APP_URL}/api/connectd/events\` },
+${target ? `  target: ${TARGETS[target].call(name)},\n` : ""}  events: { url: \`\${env.APP_URL}/api/connectd/events\` },
   sessions: { origins: [env.APP_URL as string] },
 }));
 `,
@@ -162,7 +257,7 @@ ${cloudflare ? `  target: cloudflare({ name: ${JSON.stringify(name)} }),\n` : ""
   const client = join(src, "lib", "oc.ts");
   write(
     client,
-    `import { connectd } from "@kavishkagaya/connectd-sdk";
+    `import { connectd } from "@kavishkagaya/connectd/sdk";
 import { listeners } from "${spec(client, join(workdir(dir), "app.ts"))}";
 
 // CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET come from .env (connectd init wrote them);
@@ -202,14 +297,19 @@ export const oc = connectd({
     moved ? "  the keys from .connectd/dev.vars are in .env now (dev doesn't read it any more; deploy still refuses its values)" : "",
     o.appUrl !== undefined && have.APP_URL && have.APP_URL !== appUrl ? `  --app-url ignored: .env already has APP_URL=${have.APP_URL}` : "",
     o.port !== undefined && have.CONNECTD_URL ? `  --port ignored: .env already has CONNECTD_URL=${have.CONNECTD_URL}` : "",
+    installFailed ? `  the install failed: run ${installFailed} yourself` : "",
     typed ? "" : "  run connectd types once the packages are installed (it writes .connectd/app.ts, which lib/oc.ts imports)",
   ];
   const next = [
     step("connectd add github", `a provider into ${folders}/ (\`connectd add\` lists them), then its env names in .env`),
     step(relative(dir, client), "return your signed-in user's id from user(req)"),
-    isNext ? "" : step("oc.routes", "mount GET and POST at /api/connectd/* in your app (Express: toNode from @kavishkagaya/connectd-sdk/node)"),
+    isNext ? "" : step("oc.routes", "mount GET and POST at /api/connectd/* in your app (Express: toNode from @kavishkagaya/connectd/sdk/node)"),
     step("connectd dev", `the runtime on ${have.CONNECTD_URL || `http://localhost:${port}`}`),
-    cloudflare ? "" : step("to deploy", "npm i -D @kavishkagaya/connectd-cloudflare, then target: cloudflare({ name }) in the config"),
+    target
+      ? step("connectd deploy", TARGETS[target].next)
+      : config
+        ? ""
+        : step("to deploy", `${installCommand(packageManager(dir), [...TARGETS.cloudflare.packages]).flat().join(" ")}, then target: cloudflare({ name }) in the config`),
   ];
   log([...done.filter(Boolean), "", "Next:", ...next.filter(Boolean)].join("\n"));
 }

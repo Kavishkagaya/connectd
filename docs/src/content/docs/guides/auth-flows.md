@@ -158,7 +158,7 @@ The app's own token, with no user. It's minted at connect and minted again when 
 A JWT signed with a service account's key, traded for a token (RFC 7523), as with Google service accounts.
 
 ```ts
-import { connection, type ServiceAccount } from "@kavishkagaya/connectd-connections";
+import { connection, type ServiceAccount } from "@kavishkagaya/connectd/connections";
 
 export default connection()
   .config<ServiceAccount>((env) => ({ clientEmail: env("GOOGLE_SA_EMAIL"), privateKey: env("GOOGLE_SA_KEY") }))

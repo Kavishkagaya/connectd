@@ -76,6 +76,10 @@ Your app's origin must be in `sessions.origins` in `oc.config.ts`.
 
 ## 2. The connect UI in the browser
 
+:::note
+`@kavishkagaya/connectd-connect` isn't published yet. Until it is, connect with a link to `oc.routes` (above).
+:::
+
 `@kavishkagaya/connectd-connect` is a zero-dependency browser package for a popup flow or an inline form. Your backend creates a short-lived **session token**, and the browser uses only that.
 
 ```ts title="server: an endpoint your page calls"

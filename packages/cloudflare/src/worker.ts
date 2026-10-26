@@ -2,8 +2,8 @@
 // copies it into .connectd/deploy/ and points each import below at a resolved path. It runs in
 // workerd, so it's typechecked with Workers types (tsconfig.workers.json), not by the root tsc.
 import { env } from "cloudflare:workers";
-import { runtime } from "@kavishkagaya/connectd-runtime";
-import { cloudflare, d1Index } from "@kavishkagaya/connectd-runtime/cloudflare";
+import { runtime } from "@kavishkagaya/connectd/runtime";
+import { cloudflare, d1Index } from "@kavishkagaya/connectd/runtime/cloudflare";
 import config from "connectd:config";
 import { type Env, options } from "@kavishkagaya/connectd";
 

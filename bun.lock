@@ -14,10 +14,6 @@
       "dependencies": {
         "@kavishkagaya/connectd": "workspace:*",
         "@kavishkagaya/connectd-cloudflare": "workspace:*",
-        "@kavishkagaya/connectd-connections": "workspace:*",
-        "@kavishkagaya/connectd-kernel": "workspace:*",
-        "@kavishkagaya/connectd-runtime": "workspace:*",
-        "@kavishkagaya/connectd-sdk": "workspace:*",
       },
     },
     "examples/nextjs": {
@@ -25,10 +21,6 @@
       "dependencies": {
         "@kavishkagaya/connectd": "workspace:*",
         "@kavishkagaya/connectd-cloudflare": "workspace:*",
-        "@kavishkagaya/connectd-connections": "workspace:*",
-        "@kavishkagaya/connectd-kernel": "workspace:*",
-        "@kavishkagaya/connectd-runtime": "workspace:*",
-        "@kavishkagaya/connectd-sdk": "workspace:*",
         "next": "16.0.10",
         "react": "19.2.3",
         "react-dom": "19.2.3",
@@ -42,30 +34,25 @@
     },
     "packages/cli": {
       "name": "@kavishkagaya/connectd",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "bin": {
         "connectd": "./src/bin.ts",
       },
       "dependencies": {
+        "@kavishkagaya/connectd-connections": "workspace:*",
         "@kavishkagaya/connectd-dashboard": "workspace:*",
+        "@kavishkagaya/connectd-kernel": "workspace:*",
+        "@kavishkagaya/connectd-runtime": "workspace:*",
+        "@kavishkagaya/connectd-sdk": "workspace:*",
         "esbuild": "^0.28.2",
       },
       "devDependencies": {
         "@kavishkagaya/connectd-cloudflare": "workspace:*",
-        "@kavishkagaya/connectd-connections": "workspace:*",
-        "@kavishkagaya/connectd-kernel": "workspace:*",
-        "@kavishkagaya/connectd-runtime": "workspace:*",
-        "@kavishkagaya/connectd-sdk": "workspace:*",
-      },
-      "peerDependencies": {
-        "@kavishkagaya/connectd-connections": "workspace:*",
-        "@kavishkagaya/connectd-kernel": "workspace:*",
-        "@kavishkagaya/connectd-runtime": "workspace:*",
       },
     },
     "packages/cloudflare": {
       "name": "@kavishkagaya/connectd-cloudflare",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.0",
         "@cloudflare/workers-types": "^5.20261011.1",
@@ -77,12 +64,11 @@
       },
       "peerDependencies": {
         "@kavishkagaya/connectd": "workspace:*",
-        "@kavishkagaya/connectd-runtime": "workspace:*",
       },
     },
     "packages/connect": {
       "name": "@kavishkagaya/connectd-connect",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@kavishkagaya/connectd-connections": "workspace:*",
         "@kavishkagaya/connectd-kernel": "workspace:*",
@@ -91,14 +77,14 @@
     },
     "packages/connections": {
       "name": "@kavishkagaya/connectd-connections",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@kavishkagaya/connectd-kernel": "workspace:*",
       },
     },
     "packages/dashboard": {
       "name": "@kavishkagaya/connectd-dashboard",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@kavishkagaya/connectd-connections": "workspace:*",
         "@kavishkagaya/connectd-kernel": "workspace:*",
@@ -111,7 +97,7 @@
     },
     "packages/kernel": {
       "name": "@kavishkagaya/connectd-kernel",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "devDependencies": {
         "@cloudflare/vitest-plugin": "1.4.0",
         "@cloudflare/workers-types": "^5.20261011.1",
@@ -122,6 +108,7 @@
       "name": "@kavishkagaya/connectd-providers",
       "version": "0.0.0",
       "dependencies": {
+        "@kavishkagaya/connectd": "workspace:*",
         "@kavishkagaya/connectd-connections": "workspace:*",
       },
       "devDependencies": {
@@ -130,7 +117,7 @@
     },
     "packages/runtime": {
       "name": "@kavishkagaya/connectd-runtime",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@kavishkagaya/connectd-connections": "workspace:*",
         "@kavishkagaya/connectd-kernel": "workspace:*",
@@ -143,7 +130,7 @@
     },
     "packages/sdk": {
       "name": "@kavishkagaya/connectd-sdk",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "@kavishkagaya/connectd-connections": "workspace:*",
         "@kavishkagaya/connectd-kernel": "workspace:*",
