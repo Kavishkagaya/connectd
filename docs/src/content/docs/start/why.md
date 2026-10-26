@@ -50,7 +50,7 @@ connectd is the part of your backend that owns connections. You describe each pr
 ## What it is not
 
 - **Not an auth provider for your own users.** connectd doesn't sign users into your app. Your app tells connectd who's signed in, and connectd connects *their* third-party accounts.
-- **Not a hosted black box.** The runtime is open source and runs on your own Cloudflare account (or anywhere you write a driver for). A managed service is planned, but it runs the same code.
+- **Not a hosted black box.** The runtime is open source and runs on your own Cloudflare account (or anywhere you write a platform for). A managed service is planned, but it runs the same code.
 - **Not a giant catalog you import.** Providers are [copied into your project](/concepts/providers-as-code/) and become your code, like shadcn/ui components.
 
 ## Who it's for

@@ -125,4 +125,4 @@ flowchart LR
 ## Next
 
 - [The connection lifecycle](/concepts/lifecycle/): the states a connection moves through, and why.
-- [Architecture](/concepts/architecture/): the layers underneath, from drivers to the SDK.
+- [Architecture](/concepts/architecture/): the layers underneath, from the platform to the SDK.

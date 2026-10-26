@@ -6,15 +6,15 @@ sidebar:
   label: Overview
 ---
 
-connectd is Apache-2.0 and built in the open. Contributions are welcome: providers, drivers, fixes, docs, and the hard questions in design issues.
+connectd is Apache-2.0 and built in the open. Contributions are welcome: providers, platforms, fixes, docs, and the hard questions in design issues.
 
 ## Ways to help
 
 - **Add a provider** to the catalog. The most direct value. See [adding a provider](/contributing/providers/).
 - **Fix or improve docs.** Every page has an *Edit page* link. See [docs](/contributing/docs/).
 - **Pick up an issue.** Work is planned as [GitHub issues](https://github.com/Kavishkagaya/connectd/issues), with epics per layer and [#1](https://github.com/Kavishkagaya/connectd/issues/1) as the roadmap.
-- **Build a driver or a target** for another platform: a server driver (Postgres, SQLite) is on the roadmap.
-- **Report bugs** with a failing test where you can. The memory driver makes most bugs reproducible in a few lines.
+- **Build a platform or a target**: a server platform (Postgres, SQLite) is on the roadmap.
+- **Report bugs** with a failing test where you can. The memory platform makes most bugs reproducible in a few lines.
 
 ## Setup
 
@@ -38,7 +38,7 @@ bun run dev          # connectd dev on :8787
 
 ```text
 packages/
-  kernel/        L1 + L0: the tools (cell, timer, queue, …) and the drivers (memory, do, parity)
+  kernel/        L1 + L0: the tools (cell, timer, queue, …) and the platform contract with its implementations (memory, do, parity)
   connections/   L2: connection() builder, auth flows, lifecycle, OAuth atoms, testing harness
   runtime/       L3: host, HTTP routes, proxy, events, webhooks, sessions, index, actions
   sdk/           L4: the server SDK (fetch only)
@@ -60,8 +60,8 @@ CLAUDE.md        a dense map of the codebase
 
 - **A layer only uses the one below it.** The kernel never imports Cloudflare. `cloudflare:workers` appears in exactly three files.
 - **Kernel = mechanism.** A tool that mentions a connection, token or provider isn't kernel code.
-- **Races go through `cas` or `take`.** Handlers interleave at every `await`, and the memory driver deliberately doesn't serialize, so tests catch races.
-- **Time is `driver.now()`**, never `Date.now()`.
+- **Races go through `cas` or `take`.** Handlers interleave at every `await`, and the memory platform deliberately doesn't serialize, so tests catch races.
+- **Time is `atom.now()` / `platform.now()`**, never `Date.now()`.
 - **Small, minimal code.** No abstraction without a second use.
 - **Deliberate shortcuts are marked** with a `// ponytail:` comment that names the limit and the upgrade path:
 
@@ -77,12 +77,12 @@ CLAUDE.md        a dense map of the codebase
 | What | Where | Runner |
 | --- | --- | --- |
 | Kernel tools, lifecycle, flows, runtime, SDK, CLI | `src/*.test.ts` next to each file | `bun test` |
-| Driver equivalence | `kernel/src/drivers/parity.ts` | memory under Bun, DO under vitest in workerd |
-| The DO driver, the Cloudflare runtime, the generated Worker | `test/` | vitest (workerd) |
+| Platform equivalence | `kernel/src/drivers/parity.ts` (`parity`, `platformParity`) | memory under Bun, Durable Objects + D1 under vitest in workerd |
+| The Cloudflare platform, the Cloudflare runtime, the generated Worker | `test/` | vitest (workerd) |
 | Providers | `providers/src/providers.test.ts`, against fakes | `bun test` |
 | Real browser | `packages/*/e2e/chromium.ts` | By hand, with Playwright |
 
-New driver behaviour goes into **parity**, not one driver's tests. One file: `cd packages/kernel && bun test src/limiter.test.ts`.
+New platform behaviour goes into **parity**, not one platform's tests. One file: `cd packages/kernel && bun test src/limiter.test.ts`.
 
 ## Process
 

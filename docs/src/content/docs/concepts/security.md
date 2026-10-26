@@ -39,7 +39,7 @@ Your app needs only `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECR
 
 ## Definition code is sandboxed by interface
 
-A definition's functions get a narrow `ctx`: `config`, `fetch`, `redirectUri`, `now`. They never see the driver, the encryption keys or other connections, and the kernel performs every write. A definition that throws leaves state untouched.
+A definition's functions get a narrow `ctx`: `config`, `fetch`, `redirectUri`, `now`. They never see the platform, the encryption keys or other connections, and the kernel performs every write. A definition that throws leaves state untouched.
 
 That's isolation by API inside one isolate. A definition can still burn CPU or hang until workerd's limits stop it. It's your own code, so that's the right trade for self-hosting.
 

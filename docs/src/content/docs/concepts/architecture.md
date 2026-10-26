@@ -1,6 +1,6 @@
 ---
 title: Architecture
-description: The five layers, from storage drivers to the SDK, and the rules that keep them apart.
+description: The five layers, from the platform to the SDK, and the rules that keep them apart.
 sidebar:
   order: 3
 ---
@@ -25,33 +25,51 @@ Each layer is its own package in the repo, so a layer can only use the one below
 | L3 Runtime | `@kavishkagaya/connectd/runtime` | HTTP, extensions, events, webhooks |
 | L2 Connections | `@kavishkagaya/connectd/connections` | OAuth, credentials, states, providers |
 | L1 Kernel | `@kavishkagaya/connectd/kernel` | Safe storage, timers and delivery. Nothing about connections. |
-| L0 Drivers | `@kavishkagaya/connectd/kernel/memory`, `/kernel/do` | Where bytes and alarms live |
+| L0 Platform | `@kavishkagaya/connectd/kernel` (the contract), `/kernel/memory`, `/kernel/do` | Where bytes, alarms, config and logs live |
 
-## L0 · Drivers: infrastructure only
+## L0 · Platform: infrastructure only
 
-A driver gives one **instance** four things, and nothing else:
+What a deployment target provides comes in two parts. The **Atom** is one connection's state, with a single owner. The **Platform** is the whole deployment around the atoms. Nothing above L0 knows which platform it runs on.
 
 ```ts
-interface Driver {
+interface Atom {
+  readonly name: string;
   now(): number;
-  store: { get; put; cas; take; delete };      // versioned key-value, atomic per op, optional TTL
+  store: { get; put; cas; take; delete };            // versioned key-value, atomic per op, optional TTL
   timer: { set(name, at, payload?); cancel(name) };  // durable named alarms
-  call(instance, method, args): Promise<Json>; // reach another instance
 }
+
+interface Platform {
+  readonly version: string;                  // the deployed code's; stored state outlives it
+  now(): number;
+  env(name): string | undefined;             // the deployment's configuration values
+  fetch(input, init?): Promise<Response>;    // outbound HTTP
+  log(level, event, fields?): void;
+  defer(work: Promise<unknown>): void;       // work that may outlive its request
+  atoms: { call(name, method, args); destroy(name) };  // atoms by name, created on first use
+  db: Management;                            // connectd's own management data (the connection index)
+  limits: { valueBytes; callBytes };
+}
+
+type Program = (atom: Atom, platform: Platform) => Handler;
 ```
 
 - `cas` writes only if the version still matches. It's how every race is resolved.
 - `take` reads and deletes in one step, so at most one caller gets the value. It's what single-use tickets are built on.
-- There are two drivers: **Durable Objects** (production: one DO per instance, its storage, its alarm) and **in-memory** (dev and tests, with a fake or real clock, and a snapshot/restore).
+- **At most one live handler per atom name**, across the deployment. Durable Objects give this by construction; a server platform needs leases.
+- An atom that can't be reached throws `Unavailable`; going over `limits` throws `LimitExceeded`, on every platform.
+- `db` holds fixed operations for connectd's own needs (today: the connection index), never a generic query and never user-facing. Each platform implements them in its own storage.
+- Store and timers survive restarts and redeploys; anything in memory doesn't.
+- There are two platforms: **Cloudflare** (production: one Durable Object per atom, D1 for `db`, the Worker's env) and **memory** (dev and tests, with a fake or real clock, snapshot/restore and fault injection).
 
-Both pass the same **parity suite**, a shared set of tests run against the memory driver under Bun and against the DO driver inside workerd. New driver behaviour goes into parity, so the two can't drift apart.
+Both pass the same two **parity suites**: `parity` (an atom) and `platformParity` (atoms, destroy, limits at the exact boundary, env, defer, every `db` operation), run against memory under Bun and against Durable Objects + D1 inside workerd. New platform behaviour goes into parity, so the two can't drift apart.
 
 ## L1 · Kernel: mechanism, never policy
 
-The kernel turns a raw driver into safe tools. Its rule: **a tool that mentions a connection, a token or a provider doesn't belong in the kernel.**
+The kernel turns a raw atom into safe tools. Its rule: **a tool that mentions a connection, a token or a provider doesn't belong in the kernel.**
 
 ```ts
-const k = kernel(driver, { instance, keys, stateKey });
+const k = kernel(atom, platform, { keys, stateKey });
 const record = k.cell<Record, Msg>("record");   // declared once…
 const refresh = k.flight<Credential>();
 return k.serve({ token: async () => … });        // …used through handles
@@ -118,16 +136,16 @@ flowchart TB
 ```
 
 - One Worker, one Durable Object class, one D1 database. `connectd deploy` generates and deploys all three through wrangler.
-- App-wide things are instances too. `app:github` holds the shared, app-level rate limit, reached with `driver.call`.
-- `cloudflare:workers` is imported in exactly three places: the DO driver, `runtime/src/cloudflare.ts` and the Worker template. Everything else runs anywhere.
+- App-wide things are atoms too. `app:github` holds the shared, app-level rate limit, reached with `platform.atoms.call`.
+- `cloudflare:workers` is imported in exactly two places: the Cloudflare platform (`kernel/src/drivers/do.ts`) and the Worker template. Everything else runs anywhere.
 
-In `connectd dev`, the same runtime runs on the memory driver behind `node:http`, with an in-memory index.
+In `connectd dev`, the same runtime runs on the memory platform behind `node:http`, with its index in memory.
 
 ## Design rules that hold everywhere
 
-- **Concurrency.** Handlers interleave at every `await`, as in Durable Objects. The memory driver deliberately doesn't serialize either, so tests catch races. Anything that races goes through `cas` or `take`.
+- **Concurrency.** Handlers interleave at every `await`, as in Durable Objects. The memory platform deliberately doesn't serialize either, so tests catch races. Anything that races goes through `cas` or `take`.
 - **Durability.** A state change and its messages land in one `cas` (the outbox), and `queue.relay` moves them on exactly once. Timers aren't atomic with writes, so every timer-driven job also has an on-demand path.
-- **Time.** Always `driver.now()`, never `Date.now()`, so tests can jump the clock.
+- **Time.** Always `atom.now()` or `platform.now()`, never `Date.now()`, so tests can jump the clock.
 - **User code can't corrupt state.** Definition hooks run *before* the kernel writes. A throw leaves the record untouched.
 - **Data crosses boundaries as JSON.** Instance calls take and return `Json`, and errors cross as data (`{ error: { code, status, message } }`).
 
