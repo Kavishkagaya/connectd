@@ -8,7 +8,6 @@ import {
   directory,
   events,
   type Extension,
-  type Index,
   proxy,
   type RuntimeOptions,
   type Settings,
@@ -57,6 +56,19 @@ export type Project = {
 };
 
 export type Env = Record<string, string | undefined>;
+
+/** Where a deployment's configuration values come from, name by name: the platform's `env`. */
+export type EnvSource = (name: string) => string | undefined;
+
+/** An `Env` over a source, read one name at a time (`env.NAME`, as a config reads it). It can't be listed. */
+export const envOf = (read: EnvSource): Env =>
+  new Proxy({} as Env, {
+    get: (_, n) => (typeof n === "string" ? read(n) : undefined),
+    has: (_, n) => typeof n === "string" && read(n) !== undefined,
+    ownKeys: () => {
+      throw new Error("the platform's env is read one name at a time; it can't be listed");
+    },
+  });
 /** A project, or a function of the environment (`.env` and the process env in dev, Worker vars and secrets deployed), read one name at a time. */
 export type Config = Project | ((env: Env) => Project);
 
@@ -141,9 +153,11 @@ export function resolve(config: Config, env: Env): Resolved {
   return { ...p, config: { ...p.config, ...own }, registry, missing, envNames: [...names].filter((n) => !n.startsWith("CONNECTD_")).sort() };
 }
 
-/** What a Worker gets of `env`: the names the project reads, and `CONNECTD_*` (keys, URL, API key, events secret). */
-export const workerEnv = (env: Env, names: string[]): Env =>
-  Object.fromEntries(Object.entries(env).filter(([k, v]) => v !== undefined && (k.startsWith("CONNECTD_") || names.includes(k))));
+/** What the runtime gets of the env: the names the project reads, and `CONNECTD_*` (keys, URL, API key, events secret). */
+export const workerEnv =
+  (read: EnvSource, names: string[]): EnvSource =>
+  (n) =>
+    n.startsWith("CONNECTD_") || names.includes(n) ? read(n) : undefined;
 
 /** Definitions that need connector config and have none (they answer `not_configured`), or lack env names they read. */
 export const unconfigured = (p: Project & { missing?: Record<string, string[]> }) =>
@@ -154,18 +168,22 @@ export const unconfigured = (p: Project & { missing?: Record<string, string[]> }
 /** `github (GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET), notes`: the unconfigured ones, with the env names each lacks. */
 export const unconfiguredText = (p: Resolved) => unconfigured(p).map((id) => (p.missing[id]?.length ? `${id} (${p.missing[id].join(", ")})` : id));
 
-function need(env: Env, name: string) {
-  const v = env[name];
+function need(env: EnvSource, name: string) {
+  const v = env(name);
   if (!v) throw new Error(`${name} is not set`);
   return v;
 }
 
+/** Key versions are one byte (kernel `encrypt`), so these are every name a key can have. */
+const KEY_VERSIONS = Array.from({ length: 255 }, (_, i) => i + 1);
+
 /** Settings from the environment. `CONNECTD_PUBLIC_URL` is where `/callback` and `/webhooks` are reached from outside. */
-export async function settings(p: Project, env: Env): Promise<Settings> {
+export async function settings(p: Project, env: EnvSource): Promise<Settings> {
   const url = need(env, ENV.url).replace(/\/+$/, "");
-  const versions = Object.keys(env).flatMap((k) => (k.startsWith(ENV.key) && env[k] ? [Number(k.slice(ENV.key.length))] : [])).filter(Number.isInteger);
+  // Read name by name (the platform's env can't be listed).
+  const versions = KEY_VERSIONS.filter((v) => env(`${ENV.key}${v}`));
   if (!versions.length) throw new Error(`${ENV.key}1 is not set`);
-  const keys = Object.fromEntries(versions.map((v) => [v, env[`${ENV.key}${v}`] as string]));
+  const keys = Object.fromEntries(versions.map((v) => [v, env(`${ENV.key}${v}`) as string]));
   const config: Record<string, unknown> = {};
   for (const d of p.definitions ?? []) if (definitionOf(d).auth.fields) config[d.id] = null;
   return {
@@ -181,21 +199,21 @@ export async function settings(p: Project, env: Env): Promise<Settings> {
 }
 
 /**
- * Everything `runtime()` takes, for a config and an environment. The index is the host's: memory in
- * dev, D1 deployed (`d1Index`). Each built-in extension is a no-op until its settings are set; the
- * dashboard is on unless `dashboard: false`.
+ * Everything `runtime()` takes, for a config and the platform's env (`platform.env`). The connection
+ * index is the platform's too (`platform.db`). Each built-in extension is a no-op until its settings
+ * are set; the dashboard is on unless `dashboard: false`.
  */
-export function options(config: Config, env: Env, index: Index): RuntimeOptions & { project: Resolved } {
+export function options(config: Config, env: EnvSource): RuntimeOptions & { project: Resolved } {
   // Resolved against only what it reads, in dev and in the Worker alike (a Worker also holds
   // secrets from earlier deploys and `wrangler secret put`).
-  const own = workerEnv(env, resolve(config, env).envNames);
-  const project = resolve(config, own);
+  const own = workerEnv(env, resolve(config, envOf(env)).envNames);
+  const project = resolve(config, envOf(own));
   let loaded: Promise<Settings> | undefined;
   return {
     project,
     definitions: project.registry,
     ...(project.actions ? { actions: project.actions } : {}),
     settings: () => (loaded ??= settings(project, own)),
-    extensions: [proxy(), events(), webhooks(), sessions(), directory(index), ...(project.dashboard === false ? [] : [dashboard()]), ...(project.extensions ?? [])],
+    extensions: [proxy(), events(), webhooks(), sessions(), directory(), ...(project.dashboard === false ? [] : [dashboard()]), ...(project.extensions ?? [])],
   };
 }

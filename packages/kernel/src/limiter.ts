@@ -1,4 +1,4 @@
-import type { Driver, Json } from "./driver.ts";
+import type { Atom, Json, Platform } from "./platform.ts";
 import { loop } from "./cell.ts";
 
 /**
@@ -27,7 +27,7 @@ type Op = { op: "acquire" | "refund" | "observe"; name: string; limit: Limit; n?
 const rateKey = (name: string) => `r:${name}`;
 
 /** Read-modify-cas on one limiter's TAT. `f` returns the new TAT, or null to leave it. Expires once it's in the past. */
-const update = <T>(d: Driver, name: string, f: (tat: number, now: number) => { tat: number | null; result: T }) =>
+const update = <T>(d: Atom, name: string, f: (tat: number, now: number) => { tat: number | null; result: T }) =>
   loop(d, rateKey(name), (cur) => {
     const now = d.now();
     const { tat, result } = f(Math.max((cur?.value as number | undefined) ?? now, now), now);
@@ -35,7 +35,7 @@ const update = <T>(d: Driver, name: string, f: (tat: number, now: number) => { t
   });
 
 /** Runs one op on a limiter stored in this instance (a local call, or `kernel.rate` from another). */
-export async function rate(d: Driver, args: Json): Promise<Json> {
+export async function rate(d: Atom, args: Json): Promise<Json> {
   const { op, name, limit, n = 1, observed = {} } = args as unknown as Op;
   const t = limit.periodMs / limit.count;
   if (op === "acquire")
@@ -58,11 +58,11 @@ export async function rate(d: Driver, args: Json): Promise<Json> {
   return null;
 }
 
-/** A limiter handle: here, or in another instance (an app-wide scope) reached with `driver.call`. */
-export function limiter(d: Driver, self: string, instance: string, name: string, limit: Limit) {
+/** A limiter handle: here, or in another atom (an app-wide scope) reached with `platform.atoms.call`. */
+export function limiter(d: Atom, p: Platform, instance: string, name: string, limit: Limit) {
   const run = (op: Op["op"], extra: { n?: number; observed?: Observed } = {}) => {
     const args = { op, name, limit, ...extra } as unknown as Json;
-    return instance === self ? rate(d, args) : d.call(instance, RATE, args);
+    return instance === d.name ? rate(d, args) : p.atoms.call(instance, RATE, args);
   };
   const l: Limiter = { instance, name, limit, observe: async (observed) => void (await run("observe", { observed })) };
   runners.set(l, run);

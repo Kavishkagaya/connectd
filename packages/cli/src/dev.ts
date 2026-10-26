@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import type { Handler, Json, Program } from "@kavishkagaya/connectd-kernel";
 import { memory, type Snapshot } from "@kavishkagaya/connectd-kernel/memory";
-import { memoryIndex, type Runtime, runtime } from "@kavishkagaya/connectd-runtime";
+import { type Runtime, runtime } from "@kavishkagaya/connectd-runtime";
 import { loadEnv, workdir } from "./env.ts";
 import { ENV, type Env, generateKeys, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
@@ -53,12 +53,16 @@ export type Loaded = { project: Resolved; unconfigured: string[]; publicUrl: str
 export function swappable() {
   let current: Program | undefined;
   let gen = 0;
-  const program: Program = (d, id) => {
+  // Until the first program is in, calls and timers (restored from a snapshot) wait for it.
+  let loaded = () => {};
+  const first = new Promise<void>((r) => (loaded = r));
+  const program: Program = (atom, platform) => {
     let h: Handler | undefined;
     let mine = -1;
     let busy = 0;
     const run = async (f: (h: Handler) => Promise<Json | void>) => {
-      if (!h || (mine !== gen && busy === 0)) [h, mine] = [(current as Program)(d, id), gen];
+      if (!current) await first;
+      if (!h || (mine !== gen && busy === 0)) [h, mine] = [(current as Program)(atom, platform), gen];
       busy++;
       try {
         return await f(h);
@@ -68,7 +72,7 @@ export function swappable() {
     };
     return { onCall: (m, a) => run((x) => x.onCall(m, a)) as Promise<Json>, onTimer: (n, p) => run((x) => x.onTimer(n, p)) as Promise<void> };
   };
-  return { program, swap: (p: Program) => void ((current = p), gen++) };
+  return { program, swap: (p: Program) => void ((current = p), gen++, loaded()) };
 }
 
 /** Build output, dependencies, hidden folders (.next, .git, .connectd, .turbo), and generated types: saves there never reload. `.env*` does. */
@@ -176,8 +180,10 @@ export async function dev(o: DevOptions) {
 
   const hot = swappable();
   let rt: Runtime | undefined;
-  const index = memoryIndex();
-  let w: ReturnType<typeof memory> | undefined;
+  /** What the platform's env reads: the last loaded `.env` (and process env), with the public URL. */
+  let env: Env = {};
+  const w = memory(hot.program, { clock: Date.now, env: (n) => (Object.hasOwn(env, n) ? env[n] : undefined), ...(snapshot ? { snapshot } : {}) });
+  let indexed = false;
 
   // The app calls CONNECTD_URL: a URL dev can't listen on (https, a path, no port) would leave them apart.
   if (o.port === undefined && first.CONNECTD_URL && portOf(first.CONNECTD_URL) === undefined)
@@ -185,8 +191,8 @@ export async function dev(o: DevOptions) {
   const server = await serve(o.port ?? portOf(first.CONNECTD_URL) ?? PORT, async (req) => {
       const t = performance.now();
       const res =
-        rt && w
-          ? await rt.fetch(req, w.call)
+        rt
+          ? await rt.fetch(req, w.platform)
           : Response.json({ error: { code: "not_ready", status: 503, message: "the config failed to load; see the dev server's output" } }, { status: 503 });
       // The path only: queries carry codes and states.
       log(`${req.method} ${new URL(req.url).pathname} ${res.status} ${Math.round(performance.now() - t)}ms`);
@@ -207,19 +213,27 @@ export async function dev(o: DevOptions) {
   let watched: { folders: string | null; dirs: Set<string> } | undefined;
   /** Build, import and validate; swap only if all of it worked. */
   async function load(): Promise<Loaded> {
-    const env = loadEnv(dir, o.env);
-    const { config, folders, inputs } = await loadProject(dir, entry, build, ++n, env);
+    const fresh = loadEnv(dir, o.env);
+    const { config, folders, inputs } = await loadProject(dir, entry, build, ++n, fresh);
     watched = { folders, dirs: new Set([dir, ...[...inputs].filter((f) => !IGNORED.test(f)).map(dirname)]) };
-    const publicUrl = (o.url ?? tun?.url ?? env[ENV.url] ?? local).replace(/\/+$/, "");
+    const publicUrl = (o.url ?? tun?.url ?? fresh[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
-    // options() keeps only what the project reads, as deployed: a connection that works here works there.
-    const opts = options(config, { ...env, [ENV.url]: publicUrl }, index);
-    await opts.settings(); // missing keys or a bad one fail here, not on the first request
-    const next = runtime({ ...opts, now: () => (w as ReturnType<typeof memory>).now() });
+    const before = env;
+    env = { ...fresh, [ENV.url]: publicUrl };
+    let opts: ReturnType<typeof options>;
+    try {
+      // From the platform's env, as deployed; options() keeps only what the project reads, so a connection that works here works there.
+      opts = options(config, w.platform.env);
+      await opts.settings(); // missing keys or a bad one fail here, not on the first request
+    } catch (e) {
+      env = before; // the running version keeps the values it loaded with
+      throw e;
+    }
+    const next = runtime(opts);
     rt = next;
     hot.swap(next.program);
-    if (!w) {
-      w = memory(hot.program, { clock: Date.now, ...(snapshot ? { snapshot } : {}) });
+    if (!indexed) {
+      indexed = true;
       // The index isn't in the snapshot: rebuild it from each connection (the #26 repair path).
       for (const id of Object.keys(snapshot ?? {})) if (id.startsWith("conn:")) await w.call(id, "index.sync", null);
     }
@@ -240,7 +254,6 @@ export async function dev(o: DevOptions) {
 
   let saved = snapshot ? JSON.stringify(snapshot) : "";
   function save() {
-    if (!w) return;
     const s = JSON.stringify(w.dump());
     if (s === saved) return;
     // Credentials in it are sealed, but handshakes and outboxes aren't: owner only.
@@ -304,7 +317,7 @@ export async function dev(o: DevOptions) {
     loaded: () => loaded,
     reload,
     save,
-    /** The memory driver (tests advance its clock to drive retries). */
+    /** The memory platform (tests advance its clock to drive retries). */
     driver: () => w,
     /** Idempotent (SIGINT twice, a test's cleanup after its own stop). */
     stop: () =>
@@ -312,7 +325,7 @@ export async function dev(o: DevOptions) {
         for (const x of watchers) x.close();
         clearInterval(saver);
         await server.stop();
-        await w?.stop();
+        await w.stop();
         save();
         tun?.stop();
       })()),

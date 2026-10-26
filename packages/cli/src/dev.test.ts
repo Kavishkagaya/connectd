@@ -331,8 +331,8 @@ test("swap: an instance moves to the new program only when idle, never two live 
   const gate = new Promise<void>((r) => (release = r));
   const prog =
     (v: string): Program =>
-    (_d, id) => {
-      made.push(`${v}:${id}`);
+    (atom) => {
+      made.push(`${v}:${atom.name}`);
       return { onCall: async (m) => (m === "slow" ? (await gate, v) : v), onTimer: async () => {} };
     };
   const hot = swappable();

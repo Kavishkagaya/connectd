@@ -1,4 +1,4 @@
-import type { Driver, Json } from "./driver.ts";
+import type { Atom, Json } from "./platform.ts";
 
 /** A stored value. `null` is reserved: it means "absent" on read and "no change" from `update`. */
 export type Value = Exclude<Json, null>;
@@ -7,7 +7,7 @@ export type Value = Exclude<Json, null>;
 type Step<T> = { result: T } | { result: T; write: Json; ttlMs?: number };
 
 /** Read, decide, cas, until it lands. Every safe update in the kernel goes through here. */
-export async function loop<T>(d: Driver, key: string, f: (cur: { v: number; value: Json } | null) => Step<T>): Promise<T> {
+export async function loop<T>(d: Atom, key: string, f: (cur: { v: number; value: Json } | null) => Step<T>): Promise<T> {
   for (;;) {
     const cur = await d.store.get(key);
     const s = f(cur);
@@ -44,7 +44,7 @@ export type Cell<V extends Value, M extends Json = never> = {
   outbox: { pending(): Promise<Item<M>[]>; ack(seq: number): Promise<void> };
 };
 
-export function cell<V extends Value, M extends Json = never>(d: Driver, key: string, name: string, opts: { ttlMs?: number } = {}): Cell<V, M> {
+export function cell<V extends Value, M extends Json = never>(d: Atom, key: string, name: string, opts: { ttlMs?: number } = {}): Cell<V, M> {
   const ttl = opts.ttlMs === undefined ? {} : { ttlMs: opts.ttlMs };
   const env = (cur: { value: Json } | null) => (cur?.value ?? null) as unknown as Envelope | null;
 

@@ -1,6 +1,6 @@
 import { BEARER, type Credential, inject, MissingField } from "@kavishkagaya/connectd-connections";
 import type { Json, Limit, Limiter } from "@kavishkagaya/connectd-kernel";
-import { type AnyDefinition, Fail, type Hosted, instanceOf } from "./host.ts";
+import { type AnyDefinition, Fail, type Hosted, instanceOf, message } from "./host.ts";
 import { ERROR_HEADER, reply } from "./http.ts";
 import type { Extension } from "./runtime.ts";
 
@@ -58,8 +58,8 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
           // Bookkeeping only: a failed settle must never cost the caller a response (the POST may have gone through).
           const settle = (a: Settle) =>
             api.call(instance, "proxy.settle", a as unknown as Json).then(
-              (r) => "error" in r && console.error("proxy settle", instance, r.error),
-              (e) => console.error("proxy settle", instance, e),
+              (r) => "error" in r && api.platform.log("error", "proxy.settle.failed", { atom: instance, error: r.error.message }),
+              (e) => api.platform.log("error", "proxy.settle.failed", { atom: instance, error: message(e) }),
             );
 
           const p = await api.call(instance, "proxy.prepare", null);
@@ -86,7 +86,7 @@ export function proxy(o: { timeoutMs?: number } = {}): Extension {
           const timer = setTimeout(() => ac.abort(), timeoutMs);
           let res: Response;
           try {
-            const f = api.settings.fetch ?? fetch;
+            const f = api.platform.fetch;
             // duplex: required to stream a request body (not in the DOM RequestInit types yet).
             res = await f(url, { method: req.method, headers, body: req.body, redirect: "manual", signal: ac.signal, ...({ duplex: "half" } as {}) });
           } catch (e) {

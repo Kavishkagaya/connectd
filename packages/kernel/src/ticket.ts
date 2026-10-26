@@ -1,4 +1,4 @@
-import type { Driver, Json } from "./driver.ts";
+import type { Atom, Json } from "./platform.ts";
 import { randomId, sign, verify } from "./secrets.ts";
 
 export type Ticket<D extends Json> = {
@@ -30,7 +30,7 @@ export async function routeTicket(t: string, stateKey: CryptoKey): Promise<{ ins
  * A signed, one-time, expiring pass (OAuth `state`, session tickets). Only a reference travels:
  * the data (a PKCE verifier) stays in the instance. `take` makes redemption single-use.
  */
-export function ticket<D extends Json>(d: Driver, instance: string, name: string, key: (id: string) => string, stateKey: CryptoKey, ttlMs: number): Ticket<D> {
+export function ticket<D extends Json>(d: Atom, instance: string, name: string, key: (id: string) => string, stateKey: CryptoKey, ttlMs: number): Ticket<D> {
   return {
     async issue(data) {
       const id = randomId();

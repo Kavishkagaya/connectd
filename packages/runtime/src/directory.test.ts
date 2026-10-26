@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { apiKey, defineConnection } from "@kavishkagaya/connectd-connections";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
-import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { directory, type Extension, findByExternal, type Index, memoryIndex, runtime } from "./index.ts";
+import { memory, memoryDb } from "@kavishkagaya/connectd-kernel/memory";
+import { directory, type Extension, type Index, runtime } from "./index.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 
@@ -19,6 +19,8 @@ const keyed = defineConnection({
 let externalFails = false;
 const plain = defineConnection({ id: "plain", auth: apiKey(["key"]) });
 
+const memoryIndex = () => memoryDb().connections;
+/** `index` stands in for the platform's management db (a wrapper injects failures). */
 async function setup(index: Index = memoryIndex(), extra: Extension[] = []) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
@@ -27,12 +29,12 @@ async function setup(index: Index = memoryIndex(), extra: Extension[] = []) {
     redirectUri: "https://oc.test/callback",
     config: { keyed: null, plain: null },
   };
-  const rt = runtime({ definitions: { keyed, plain }, settings: async () => settings, extensions: [directory(index), ...extra] });
-  const w = memory(rt.program);
+  const rt = runtime({ definitions: { keyed, plain }, settings: async () => settings, extensions: [directory(), ...extra] });
+  const w = memory(rt.program, { db: { connections: index } });
   const req = async (method: string, path: string, body?: Json, auth = "Bearer secret") => {
     const res = await rt.fetch(
       new Request(`https://oc.test${path}`, { method, headers: { authorization: auth }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
-      w.call,
+      w.platform,
     );
     return { status: res.status, body: (await res.json()) as any };
   };
@@ -67,8 +69,8 @@ test("list, filter, search, external lookup and pagination", async () => {
   expect(ids((await req("GET", "/connections?q=t2")).body)).toEqual(["keyed/b1"]);
   expect(ids((await req("GET", "/connections?q=A")).body)).toEqual(["keyed/a1", "keyed/a2"]);
   expect(ids((await req("GET", "/connections?def=keyed&external=team:T1")).body)).toEqual(["keyed/a1", "keyed/a2"]);
-  expect((await findByExternal(index, "keyed", "team", "T2")).map((r) => r.id)).toEqual(["b1"]);
-  expect(await findByExternal(index, "plain", "team", "T2")).toEqual([]);
+  expect((await index.byExternal("keyed", "team", "T2")).map((r) => r.id)).toEqual(["b1"]);
+  expect(await index.byExternal("plain", "team", "T2")).toEqual([]);
 
   const p1 = await req("GET", "/connections?limit=3");
   expect(ids(p1.body)).toEqual(["keyed/a1", "keyed/a2", "keyed/b1"]);
@@ -115,6 +117,7 @@ test("a failed index write is retried on the next call; index.sync repairs a los
       await rows.upsert(r);
     },
     list: (q) => rows.list(q),
+    byExternal: (...a) => rows.byExternal(...a),
   };
   const { req } = await setup(flaky);
   // The call itself doesn't fail: the DO is the source of truth.
@@ -151,7 +154,7 @@ test("a throwing external hook falls back to the last known ids; the row keeps t
 test("writes only when what the index shows changes", async () => {
   const rows = memoryIndex();
   const writes: string[] = [];
-  const { req } = await setup({ upsert: async (r) => (writes.push(`${r.id}:${r.state}`), rows.upsert(r)), list: (q) => rows.list(q) });
+  const { req } = await setup({ upsert: async (r) => (writes.push(`${r.id}:${r.state}`), rows.upsert(r)), list: (q) => rows.list(q), byExternal: (...a) => rows.byExternal(...a) });
   await req("POST", "/connections/keyed/a1/connect", { key: "k", team: "T1" });
   await req("POST", "/connections/keyed/a1/token");
   await req("GET", "/connections/keyed/a1");
@@ -175,6 +178,7 @@ test("an upsert that committed but threw doesn't let the next change be skipped"
       if (lose) throw new Error("response lost");
     },
     list: (q) => rows.list(q),
+    byExternal: (...a) => rows.byExternal(...a),
   };
   // Stands in for a failed refresh: active -> reauth_required.
   const reauth: Extension = {

@@ -90,19 +90,18 @@ async function setup() {
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { gh: { clientId: "cid", clientSecret: "cs" }, bare: null },
-    fetch: p.fetch,
     events: { url: "https://app.test/events", secret: `whsec_${key(3)}` },
   };
   const rt = runtime({ definitions: { gh, bare }, actions: { gh: { star, last, forget, sync, welcome }, bare: { ping, noApi } }, settings: async () => settings, extensions: [events()] });
-  const w = memory(rt.program);
+  const w = memory(rt.program, { fetch: p.fetch });
   const req = async (path: string, body?: Json) => {
-    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method: "POST", headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.call);
+    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method: "POST", headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.platform);
     return { status: res.status, body: (await res.json()) as any };
   };
   const login = async (id: string) => {
     const c = await req(`/connections/gh/${id}/connect`);
     const back = p.approve(c.body.url);
-    const res = await rt.fetch(new Request(`https://oc.test/callback?code=${back.code}&state=${encodeURIComponent(back.state)}`), w.call);
+    const res = await rt.fetch(new Request(`https://oc.test/callback?code=${back.code}&state=${encodeURIComponent(back.state)}`), w.platform);
     expect(res.status).toBe(200);
   };
   const store = async (id: string) => (await req(`/connections/gh/${id}/actions/last`)).body;

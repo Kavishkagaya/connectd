@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { apiKey, defineConnection, hmacHex, type StandardSchemaV1, safeEqual } from "@kavishkagaya/connectd-connections";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { type ConnectionEvent, directory, events, MAX_PAYLOAD, memoryIndex, runtime, type WebhookEvent, webhooks } from "./index.ts";
+import { type ConnectionEvent, directory, events, MAX_PAYLOAD, runtime, type WebhookEvent, webhooks } from "./index.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 const T0 = 1_700_000_000_000;
@@ -97,13 +97,14 @@ async function setup(o: { events?: boolean; down?: string } = {}) {
   Object.assign(fake, { fail: 0, ttl: null, n: 0, registered: [], unregistered: [], during: null, externalThrows: false });
   Object.assign(subs, { registered: [], unregistered: [], ttl: null, gate: null, failing: new Set() });
   const got: ConnectionEvent[] = [];
+  /** The providers and the app, as the platform's outbound fetch. */
+  const upstream = (async (_url: string, init?: RequestInit) => (got.push(JSON.parse(init?.body as string)), new Response(null, { status: 200 }))) as typeof fetch;
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { hooked: { appSecret: "app" }, subbed: { appSecret: "app" }, plain: null },
-    fetch: (async (_url: string, init?: RequestInit) => (got.push(JSON.parse(init?.body as string)), new Response(null, { status: 200 }))) as typeof fetch,
     webhooks: { url: "https://oc.test/webhooks/", key: await importHmacKey(key(5)) },
     ...(o.events === false ? {} : { events: { url: "https://app.test/events", secret: `whsec_${key(7)}` } }),
   };
@@ -111,14 +112,13 @@ async function setup(o: { events?: boolean; down?: string } = {}) {
   const rt = runtime({
     definitions: { hooked, subbed, plain },
     settings: async () => settings,
-    extensions: [events(), directory(memoryIndex()), webhooks()],
-    now: () => w!.now(),
+    extensions: [events(), directory(), webhooks()],
   });
-  w = memory(rt.program, { now: T0 });
+  w = memory(rt.program, { fetch: upstream, now: T0 });
   const send = async (method: string, path: string, body: string, headers: Record<string, string> = {}) => {
     // `down`: that instance's DO throws on receive (a fan-out failure).
     const call = (i: string, m: string, a: Json) => (i === o.down && m === "webhooks.receive" ? Promise.reject(new Error("DO down")) : w!.call(i, m, a));
-    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method, headers, body }), call);
+    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method, headers, body }), { ...w!.platform, atoms: { ...w!.platform.atoms, call } });
     return { status: res.status, body: (await res.json()) as any };
   };
   const api = (path: string, body: Json = null) => send("POST", path, JSON.stringify(body), { authorization: "Bearer secret" });

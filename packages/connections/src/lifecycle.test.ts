@@ -10,9 +10,9 @@ const H = 3_600_000;
 async function setup(refresh?: LifecycleOptions["refresh"]) {
   const opts = { keys: await importKeys({ 1: k(1) }, 1), stateKey: await importHmacKey(k(9)) };
   const conns = new Map<string, ReturnType<typeof lifecycle>>();
-  const w = memory((d, id) => {
-    const kern = kernel(d, { instance: id, ...opts });
-    conns.set(id, lifecycle(kern, refresh ? { refresh } : {}));
+  const w = memory((d, p) => {
+    const kern = kernel(d, p, opts);
+    conns.set(d.name, lifecycle(kern, refresh ? { refresh } : {}));
     return kern.serve({ init: async () => null });
   });
   const get = async (id = "c1") => {
@@ -187,8 +187,8 @@ test("secrets: credential re-sealed under the current key on read", async () => 
   const keys2 = await importKeys({ 1: k(1), 2: k(2) }, 2);
   const onlyV2 = await importKeys({ 2: k(2) }, 2);
   // One instance, three views: written under v1, read under v1+v2 (re-seals), then v2 alone works.
-  const w = memory((d, id) => {
-    const views = ([opts.keys, keys2, onlyV2] as Keys[]).map((keys) => lifecycle(kernel(d, { instance: id, keys, stateKey: opts.stateKey })));
+  const w = memory((d, p) => {
+    const views = ([opts.keys, keys2, onlyV2] as Keys[]).map((keys) => lifecycle(kernel(d, p, { keys, stateKey: opts.stateKey })));
     return {
       async onCall(m) {
         const c = views[Number(m)]!;

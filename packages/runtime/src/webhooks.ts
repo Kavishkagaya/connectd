@@ -1,8 +1,7 @@
 import { type Credential, type Incoming, NotActive, type SchemaIssue, type Webhook } from "@kavishkagaya/connectd-connections";
 import { base64url, type Json } from "@kavishkagaya/connectd-kernel";
-import { findByExternal } from "./directory.ts";
 import { emit } from "./events.ts";
-import { Fail, fault, type Hosted, instanceOf, type Reply, type Settings } from "./host.ts";
+import { Fail, fault, type Hosted, instanceOf, message, type Reply, type Settings } from "./host.ts";
 import { reply } from "./http.ts";
 import type { Extension } from "./runtime.ts";
 
@@ -122,9 +121,9 @@ export function webhooks(): Extension {
           if (!inc.external) throw new Fail("bad_request", 400, `${defId} webhook names no account to route by`);
           if (!api.index) throw new Fail("not_configured", 503, "app-level webhooks need the connection index (directory)");
           // Revoked connections stay in the index (terminal, never deleted); a reconnect is a new one.
-          const rows = (await findByExternal(api.index, defId, inc.external.key, inc.external.value)).filter((r) => r.state !== "revoked");
+          const rows = (await api.index.byExternal(defId, inc.external.key, inc.external.value)).filter((r) => r.state !== "revoked");
           const replies = await Promise.all(
-            rows.map((r) => api.call(instanceOf(defId, r.id), "webhooks.receive", msg as unknown as Json).catch((e): Reply => ({ error: fault(e, "worker") }))),
+            rows.map((r) => api.call(instanceOf(defId, r.id), "webhooks.receive", msg as unknown as Json).catch((e): Reply => ({ error: fault(e, "front door", api.platform.log) }))),
           );
           // Any other failure: answer 5xx so the provider retries. The connections that took it get it twice;
           // receivers dedupe on `delivery`.
@@ -158,7 +157,7 @@ export function webhooks(): Extension {
       });
 
       async function unregister(cred: Credential, hook: Json) {
-        if (hook !== null && w?.unregister) await w.unregister(bound.ctx, cred, hook).catch((e) => console.error("webhook unregister", h.instance, e));
+        if (hook !== null && w?.unregister) await w.unregister(bound.ctx, cred, hook).catch((e) => h.platform.log("error", "webhooks.unregister.failed", { atom: h.instance, error: message(e) }));
       }
 
       /** The account (external ids) the connection is on now; null when it has none or the hook throws. */
@@ -271,7 +270,7 @@ export function webhooks(): Extension {
             // Renewed: stop the old one. Unsubscribed or revoked meanwhile: stop the new one.
             await unregister(cred, landed ? s.hook : reg.hook);
           } catch (e) {
-            console.error("webhook subscription renewal failed", h.instance, id, e);
+            h.platform.log("error", "webhooks.renewal.failed", { atom: h.instance, subscription: id, error: message(e) });
             failed ??= e;
           }
         }
@@ -395,7 +394,7 @@ export function webhooks(): Extension {
               taken = Object.values(cur?.by ?? {});
               return { by: {}, closed: true };
             });
-            if (taken.length && !cred) return console.error("webhooks not unregistered: connection has no credential (not active)", h.instance, taken.length);
+            if (taken.length && !cred) return h.platform.log("warn", "webhooks.not_unregistered", { atom: h.instance, reason: "no credential (not active)", subscriptions: taken.length });
             for (const s of taken) if (cred) await unregister(cred, s.hook);
             return;
           }
@@ -413,7 +412,7 @@ export function webhooks(): Extension {
           if (cur?.hook == null) return;
           // ponytail: one best-effort try, no retry: after the revoke there's no credential to retry with.
           // A leftover subscription gets 410 from the per-connection route (and Google channels lapse).
-          if (!cred) return console.error("webhook not unregistered: connection has no credential (not active)", h.instance, cur.hook);
+          if (!cred) return h.platform.log("warn", "webhooks.not_unregistered", { atom: h.instance, reason: "no credential (not active)", hook: cur.hook });
           await unregister(cred, cur.hook);
         },
       };

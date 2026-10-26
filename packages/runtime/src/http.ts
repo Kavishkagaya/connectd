@@ -1,23 +1,22 @@
-import { base64url, type Json, routeTicket } from "@kavishkagaya/connectd-kernel";
+import { base64url, type Json, type Management, type Platform, routeTicket } from "@kavishkagaya/connectd-kernel";
 import type { ActionSpec } from "@kavishkagaya/connectd-connections";
-import { type Index, listing } from "./directory.ts";
+import { listing } from "./directory.ts";
 import { type AnyDefinition, COOKIES, Fail, type Fault, fault, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { complete } from "./session.ts";
-
-/** How the Worker reaches an instance: a DO stub's `onCall` on Cloudflare, `memory().call` in tests. */
-export type Call = (instance: string, method: string, args: Json) => Promise<Json>;
 
 export type Api = {
   /** Call a connection method; always a Reply (connection methods never throw across the boundary). */
   call(instance: string, method: string, args: Json): Promise<Reply>;
   settings: Settings;
-  /** The Worker's clock (webhook timestamp checks); a fake in tests. */
+  /** The platform the front door runs on. */
+  platform: Platform;
+  /** `platform.now` (webhook timestamp checks). */
   now(): number;
   definitions: Record<string, AnyDefinition>;
   /** The actions (#54) by connection id. */
   actions: Record<string, ActionSpec[]>;
-  /** The connection index, if an extension provides one (`directory`). */
-  index?: Index;
+  /** The connection index (`platform.db.connections`), when the `directory` extension keeps it current. */
+  index?: Management["connections"];
   /** Method names refused over HTTP (`Extension.internal`). */
   internal: Set<string>;
 };
@@ -101,27 +100,36 @@ export async function authorized(req: Request, key: string) {
   return key !== "" && (await digest(req.headers.get("authorization") ?? "")) === (await digest(`Bearer ${key}`));
 }
 
-/** The Worker's fetch: route by first path segment, check the API key unless the route is public. */
+/** The front door's fetch: route by first path segment, check the API key unless the route is public. */
 export function http(o: {
   routes: Record<string, Route>;
   definitions: Record<string, AnyDefinition>;
   actions?: Record<string, ActionSpec[]>;
   settings: () => Promise<Settings>;
-  index?: Index;
+  /** The `directory` extension is on: `api.index` is the platform's. */
+  index?: boolean;
   internal?: Set<string>;
-  now?: () => number;
 }) {
-  return async (req: Request, call: Call): Promise<Response> => {
+  return async (req: Request, platform: Platform): Promise<Response> => {
     try {
       const settings = await o.settings();
       const [name = "", ...path] = new URL(req.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
       const route = Object.hasOwn(o.routes, name) ? o.routes[name] : undefined;
       if (!route) throw new Fail("not_found", 404, "no such route");
       if (!route.public && !(await authorized(req, settings.apiKey))) throw new Fail("unauthorized", 401, "missing or wrong API key");
-      const api: Api = { settings, now: o.now ?? Date.now, definitions: o.definitions, actions: o.actions ?? {}, call: async (i, m, a) => (await call(i, m, a)) as Reply, internal: o.internal ?? new Set(), ...(o.index ? { index: o.index } : {}) };
+      const api: Api = {
+        settings,
+        platform,
+        now: () => platform.now(),
+        definitions: o.definitions,
+        actions: o.actions ?? {},
+        call: async (i, m, a) => (await platform.atoms.call(i, m, a)) as Reply,
+        internal: o.internal ?? new Set(),
+        ...(o.index ? { index: platform.db.connections } : {}),
+      };
       return await route.fetch(req, api, path);
     } catch (e) {
-      return reply({ error: fault(e, "worker") });
+      return reply({ error: fault(e, "front door", platform.log) });
     }
   };
 }

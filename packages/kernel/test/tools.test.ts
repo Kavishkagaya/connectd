@@ -1,7 +1,7 @@
 import { listDurableObjectIds, reset, runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { afterEach, expect, test } from "vitest";
-import type { Json } from "../src/driver.ts";
+import type { Json } from "../src/platform.ts";
 import { log } from "./tools.ts";
 
 // The kernel's tools on real Durable Objects (SQLite storage, alarms) in workerd. The memory driver

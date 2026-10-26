@@ -64,6 +64,7 @@ test("overview: definitions with their config state and the URLs to register, no
   expect(status).toBe(200);
   expect(body).toEqual({
     callbackUrl: `${OC}/callback`,
+    version: "dev",
     index: true,
     events: { url: "https://app.test/events?…" },
     sessions: { origins: ["https://app.test"] },

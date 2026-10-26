@@ -1,6 +1,6 @@
 import { apiKey, defineConnection, hmacHex, safeEqual } from "@kavishkagaya/connectd-connections";
 import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
-import { cloudflare, d1Index } from "../src/cloudflare.ts";
+import { cloudflare } from "../src/cloudflare.ts";
 import { directory } from "../src/directory.ts";
 import { events } from "../src/events.ts";
 import { runtime } from "../src/runtime.ts";
@@ -32,7 +32,13 @@ const keyed = defineConnection({
   },
 });
 
-export const index = d1Index("INDEX");
+export const OPTS = {
+  binding: "CONNECTION",
+  db: "INDEX",
+  now: () => g.ocNow!,
+  // The provider rejects key "bad", so a throwing hook can be tested across the DO boundary.
+  fetch: async (url: Request | string | URL) => new Response(null, { status: String(url).endsWith("=bad") ? 401 : 200 }),
+};
 
 const rt = runtime({
   definitions: { keyed },
@@ -45,13 +51,10 @@ const rt = runtime({
     // Delivery runs from alarms, which never fire under the fake clock; the outbox is what's checked.
     events: { url: "https://app.test/events", secret: `whsec_${key(7)}` },
     webhooks: { url: "https://oc.test/webhooks", key: await importHmacKey(key(5)) },
-    // The provider rejects key "bad", so a throwing hook can be tested across the DO boundary.
-    fetch: (async (url: RequestInfo | URL) => new Response(null, { status: String(url).endsWith("=bad") ? 401 : 200 })) as typeof fetch,
   }),
-  extensions: [directory(index), events(), webhooks()],
-  now: () => g.ocNow!,
+  extensions: [directory(), events(), webhooks()],
 });
 
-const cf = cloudflare(rt, { binding: "CONNECTION", now: () => g.ocNow! });
+const cf = cloudflare(rt, OPTS);
 export class Connection extends cf.ConnectionDO {}
 export default { fetch: cf.fetch };

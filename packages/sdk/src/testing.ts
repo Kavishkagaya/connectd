@@ -2,7 +2,7 @@ import { apiKey, defineConnection, type OAuth2, oauth2 } from "@kavishkagaya/con
 import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { directory, emit, events, type Extension, memoryIndex, proxy, runtime, sessions } from "@kavishkagaya/connectd-runtime";
+import { directory, emit, events, type Extension, proxy, runtime, sessions } from "@kavishkagaya/connectd-runtime";
 import { connectd } from "./client.ts";
 
 /** The real runtime on the memory driver, fake providers, and an SDK client pointed at its fetch. Tests only. */
@@ -55,24 +55,20 @@ export async function setup() {
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null },
-    fetch: p.fetch,
     events: { url: EVENTS, secret: SECRET },
     sessions: { key: await importHmacKey(key(5)), origins: ["https://app.test"] },
   };
-  let clock = () => T0;
   const rt = runtime({
     definitions: { example, keyed },
     settings: async () => settings,
-    extensions: [proxy(), events(), directory(memoryIndex()), sessions(), hook],
-    now: () => clock(),
+    extensions: [proxy(), events(), directory(), sessions(), hook],
   });
-  const w = memory(rt.program, { now: T0 });
-  clock = w.now;
+  const w = memory(rt.program, { fetch: p.fetch, now: T0 });
   const sleeps: number[] = [];
   const oc = connectd({
     url: "https://oc.test/",
     apiKey: "secret",
-    fetch: (input, init) => rt.fetch(new Request(input, init), w.call),
+    fetch: (input, init) => rt.fetch(new Request(input, init), w.platform),
     sleep: (ms) => (sleeps.push(ms), w.advance(ms)),
   });
   /** connect + the user approving at the provider + the provider redirecting to /callback. */
@@ -80,7 +76,7 @@ export async function setup() {
     login = as;
     const { url } = await oc.connection("example", id).connect();
     const back = p.approve(url!);
-    const res = await rt.fetch(new Request(`https://oc.test/callback?code=${back.code}&state=${encodeURIComponent(back.state)}`), w.call);
+    const res = await rt.fetch(new Request(`https://oc.test/callback?code=${back.code}&state=${encodeURIComponent(back.state)}`), w.platform);
     if (!res.ok) throw new Error(`callback ${res.status}`);
   };
   return {

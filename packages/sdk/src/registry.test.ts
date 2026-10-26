@@ -33,6 +33,13 @@ const me = action({ run: async (conn: ActionCtx<typeof tracker>) => conn.identit
 type R = { tracker: Entry<typeof tracker, { open: typeof open; me: typeof me }> };
 
 test("typed client: ids, actions (input and output), identity and subscriptions come from the registry", async () => {
+  /** The providers and the app, as the platform's outbound fetch. */
+  const upstream = (async (url: string, init?: RequestInit) => {
+    if (new Headers(init?.headers).get("x-key") !== "k") return new Response(null, { status: 401 });
+    if (url === "https://api.tracker.test/me") return Response.json({ user: "ada" });
+    if (url.startsWith("https://api.tracker.test/new?title=")) return Response.json({ id: 7 });
+    return new Response(null, { status: 404 });
+  }) as typeof fetch;
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
@@ -40,16 +47,10 @@ test("typed client: ids, actions (input and output), identity and subscriptions 
     redirectUri: "https://oc.test/callback",
     config: { tracker: null },
     webhooks: { url: "https://oc.test/webhooks", key: await importHmacKey(key(5)) },
-    fetch: (async (url: string, init?: RequestInit) => {
-      if (new Headers(init?.headers).get("x-key") !== "k") return new Response(null, { status: 401 });
-      if (url === "https://api.tracker.test/me") return Response.json({ user: "ada" });
-      if (url.startsWith("https://api.tracker.test/new?title=")) return Response.json({ id: 7 });
-      return new Response(null, { status: 404 });
-    }) as typeof fetch,
   };
   const rt = runtime({ definitions: { tracker }, actions: { tracker: { open, me } }, settings: async () => settings, extensions: [webhooks()] });
-  const w = memory(rt.program);
-  const oc = connectd<R>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
+  const w = memory(rt.program, { fetch: upstream });
+  const oc = connectd<R>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.platform) });
 
   const t = oc.connection("tracker", "u1");
   // @ts-expect-error not a connection of this project
@@ -157,6 +158,8 @@ type B = { board: Entry<typeof board, { sync: typeof sync; nightly: typeof night
 test("typed events: webhook.<topic> from the declared topics, <action>.completed, own events via conn.emit", async () => {
   const secret = `whsec_${key(3)}`;
   let deliver: (req: Request) => Promise<Response> = async () => new Response(null, { status: 204 });
+  /** The providers and the app, as the platform's outbound fetch. */
+  const upstream = (async (url: string, init?: RequestInit) => (url === "https://app.test/events" ? deliver(new Request(url, init)) : new Response(null, { status: 404 }))) as typeof fetch;
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
@@ -165,11 +168,10 @@ test("typed events: webhook.<topic> from the declared topics, <action>.completed
     config: { board: null },
     webhooks: { url: "https://oc.test/webhooks", key: await importHmacKey(key(5)) },
     events: { url: "https://app.test/events", secret },
-    fetch: (async (url: string, init?: RequestInit) => (url === "https://app.test/events" ? deliver(new Request(url, init)) : new Response(null, { status: 404 }))) as typeof fetch,
   };
   const rt = runtime({ definitions: { board }, actions: { board: { sync, nightly, bad, unknown, broken } }, settings: async () => settings, extensions: [eventsExt(), webhooks()] });
-  const w = memory(rt.program);
-  const oc = connectd<B>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.call) });
+  const w = memory(rt.program, { fetch: upstream });
+  const oc = connectd<B>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.platform) });
   const ev = oc.events({ secret, now: w.now });
   deliver = (req) => ev.handle(req);
 
@@ -194,7 +196,7 @@ test("typed events: webhook.<topic> from the declared topics, <action>.completed
   await expect(b.actions.unknown()).rejects.toThrow();
   await expect(b.actions.broken()).rejects.toThrow();
   const hook = (topic: string) =>
-    rt.fetch(new Request("https://oc.test/webhooks/board/u1", { method: "POST", headers: { "x-topic": topic }, body: JSON.stringify({ n: 1 }) }), w.call).then((r) => r.json());
+    rt.fetch(new Request("https://oc.test/webhooks/board/u1", { method: "POST", headers: { "x-topic": topic }, body: JSON.stringify({ n: 1 }) }), w.platform).then((r) => r.json());
   expect(await hook("card")).toEqual({ delivered: 1 });
   // Not a declared topic: acknowledged, never an event.
   expect(await hook("board")).toEqual({ delivered: 0, ignored: "board" });

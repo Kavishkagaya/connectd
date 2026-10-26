@@ -53,6 +53,8 @@ export type DefinitionInfo = {
 export type Overview = {
   /** The redirect URI to register with every OAuth provider. */
   callbackUrl: string;
+  /** The deployed code's version (`platform.version`). */
+  version: string;
   /** A connection index is installed (`directory`): list and search work. */
   index: boolean;
   /** Where events go; the query string is hidden (it may carry a token). */
@@ -116,6 +118,7 @@ function overview(api: Api): Overview {
   const hooks = (s.webhooks?.url ?? `${new URL(s.redirectUri).origin}/webhooks`).replace(/\/+$/, "");
   return {
     callbackUrl: s.redirectUri,
+    version: api.platform.version,
     index: !!api.index,
     events: s.events ? { url: bare(s.events.url) } : null,
     sessions: s.sessions ? { origins: s.sessions.origins } : null,

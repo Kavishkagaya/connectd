@@ -167,12 +167,11 @@ export async function setup() {
     apiKey: "secret",
     redirectUri: `${OC}/callback`,
     config: { example: { clientId: "cid" }, keyed: null },
-    fetch: p.fetch,
     sessions: { key: await importHmacKey(key(5)), origins: [APP] },
   };
-  const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [sessions()], now: Date.now });
-  const w = memory(rt.program, { now: Date.now() });
-  const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(`${OC}${path}`, init), w.call);
+  const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [sessions()] });
+  const w = memory(rt.program, { fetch: p.fetch, clock: Date.now });
+  const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(`${OC}${path}`, init), w.platform);
 
   /** The app's backend issuing a session. */
   const token = async (def: string, id: string, args: Record<string, unknown> = { origin: APP }) => {

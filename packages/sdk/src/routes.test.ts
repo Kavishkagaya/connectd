@@ -9,7 +9,7 @@ const APP = "https://app.test";
 async function wired() {
   const t = await setup();
   const got: string[] = [];
-  const fetch = (input: string, init: RequestInit) => t.rt.fetch(new Request(input, init), t.w.call);
+  const fetch = (input: string, init: RequestInit) => t.rt.fetch(new Request(input, init), t.w.platform);
   const app = connectd({
     url: "https://oc.test",
     apiKey: "secret",
@@ -95,7 +95,7 @@ test("app route: accounts, return paths, who may connect", async () => {
         headers: { authorization: `Bearer ${token}`, "sec-fetch-site": "same-origin", ...(body ? { origin: "https://oc.test" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}),
       }),
-      t.w.call,
+      t.w.platform,
     );
   expect(await (await page("")).json()).toMatchObject({ definition: "keyed", id: "u1", flow: "form", confirm: true, next: `${APP}/api/connectd/return?return=%2Fsettings` });
   const { completion } = (await (await page("/connect", { fields: { key: "sk" } })).json()) as { completion: string };
@@ -134,7 +134,7 @@ test("app route, refused: return paths off the origin (tabs and newlines too), c
 
 test("app route: user ids are strings without ':' (numbers are fine)", async () => {
   const t = await setup();
-  const fetch = (input: string, init: RequestInit) => t.rt.fetch(new Request(input, init), t.w.call);
+  const fetch = (input: string, init: RequestInit) => t.rt.fetch(new Request(input, init), t.w.platform);
   const colon = connectd({ url: "https://oc.test", apiKey: "secret", fetch, user: () => "org:1" });
   await expect(colon.routes.GET(new Request(`${APP}/api/connectd/connect/example`))).rejects.toThrow("user ids can't contain");
   const numeric = connectd({ url: "https://oc.test", apiKey: "secret", fetch, user: () => 42 });

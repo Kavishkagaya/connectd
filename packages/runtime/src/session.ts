@@ -333,7 +333,7 @@ const session: Route = {
       }
       throw new Fail("not_found", 404, "no such route");
     } catch (e) {
-      const f = e instanceof Refused ? e.fault : fault(e, "worker");
+      const f = e instanceof Refused ? e.fault : fault(e, "front door", api.platform.log);
       return Response.json({ error: f }, { status: f.status, headers: { ...headers, [ERROR_HEADER]: f.code } });
     }
   },
@@ -414,7 +414,7 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
       try {
         return { target, url: await h.bound.connect({}, target as unknown as Json) } as unknown as Json;
       } catch (e) {
-        return { target, error: fault(e, h.instance) } as unknown as Json;
+        return { target, error: fault(e, h.instance, h.platform.log) } as unknown as Json;
       }
     },
 

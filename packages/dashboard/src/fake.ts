@@ -2,7 +2,7 @@ import { action, apiKey, defineConnection, hmacHex, oauth2, type StandardSchemaV
 import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { directory, type Extension, events, memoryIndex, runtime, webhooks } from "@kavishkagaya/connectd-runtime";
+import { directory, type Extension, events, runtime, webhooks } from "@kavishkagaya/connectd-runtime";
 import { dashboard } from "./index.ts";
 
 /**
@@ -73,19 +73,20 @@ export async function setup(o: { extensions?: Extension[] } = {}) {
   let status = 200;
   const delivered: string[] = [];
   const p = fakeOAuth({ tokenUrl: TOKEN, issue: (n) => ({ access_token: `a${n}` }), error: () => ({ status: 400, body: { error: "invalid_grant" } }) });
+  /** The providers and the app, as the platform's outbound fetch. */
+  const upstream = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).startsWith("https://app.test/events")) {
+      if (status < 300) delivered.push(init?.body as string);
+      return new Response(null, { status });
+    }
+    return p.fetch(url, init);
+  }) as typeof fetch;
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
     apiKey: API_KEY,
     redirectUri: `${OC}/callback`,
     config: { keyed: null, example: { clientId: "cid", clientSecret: CLIENT_SECRET }, half: { clientId: "", clientSecret: undefined } },
-    fetch: (async (url: string | URL | Request, init?: RequestInit) => {
-      if (String(url).startsWith("https://app.test/events")) {
-        if (status < 300) delivered.push(init?.body as string);
-        return new Response(null, { status });
-      }
-      return p.fetch(url, init);
-    }) as typeof fetch,
     events: { url: "https://app.test/events?token=in-the-url", secret: EVENTS_SECRET },
     webhooks: { url: `${OC}/webhooks`, key: await importHmacKey(key(5)) },
     sessions: { key: await importHmacKey(key(4)), origins: ["https://app.test"] },
@@ -95,11 +96,10 @@ export async function setup(o: { extensions?: Extension[] } = {}) {
     definitions: { keyed, example: oauth("example"), half: oauth("half"), absent: oauth("absent") },
     actions: { keyed: keyedActions },
     settings: async () => settings,
-    extensions: o.extensions ?? [events(), webhooks(), directory(memoryIndex()), dashboard()],
-    now: () => w!.now(),
+    extensions: o.extensions ?? [events(), webhooks(), directory(), dashboard()],
   });
-  w = memory(rt.program, { now: T0 });
-  const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(new URL(path, OC), init), w!.call);
+  w = memory(rt.program, { fetch: upstream, now: T0 });
+  const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(new URL(path, OC), init), w!.platform);
   const api = async (path: string, body?: Json, method = body === undefined ? "GET" : "POST") => {
     const res = await send(path, { method, headers: { authorization: `Bearer ${API_KEY}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     return { status: res.status, body: (await res.json()) as any };

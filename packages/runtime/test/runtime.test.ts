@@ -2,11 +2,12 @@ import { applyD1Migrations, type D1Migration, reset, runInDurableObject } from "
 import { hmacHex } from "@kavishkagaya/connectd-connections";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { findByExternal } from "../src/directory.ts";
-import worker, { index } from "./worker.ts";
+import { cloudflarePlatform } from "@kavishkagaya/connectd-kernel/do";
+import worker, { OPTS } from "./worker.ts";
 
 const e = env as unknown as { INDEX: D1Database; MIGRATIONS: D1Migration[] };
 beforeEach(() => applyD1Migrations(e.INDEX, e.MIGRATIONS));
+const index = () => cloudflarePlatform(env as unknown as Record<string, unknown>, OPTS).db.connections;
 afterEach(() => reset()); // wipe DO storage, D1 and instances between tests
 
 const req = async (method: string, path: string, body?: unknown) => {
@@ -51,7 +52,7 @@ test("cloudflare: the DO keeps its D1 row current; list, filter, search, externa
   expect(ids((await req("GET", "/connections?state=active")).body)).toEqual(["k1", "k3"]);
   expect(ids((await req("GET", "/connections?q=CT_B")).body)).toEqual(["k2"]);
   expect(ids((await req("GET", "/connections?def=keyed&external=account:acct_a")).body)).toEqual(["k1", "k3"]);
-  expect((await findByExternal(index, "keyed", "account", "acct_b")).map((r) => r.id)).toEqual(["k2"]);
+  expect((await index().byExternal("keyed", "account", "acct_b")).map((r) => r.id)).toEqual(["k2"]);
 
   const p1 = await req("GET", "/connections?limit=2");
   expect(ids(p1.body)).toEqual(["k1", "k2"]);
@@ -62,14 +63,14 @@ test("cloudflare: the DO keeps its D1 row current; list, filter, search, externa
 
 test("cloudflare: D1 upserts are monotonic and move the external ids with the row", async () => {
   const row = { def: "d", id: "i", reason: null, updatedAt: 1 };
-  await index.upsert({ ...row, state: "active", external: { team: "T2" }, version: 5 });
-  await index.upsert({ ...row, state: "pending", external: { team: "T1" }, version: 3 }); // arrived late
-  expect((await index.list({})).connections).toMatchObject([{ state: "active", external: { team: "T2" }, version: 5 }]);
-  expect(await findByExternal(index, "d", "team", "T1")).toEqual([]);
+  await index().upsert({ ...row, state: "active", external: { team: "T2" }, version: 5 });
+  await index().upsert({ ...row, state: "pending", external: { team: "T1" }, version: 3 }); // arrived late
+  expect((await index().list({})).connections).toMatchObject([{ state: "active", external: { team: "T2" }, version: 5 }]);
+  expect(await index().byExternal("d", "team", "T1")).toEqual([]);
 
-  await index.upsert({ ...row, state: "active", external: { team: "T3" }, version: 7, updatedAt: 2 });
-  expect(await findByExternal(index, "d", "team", "T2")).toEqual([]);
-  expect(await findByExternal(index, "d", "team", "T3")).toMatchObject([{ id: "i", createdAt: 1, updatedAt: 2 }]);
+  await index().upsert({ ...row, state: "active", external: { team: "T3" }, version: 7, updatedAt: 2 });
+  expect(await index().byExternal("d", "team", "T2")).toEqual([]);
+  expect(await index().byExternal("d", "team", "T3")).toMatchObject([{ id: "i", createdAt: 1, updatedAt: 2 }]);
 });
 
 const signed = async (path: string, payload: unknown, secret: string) => {

@@ -30,13 +30,12 @@ async function setup(o: { sessions?: boolean } = {}) {
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null },
-    fetch: p.fetch,
     ...(o.sessions === false ? {} : { sessions: { key: await importHmacKey(key(5)), origins: [APP, "http://localhost:5173"] } }),
   };
   let w: ReturnType<typeof memory> | undefined;
-  const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [sessions(), proxy()], now: () => w!.now() });
-  w = memory(rt.program, { now: T0 });
-  const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(`https://oc.test${path}`, init), w!.call);
+  const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [sessions(), proxy()] });
+  w = memory(rt.program, { fetch: p.fetch, now: T0 });
+  const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(`https://oc.test${path}`, init), w!.platform);
   const json = async (res: Response) => ({ status: res.status, body: (await res.json()) as any, headers: res.headers });
 
   /** The app's backend: `POST /connections/:def/:id/session` with the API key. */

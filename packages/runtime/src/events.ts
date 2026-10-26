@@ -1,6 +1,6 @@
 import type { State, Transition } from "@kavishkagaya/connectd-connections";
 import { type Delivery, type Json, type Kernel, type Queue, QueueError, type Summary } from "@kavishkagaya/connectd-kernel";
-import { Fail, type Hosted } from "./host.ts";
+import { Fail, type Hosted, message } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 import { sign } from "./signature.ts";
 import type { WebhookData } from "./webhooks.ts";
@@ -130,7 +130,7 @@ export function events(): Extension {
         const body = JSON.stringify(e);
         const ts = Math.floor(h.k.now() / 1000);
         try {
-          const res = await (h.settings.fetch ?? fetch)(cfg.url, {
+          const res = await h.platform.fetch(cfg.url, {
             method: "POST",
             headers: { "content-type": "application/json", "webhook-id": e.id, "webhook-timestamp": String(ts), "webhook-signature": await sign(cfg.secret, e.id, ts, body) },
             body,
@@ -140,7 +140,7 @@ export function events(): Extension {
           });
           return res.status >= 200 && res.status < 300 ? null : `HTTP ${res.status}`;
         } catch (err) {
-          console.error("event delivery failed", e.id, String(err));
+          h.platform.log("warn", "events.delivery.failed", { atom: h.instance, id: e.id, error: message(err) });
           return err instanceof Error && err.name === "TimeoutError" ? "timeout" : `network error: ${err instanceof Error ? err.message : String(err)}`;
         }
       }
