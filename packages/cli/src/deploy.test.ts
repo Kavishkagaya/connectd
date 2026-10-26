@@ -9,6 +9,8 @@ import { deploy, type DeployOptions } from "./deploy.ts";
 import { loadProject } from "./load.ts";
 
 const TMP = join(import.meta.dir, "..", ".tmp-deploy");
+// These run as a local shell does, also on a CI runner (CI=true): the CI cases set CI themselves.
+delete process.env.CI;
 mkdirSync(TMP, { recursive: true });
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 
