@@ -10,8 +10,6 @@ export type Api = {
   settings: Settings;
   /** The platform the front door runs on. */
   platform: Platform;
-  /** `platform.now` (webhook timestamp checks). */
-  now(): number;
   definitions: Record<string, AnyDefinition>;
   /** The actions (#54) by connection id. */
   actions: Record<string, ActionSpec[]>;
@@ -120,7 +118,6 @@ export function http(o: {
       const api: Api = {
         settings,
         platform,
-        now: () => platform.now(),
         definitions: o.definitions,
         actions: o.actions ?? {},
         call: async (i, m, a) => (await platform.atoms.call(i, m, a)) as Reply,

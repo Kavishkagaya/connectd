@@ -1,5 +1,5 @@
 import { bind, type Definition, IllegalTransition, InputError, NotActive, OAuthError, safeEqual } from "@kavishkagaya/connectd-connections";
-import { type Atom, handleRate, type Json, type Kernel, type Keys, kernel, type Platform, type Program, RATE, type Ticket } from "@kavishkagaya/connectd-kernel";
+import { type Atom, handleRate, type Json, type Kernel, type Keys, kernel, message, type Platform, type Program, RATE, type Ticket } from "@kavishkagaya/connectd-kernel";
 
 /**
  * The connection host: one Program that runs any definition from a registry, one atom per
@@ -107,8 +107,8 @@ export class Fail extends Error {
 /** Connection instance key. The definition id is part of it, so a DO knows what to run with no lookup. */
 export const instanceOf = (def: string, id: string) => `conn:${def}:${id}`;
 
-/** An error's message, for logs and faults. */
-export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** An error's message, for logs and faults (the kernel's, for the extensions that import it from here). */
+export { message };
 
 /** What went wrong, as data. Errors that aren't connectd's own (definition code, bugs) are logged. */
 export function fault(e: unknown, instance: string, log: Platform["log"]): Fault {

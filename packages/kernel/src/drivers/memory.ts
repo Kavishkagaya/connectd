@@ -6,6 +6,7 @@ import {
   type Handler,
   type Json,
   type Level,
+  LIMITS,
   type Limits,
   type Management,
   PAGE,
@@ -16,6 +17,8 @@ import {
   within,
 } from "../platform.ts";
 
+export { LIMITS };
+
 type Entry = { v: number; value: Json; expiresAt?: number };
 type Timer = { at: number; payload: Json };
 type Instance = { handler: Handler; seq: number; store: Map<string, Entry>; timers: Map<string, Timer> };
@@ -23,11 +26,6 @@ type Instance = { handler: Handler; seq: number; store: Map<string, Entry>; time
 /** Every atom's store, versions and timers, as JSON: `dump()` writes it, `opts.snapshot` restores it. */
 export type Snapshot = Record<string, { seq: number; store: Record<string, Entry>; timers: Record<string, Timer> }>;
 
-/**
- * The strictest production platform's limits (Durable Objects), so what passes here passes there.
- * ponytail: one fixed pair; take them from the target platform when there's a second one.
- */
-export const LIMITS: Limits = { valueBytes: 1 << 20, callBytes: 1 << 20 };
 
 export type MemoryOptions = {
   /** Start of the fake clock. */

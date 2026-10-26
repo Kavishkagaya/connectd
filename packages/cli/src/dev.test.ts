@@ -271,6 +271,35 @@ test("restart: connections, the index and the keys survive; --reset starts empty
   expect((await c.oc.connections.page({})).connections).toEqual([]);
 });
 
+test("restart with a broken config: due timers wait for a good load, stop still exits, state.json is kept", async () => {
+  const w = world();
+  const dir = project();
+  const a = await start(dir, w.env);
+  await authorize(a.d, a.oc, "u1");
+  await a.d.stop();
+  // Every stored timer due now (the refresh), then a config that doesn't load.
+  const state = join(dir, ".connectd", "state.json");
+  const snap = JSON.parse(readFileSync(state, "utf8")) as Record<string, { timers: Record<string, { at: number }> }>;
+  for (const atom of Object.values(snap)) for (const t of Object.values(atom.timers)) t.at = 0;
+  expect(Object.values(snap).some((x) => Object.keys(x.timers).length)).toBe(true);
+  writeFileSync(state, JSON.stringify(snap));
+  writeFileSync(join(dir, "label.ts"), `export const label = ;\n`);
+  const b = await start(dir, w.env);
+  expect(b.lines.join("\n")).toContain("config failed to load");
+  await b.d.stop(); // used to hang: the timers waited on a program that never came
+  expect(readFileSync(state, "utf8")).toBe(JSON.stringify(snap));
+  writeFileSync(join(dir, "label.ts"), `export const label = "v1";\n`);
+  const c = await start(dir, w.env);
+  expect(await c.oc.connection("example", "u1").status()).toMatchObject({ state: "active" });
+});
+
+test("key versions: V0 is a key like any other", async () => {
+  const { settings } = await import("./project.ts");
+  const { CONNECTD_KEY_V1, ...rest } = KEYS;
+  const env: Record<string, string | undefined> = { ...rest, CONNECTD_KEY_V0: CONNECTD_KEY_V1, CONNECTD_PUBLIC_URL: "https://dev.test" };
+  expect((await settings({}, (n) => env[n])).keys.current).toBe(0);
+});
+
 test("tunnel: URL parsed from cloudflared's output, missing binary explained", async () => {
   expect(tunnelUrl("2026-10-13T00:00:00Z INF |  https://quiet-river-1a2b.trycloudflare.com  |")).toBe("https://quiet-river-1a2b.trycloudflare.com");
   expect(tunnelUrl("INF Requesting new quick Tunnel on trycloudflare.com...")).toBe(null);

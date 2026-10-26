@@ -1,4 +1,4 @@
-import type { Json, Kernel, Limit, Observed } from "@kavishkagaya/connectd-kernel";
+import { type Json, type Kernel, type Limit, message, type Observed } from "@kavishkagaya/connectd-kernel";
 import type { StandardSchemaV1 } from "./action.ts";
 import { type Credential, lifecycle, NotActive, type OAuth2 } from "./lifecycle.ts";
 import { OAuthError, type TokenResponse } from "./oauth.ts";
@@ -87,9 +87,6 @@ export function envConfig<C>(from: ConfigFrom<C>, env: Record<string, string | u
   const value = from(reader);
   return { value: missing.size ? null : value, read: [...read], missing: [...missing] };
 }
-
-/** An error's message, for logs. */
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** A webhook as the provider sent it. `body` is raw: verify before parsing. */
 export type Webhook = { headers: Headers; body: string };

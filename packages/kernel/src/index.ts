@@ -9,6 +9,7 @@ export {
   type Json,
   type Level,
   LimitExceeded,
+  LIMITS,
   type Limits,
   MAX_PAGE,
   type Management,
@@ -23,7 +24,7 @@ export { type Limit, type Limiter, type Observed, RATE, rate as handleRate, type
 export { type Delivery, type Queue, QueueError, type QueueOptions, type QueueStatus, type Summary } from "./queue.ts";
 export type { Flight, Mutex } from "./sync.ts";
 export { routeTicket, type Ticket } from "./ticket.ts";
-export type { Timer, TimerOptions } from "./timer.ts";
+export { message, type Timer, type TimerOptions } from "./timer.ts";
 
 // Pure helpers: no state, safe anywhere (the Worker included).
 export { type Backoff, backoff } from "./schedule.ts";

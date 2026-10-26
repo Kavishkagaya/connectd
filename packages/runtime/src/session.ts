@@ -165,7 +165,7 @@ async function signed<T extends { typ: string }>(api: Api, value: string, typ: T
 async function claimsOf(api: Api, token: string): Promise<Claims> {
   const c = await signed<Claims>(api, token, TYP);
   if (typeof c.exp !== "number" || typeof c.origin !== "string") throw new Fail("unauthorized", 401, "missing or forged session token");
-  if (c.exp <= api.now()) throw new Fail("session_expired", 401, "session token expired");
+  if (c.exp <= api.platform.now()) throw new Fail("session_expired", 401, "session token expired");
   return c;
 }
 

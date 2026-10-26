@@ -174,8 +174,8 @@ function need(env: EnvSource, name: string) {
   return v;
 }
 
-/** Key versions are one byte (kernel `encrypt`), so these are every name a key can have. */
-const KEY_VERSIONS = Array.from({ length: 255 }, (_, i) => i + 1);
+/** Key versions are one byte (kernel `encrypt`), so these are every name a key can have: V0 to V255. */
+const KEY_VERSIONS = Array.from({ length: 256 }, (_, i) => i);
 
 /** Settings from the environment. `CONNECTD_PUBLIC_URL` is where `/callback` and `/webhooks` are reached from outside. */
 export async function settings(p: Project, env: EnvSource): Promise<Settings> {

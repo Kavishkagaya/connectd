@@ -10,7 +10,7 @@ import { log } from "./tools.ts";
 const ns = (env as unknown as { TOOLS: DurableObjectNamespace }).TOOLS;
 const g = globalThis as { ocNow?: number };
 const call = (id: string, method: string, args: Json = null) =>
-  (ns.get(ns.idFromName(id)) as unknown as { onCall(m: string, a: Json): Promise<Json> }).onCall(method, args);
+  (ns.get(ns.idFromName(id)) as unknown as { onCall(m: string, a: Json, name: string): Promise<Json> }).onCall(method, args, id);
 async function advance(ms: number) {
   g.ocNow! += ms;
   for (const id of await listDurableObjectIds(ns)) await runDurableObjectAlarm(ns.get(id));

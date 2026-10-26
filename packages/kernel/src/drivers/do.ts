@@ -6,7 +6,7 @@ import {
   type ConnectionRow,
   type Handler,
   type Json,
-  type Limits,
+  LIMITS,
   type Management,
   PAGE,
   page,
@@ -15,6 +15,8 @@ import {
   Unavailable,
   within,
 } from "../platform.ts";
+
+export { LIMITS };
 
 /**
  * The Cloudflare platform: one Durable Object per atom (`idFromName`, so single owner by
@@ -38,17 +40,12 @@ export type CloudflareOptions = {
   fetch?: Platform["fetch"];
 };
 
-/**
- * What Durable Objects and D1 accept, with room to spare: SQLite-backed DOs cap a value (a row) at
- * 2 MB, RPC messages are larger.
- */
-export const LIMITS: Limits = { valueBytes: 1 << 20, callBytes: 1 << 20 };
-
 /** The binding `connectd deploy` adds (`version_metadata`): the deployed version's id. */
 export const VERSION_BINDING = "CF_VERSION_METADATA";
 
 type Env = Record<string, unknown>;
-type Stub = { onCall(method: string, args: Json): Promise<Json>; destroy(): Promise<void> };
+/** The platform passes the atom's name on every call: a DO woken by an alarm alone has no name to read from its id. */
+type Stub = { onCall(method: string, args: Json, name: string): Promise<Json>; destroy(name: string): Promise<void> };
 
 /** The platform in a Worker or a DO: `waitUntil` is the request's (`ctx.waitUntil`). */
 export function cloudflarePlatform(env: Env, opts: CloudflareOptions, waitUntil?: (p: Promise<unknown>) => void): Platform {
@@ -62,6 +59,14 @@ export function cloudflarePlatform(env: Env, opts: CloudflareOptions, waitUntil?
   const unreachable = (e: unknown) => {
     const x = e as { retryable?: boolean; overloaded?: boolean } | null;
     return !!x && typeof x === "object" && (x.retryable === true || x.overloaded === true);
+  };
+  const reach = async <T,>(name: string, f: (s: Stub) => Promise<T>): Promise<T> => {
+    try {
+      return await f(stub(name));
+    } catch (e) {
+      if (unreachable(e)) throw new Unavailable(`atom ${name}: ${e instanceof Error ? e.message : String(e)}`);
+      throw e;
+    }
   };
   return {
     version: (env[VERSION_BINDING] as { id?: string } | undefined)?.id ?? "unknown",
@@ -77,17 +82,11 @@ export function cloudflarePlatform(env: Env, opts: CloudflareOptions, waitUntil?
     atoms: {
       async call(name, method, args) {
         within("call args", args, LIMITS.callBytes);
-        let out: Json;
-        try {
-          out = await stub(name).onCall(method, args);
-        } catch (e) {
-          if (unreachable(e)) throw new Unavailable(`atom ${name}: ${e instanceof Error ? e.message : String(e)}`);
-          throw e;
-        }
+        const out = await reach(name, (s) => s.onCall(method, args, name));
         within("call result", out, LIMITS.callBytes);
         return out;
       },
-      destroy: (name) => stub(name).destroy(),
+      destroy: (name) => reach(name, (s) => s.destroy(name)),
     },
     db: d1(() => {
       const db = opts.db ? (env[opts.db] as D1Database | undefined) : undefined;
@@ -105,13 +104,15 @@ export function durableObject(program: Program, opts: CloudflareOptions): Progra
   const now = opts.now ?? Date.now;
 
   return class extends DurableObject<Env> {
-    #handler: Handler;
+    #handler: Handler | undefined;
     readonly #fresh: () => Handler;
+    readonly #named: (name: string) => Promise<void>;
     readonly #fire: () => Promise<void>;
     readonly #wipe: () => Promise<void>;
 
-    get handler() {
-      return this.#handler;
+    /** Built once the atom's name is known. */
+    get handler(): Handler {
+      return (this.#handler ??= this.#fresh());
     }
 
     constructor(ctx: DurableObjectState, env: Env) {
@@ -125,10 +126,11 @@ export function durableObject(program: Program, opts: CloudflareOptions): Progra
         INSERT OR IGNORE INTO seq VALUES (0, 0);
         CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);
       `);
-      // The atom's name, kept: an alarm can wake a DO from its bare id, which carries no name.
-      if (ctx.id.name !== undefined) sql.exec("INSERT OR IGNORE INTO meta VALUES ('name', ?)", ctx.id.name);
-      const name = ctx.id.name ?? sql.exec<{ v: string }>("SELECT v FROM meta WHERE k = 'name'").toArray()[0]?.v;
-      if (name === undefined) throw new Error("durableObject: atoms must be created with idFromName");
+      // The atom's name, kept: an alarm can wake a DO from its bare id, which carries no name. A DO
+      // from before names were kept learns it on its next call (every call carries it).
+      let name = ctx.id.name ?? sql.exec<{ v: string }>("SELECT v FROM meta WHERE k = 'name'").toArray()[0]?.v;
+      const keep = (n: string) => sql.exec("INSERT OR IGNORE INTO meta VALUES ('name', ?)", n).rowsWritten > 0;
+      if (ctx.id.name !== undefined) keep(ctx.id.name);
 
       const row = (key: string) =>
         sql
@@ -148,8 +150,7 @@ export function durableObject(program: Program, opts: CloudflareOptions): Progra
         return next === null ? ctx.storage.deleteAlarm() : ctx.storage.setAlarm(next);
       };
 
-      const atom: Atom = {
-        name,
+      const atom: Omit<Atom, "name"> = {
         now,
         store: {
           async get(key) {
@@ -185,9 +186,23 @@ export function durableObject(program: Program, opts: CloudflareOptions): Progra
         },
       };
       const platform = cloudflarePlatform(env, opts, (p) => ctx.waitUntil(p));
-      this.#fresh = () => program(atom, platform);
-      this.#handler = this.#fresh();
+      this.#fresh = () => {
+        if (name === undefined) throw new Error("durableObject: atoms must be created with idFromName");
+        return program({ name, ...atom }, platform);
+      };
+      if (name !== undefined) this.#handler = this.#fresh();
+      this.#named = async (n) => {
+        if (name !== undefined) return;
+        name = n;
+        // Its timers waited for the name (below): arm them now.
+        if (keep(n)) await rearm();
+      };
       this.#fire = async () => {
+        if (name === undefined) {
+          // Woken by an alarm before it ever learned its name: the timers stay stored until the next call names it.
+          platform.log("warn", "platform.timer.unnamed", { id: ctx.id.toString() });
+          return;
+        }
         for (;;) {
           const t = sql
             .exec<{ name: string; payload: string }>(
@@ -196,7 +211,7 @@ export function durableObject(program: Program, opts: CloudflareOptions): Progra
             )
             .toArray()[0];
           if (!t) return rearm();
-          await this.#handler
+          await this.handler
             .onTimer(t.name, JSON.parse(t.payload))
             .catch((e) => platform.log("error", "platform.timer.threw", { timer: t.name, error: e instanceof Error ? e.message : String(e) }));
         }
@@ -209,12 +224,14 @@ export function durableObject(program: Program, opts: CloudflareOptions): Progra
     }
 
     /** RPC entry point: every call into this atom comes through here. */
-    onCall(method: string, args: Json): Promise<Json> {
-      return this.#handler.onCall(method, args);
+    async onCall(method: string, args: Json, name: string): Promise<Json> {
+      await this.#named(name);
+      return this.handler.onCall(method, args);
     }
 
     /** `platform.atoms.destroy`: an empty store, no timers, a fresh handler. */
-    async destroy(): Promise<void> {
+    async destroy(name: string): Promise<void> {
+      await this.#named(name);
       await this.#wipe();
       this.#handler = this.#fresh();
     }

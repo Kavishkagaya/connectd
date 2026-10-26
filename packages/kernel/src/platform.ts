@@ -67,6 +67,13 @@ export type Level = "debug" | "info" | "warn" | "error";
 /** Sizes in bytes of JSON-encoded data; the same on every platform's behaviour (memory enforces them too). */
 export type Limits = { valueBytes: number; callBytes: number };
 
+/**
+ * The strictest production platform's limits (Durable Objects: a SQLite row caps at 2 MB, RPC
+ * messages are larger), with room to spare. Every platform uses these, so what passes in memory
+ * passes there. ponytail: one fixed pair; let a platform set its own when one is stricter.
+ */
+export const LIMITS: Limits = { valueBytes: 1 << 20, callBytes: 1 << 20 };
+
 /** What the kernel gives back to the platform. Every event reaches an atom through this. */
 export interface Handler {
   onCall(method: string, args: Json): Promise<Json>;

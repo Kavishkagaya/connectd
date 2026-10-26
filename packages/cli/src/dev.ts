@@ -53,16 +53,14 @@ export type Loaded = { project: Resolved; unconfigured: string[]; publicUrl: str
 export function swappable() {
   let current: Program | undefined;
   let gen = 0;
-  // Until the first program is in, calls and timers (restored from a snapshot) wait for it.
-  let loaded = () => {};
-  const first = new Promise<void>((r) => (loaded = r));
   const program: Program = (atom, platform) => {
     let h: Handler | undefined;
     let mine = -1;
     let busy = 0;
     const run = async (f: (h: Handler) => Promise<Json | void>) => {
-      if (!current) await first;
-      if (!h || (mine !== gen && busy === 0)) [h, mine] = [(current as Program)(atom, platform), gen];
+      // dev builds the platform only after the first swap, so there's always a program here.
+      if (!current) throw new Error("no program loaded yet");
+      if (!h || (mine !== gen && busy === 0)) [h, mine] = [current(atom, platform), gen];
       busy++;
       try {
         return await f(h);
@@ -72,7 +70,7 @@ export function swappable() {
     };
     return { onCall: (m, a) => run((x) => x.onCall(m, a)) as Promise<Json>, onTimer: (n, p) => run((x) => x.onTimer(n, p)) as Promise<void> };
   };
-  return { program, swap: (p: Program) => void ((current = p), gen++, loaded()) };
+  return { program, swap: (p: Program) => void ((current = p), gen++) };
 }
 
 /** Build output, dependencies, hidden folders (.next, .git, .connectd, .turbo), and generated types: saves there never reload. `.env*` does. */
@@ -182,7 +180,9 @@ export async function dev(o: DevOptions) {
   let rt: Runtime | undefined;
   /** What the platform's env reads: the last loaded `.env` (and process env), with the public URL. */
   let env: Env = {};
-  const w = memory(hot.program, { clock: Date.now, env: (n) => (Object.hasOwn(env, n) ? env[n] : undefined), ...(snapshot ? { snapshot } : {}) });
+  const read = (n: string) => (Object.hasOwn(env, n) ? env[n] : undefined);
+  // Built on the first good load: a snapshot's timers start firing as soon as it exists, and with no program they'd wait forever (and hold up stop()).
+  let w: ReturnType<typeof memory> | undefined;
   let indexed = false;
 
   // The app calls CONNECTD_URL: a URL dev can't listen on (https, a path, no port) would leave them apart.
@@ -191,7 +191,7 @@ export async function dev(o: DevOptions) {
   const server = await serve(o.port ?? portOf(first.CONNECTD_URL) ?? PORT, async (req) => {
       const t = performance.now();
       const res =
-        rt
+        rt && w
           ? await rt.fetch(req, w.platform)
           : Response.json({ error: { code: "not_ready", status: 503, message: "the config failed to load; see the dev server's output" } }, { status: 503 });
       // The path only: queries carry codes and states.
@@ -222,8 +222,8 @@ export async function dev(o: DevOptions) {
     env = { ...fresh, [ENV.url]: publicUrl };
     let opts: ReturnType<typeof options>;
     try {
-      // From the platform's env, as deployed; options() keeps only what the project reads, so a connection that works here works there.
-      opts = options(config, w.platform.env);
+      // From the env the platform reads, as deployed; options() keeps only what the project reads, so a connection that works here works there.
+      opts = options(config, read);
       await opts.settings(); // missing keys or a bad one fail here, not on the first request
     } catch (e) {
       env = before; // the running version keeps the values it loaded with
@@ -232,6 +232,7 @@ export async function dev(o: DevOptions) {
     const next = runtime(opts);
     rt = next;
     hot.swap(next.program);
+    w ??= memory(hot.program, { clock: Date.now, env: read, ...(snapshot ? { snapshot } : {}) });
     if (!indexed) {
       indexed = true;
       // The index isn't in the snapshot: rebuild it from each connection (the #26 repair path).
@@ -254,6 +255,7 @@ export async function dev(o: DevOptions) {
 
   let saved = snapshot ? JSON.stringify(snapshot) : "";
   function save() {
+    if (!w) return; // nothing loaded yet: the old state file stays as it was
     const s = JSON.stringify(w.dump());
     if (s === saved) return;
     // Credentials in it are sealed, but handshakes and outboxes aren't: owner only.
@@ -325,7 +327,7 @@ export async function dev(o: DevOptions) {
         for (const x of watchers) x.close();
         clearInterval(saver);
         await server.stop();
-        await w.stop();
+        await w?.stop();
         save();
         tun?.stop();
       })()),

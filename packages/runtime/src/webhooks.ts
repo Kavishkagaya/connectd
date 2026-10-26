@@ -99,7 +99,7 @@ export function webhooks(): Extension {
           if (!Object.hasOwn(api.settings.config, defId)) throw new Fail("not_configured", 503, `no config for ${defId}`);
           const w: Webhook = { headers: req.headers, body: await req.text() };
           const secret = id === undefined ? null : await secretOf(api.settings, instanceOf(defId, id));
-          if (!(await def.webhooks.verify({ config: api.settings.config[defId], now: api.now }, w, secret))) throw new Fail("unauthorized", 401, "bad webhook signature");
+          if (!(await def.webhooks.verify({ config: api.settings.config[defId], now: () => api.platform.now() }, w, secret))) throw new Fail("unauthorized", 401, "bad webhook signature");
           let inc: Incoming;
           try {
             inc = def.webhooks.parse(w);
