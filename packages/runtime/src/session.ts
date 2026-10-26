@@ -1,5 +1,5 @@
-import { type Credential, NotActive } from "@connectd/connections";
-import { type Json, randomId, routeTicket, sign, verify } from "@connectd/kernel";
+import { type Credential, NotActive } from "@kavishkagaya/connectd-connections";
+import { type Json, randomId, routeTicket, sign, verify } from "@kavishkagaya/connectd-kernel";
 import { Fail, type Fault, fault, type Hosted, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { type Api, ERROR_HEADER, type Route } from "./http.ts";
 import type { Extension } from "./runtime.ts";
@@ -437,7 +437,7 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
  * `GET /connect#token=`: the runtime's own connect page (#54, `link()`), so an app needs no frontend
  * package. It keeps the token in sessionStorage (the provider round trip leaves the page), then
  * renders a button (redirect flows) or a form (API-key fields) on the same `/session` API as
- * @connectd/connect, from the runtime's own origin. Back from the provider it confirms, then goes
+ * @kavishkagaya/connectd-connect, from the runtime's own origin. Back from the provider it confirms, then goes
  * to the session's `next`.
  */
 const hostedPage: Route = {

@@ -1,6 +1,6 @@
-import { type AnyAction, type AnyConnection, definitionOf, envConfig, isAction, isConnection, withId } from "@connectd/connections";
-import { dashboard } from "@connectd/dashboard";
-import { importHmacKey, importKeys } from "@connectd/kernel";
+import { type AnyAction, type AnyConnection, definitionOf, envConfig, isAction, isConnection, withId } from "@kavishkagaya/connectd-connections";
+import { dashboard } from "@kavishkagaya/connectd-dashboard";
+import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
 import { ENV } from "./keys.ts";
 import type { Target } from "./target.ts";
 import {
@@ -14,7 +14,7 @@ import {
   type Settings,
   sessions,
   webhooks,
-} from "@connectd/runtime";
+} from "@kavishkagaya/connectd-runtime";
 
 /**
  * A user's project: what `oc.config.ts` exports, the one input both `connectd dev` and `deploy`
@@ -52,7 +52,7 @@ export type Project = {
   extensions?: Extension[];
   /** The dashboard at `/dashboard` (#32), signed in with the API key. Default true; false leaves it out. */
   dashboard?: boolean;
-  /** Where `connectd deploy` puts it (#54): `cloudflare({ name, url })` from @connectd/cloudflare. dev ignores it. */
+  /** Where `connectd deploy` puts it (#54): `cloudflare({ name, url })` from @kavishkagaya/connectd-cloudflare. dev ignores it. */
   target?: Target;
 };
 
@@ -118,9 +118,9 @@ export function resolve(config: Config, env: Env): Resolved {
   const raw = typeof config === "function" ? config(seen) : config;
   if (!raw || typeof raw !== "object") throw new Error("the config must export defineConfig({ ... })");
   if (raw.definitions !== undefined && !Array.isArray(raw.definitions)) throw new Error("definitions must be a list");
-  if ("deploy" in raw) throw new Error("the config's deploy: { name, url } is gone: say where it deploys with target: cloudflare({ name, url }) from @connectd/cloudflare");
+  if ("deploy" in raw) throw new Error("the config's deploy: { name, url } is gone: say where it deploys with target: cloudflare({ name, url }) from @kavishkagaya/connectd-cloudflare");
   if (raw.target !== undefined && (typeof raw.target !== "object" || raw.target === null || typeof raw.target.adapter !== "string"))
-    throw new Error("target must be a target: target: cloudflare({ name }) from @connectd/cloudflare (did you forget the call?)");
+    throw new Error("target must be a target: target: cloudflare({ name }) from @kavishkagaya/connectd-cloudflare (did you forget the call?)");
   const p = { ...raw, definitions: raw.definitions ?? [] };
   const registry: Record<string, AnyDefinition> = {};
   const own: Record<string, unknown> = {};

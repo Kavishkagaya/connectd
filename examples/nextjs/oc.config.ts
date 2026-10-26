@@ -1,5 +1,5 @@
-import { defineConfig } from "@connectd/cli";
-import { cloudflare } from "@connectd/cloudflare";
+import { defineConfig } from "@kavishkagaya/connectd";
+import { cloudflare } from "@kavishkagaya/connectd-cloudflare";
 
 // APP_URL is the Next app's origin, from .env (and .env.production when deployed): written once.
 export default defineConfig((env) => ({

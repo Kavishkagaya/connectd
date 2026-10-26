@@ -40,7 +40,7 @@ packages/connections/
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
   src/testing.ts      harness + fakeOAuth for definition tests (`/testing` export)
 
-packages/providers/   private (not published): the catalog's source. One connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`), importing only @connectd/connections; tests against fakes; `bun run registry` writes registry/. Apps never import it: `connectd add` copies a provider in
+packages/providers/   private (not published): the catalog's source. One connection(...) builder per provider (github, github-app, slack, google), each reading its env names (`.config((env) => ...)`), importing only @kavishkagaya/connectd-connections; tests against fakes; `bun run registry` writes registry/. Apps never import it: `connectd add` copies a provider in
   src/registry.ts     `bun run registry`: writes registry/ (the catalog `connectd add` copies from) from the sources; a test fails when it's stale
 
 registry/             <provider>.json + index.json, generated and committed; the CLI fetches it at its version's tag
@@ -80,7 +80,7 @@ packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /
   src/fake.ts         the real runtime + dashboard() on the memory driver and a fake DOM, for the tests and e2e
   e2e/chromium.ts     real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 
-packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed); `@connectd/cli` exports project.ts; runtime/kernel/connections are peer deps
+packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed); `@kavishkagaya/connectd` exports project.ts; runtime/kernel/connections are peer deps
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), resolve() (connections' env config, `envNames`, `missing`), workerEnv(), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
   src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
   src/env.ts          dotenv parsing; dev's env (.env < process env; .dev.vars refused)
@@ -108,7 +108,7 @@ scripts/pack.ts       `bun run pack`: every package built to JavaScript (tsc in 
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers copied in by `connectd add`, one custom, github/actions/profile.ts)
 ```
 
-Kernel subpath exports: `@connectd/kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@connectd/connections`. Runtime: `@connectd/runtime`, `/cloudflare`, `/signature`. CLI: `@connectd/cli` (`defineConfig`, project helpers, target types), `/keys`, `/workdir`, bin `connectd`. Cloudflare target: `@connectd/cloudflare`, `/adapter`. SDK: `@connectd/sdk`, `/node`. Browser: `@connectd/connect`. Dashboard: `@connectd/dashboard`.
+Kernel subpath exports: `@kavishkagaya/connectd-kernel`, `/memory`, `/do`, `/parity`. Connection types (`State`, `Credential`, `NotActive`, OAuth) come from `@kavishkagaya/connectd-connections`. Runtime: `@kavishkagaya/connectd-runtime`, `/cloudflare`, `/signature`. CLI: `@kavishkagaya/connectd` (`defineConfig`, project helpers, target types), `/keys`, `/workdir`, bin `connectd`. Cloudflare target: `@kavishkagaya/connectd-cloudflare`, `/adapter`. SDK: `@kavishkagaya/connectd-sdk`, `/node`. Browser: `@kavishkagaya/connectd-connect`. Dashboard: `@kavishkagaya/connectd-dashboard`.
 
 ## Commands
 

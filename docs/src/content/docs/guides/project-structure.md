@@ -53,8 +53,8 @@ flowchart LR
 ## oc.config.ts
 
 ```ts title="oc.config.ts"
-import { defineConfig } from "@connectd/cli";
-import { cloudflare } from "@connectd/cloudflare";
+import { defineConfig } from "@kavishkagaya/connectd";
+import { cloudflare } from "@kavishkagaya/connectd-cloudflare";
 
 export default defineConfig((env) => ({
   dir: "src/oc",                                         // default: src/oc, else oc

@@ -1,5 +1,5 @@
-import { base64url, type Json, routeTicket } from "@connectd/kernel";
-import type { ActionSpec } from "@connectd/connections";
+import { base64url, type Json, routeTicket } from "@kavishkagaya/connectd-kernel";
+import type { ActionSpec } from "@kavishkagaya/connectd-connections";
 import { type Index, listing } from "./directory.ts";
 import { type AnyDefinition, COOKIES, Fail, type Fault, fault, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
 import { complete } from "./session.ts";

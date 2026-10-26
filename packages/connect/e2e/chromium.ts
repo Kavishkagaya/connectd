@@ -9,11 +9,11 @@
  * provider page with COOP `same-origin` (cuts the opener), a popup the user closes, the API-key
  * form, redirect mode, and a ticket minted outside a browser that a victim opens.
  */
-import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
-import { fakeOAuth } from "@connectd/connections/testing";
-import { importHmacKey, importKeys } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
-import { runtime, sessions } from "@connectd/runtime";
+import { apiKey, defineConnection, oauth2 } from "@kavishkagaya/connectd-connections";
+import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
+import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
+import { runtime, sessions } from "@kavishkagaya/connectd-runtime";
 
 const RT = "http://localhost:8788",
   APP = "http://127.0.0.1:5173";

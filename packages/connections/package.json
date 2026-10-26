@@ -1,6 +1,11 @@
 {
-  "name": "@connectd/connections",
-  "version": "0.0.0",
+  "name": "@kavishkagaya/connectd-connections",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kavishkagaya/connectd.git",
+    "directory": "packages/connections"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -11,6 +16,6 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@connectd/kernel": "workspace:*"
+    "@kavishkagaya/connectd-kernel": "workspace:*"
   }
 }

@@ -1,13 +1,13 @@
-import type { Action, Connection } from "@connectd/connections";
-import type { Json } from "@connectd/kernel";
-import type { ConnectionEvent, LifecycleEvent, WebhookData } from "@connectd/runtime";
+import type { Action, Connection } from "@kavishkagaya/connectd-connections";
+import type { Json } from "@kavishkagaya/connectd-kernel";
+import type { ConnectionEvent, LifecycleEvent, WebhookData } from "@kavishkagaya/connectd-runtime";
 
 /**
  * The project's connections and their actions, for the typed client (#54). Empty here; the CLI's
  * generated `.connectd/registry.d.ts` fills it in (`connectd dev`, `deploy`, `types`), one
  * entry per connection folder, named after it:
  *
- *   declare module "@connectd/sdk" {
+ *   declare module "@kavishkagaya/connectd-sdk" {
  *     interface Registry extends RegistryOf<typeof config> {
  *       github: Entry<typeof c0, { starRepo: typeof a0 }>;
  *     }

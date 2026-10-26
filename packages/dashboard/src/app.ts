@@ -1,4 +1,4 @@
-import type { EventsStatus, EventSummary, Fault, Page, Row, Subscription, WebhooksStatus } from "@connectd/runtime";
+import type { EventsStatus, EventSummary, Fault, Page, Row, Subscription, WebhooksStatus } from "@kavishkagaya/connectd-runtime";
 import type { ActionInfo, DefinitionInfo, Detail, Failures, Overview } from "./index.ts";
 
 /**
@@ -25,7 +25,7 @@ function address(args: string[]): [string, string] {
   return [def, id];
 }
 const STATES = ["pending", "active", "reauth_required", "revoked"];
-// ponytail: field types are guessed from names, as in @connectd/connect's form.
+// ponytail: field types are guessed from names, as in @kavishkagaya/connectd-connect's form.
 const SECRET = /key|secret|token|password/i;
 
 /** `10 min`, `1 h`, `90 s`. */

@@ -20,9 +20,9 @@ flowchart LR
 
 ```ts title="worker.ts"
 import { env } from "cloudflare:workers";
-import { importHmacKey, importKeys } from "@connectd/kernel";
-import { directory, events, proxy, runtime, sessions, webhooks } from "@connectd/runtime";
-import { cloudflare, d1Index } from "@connectd/runtime/cloudflare";
+import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
+import { directory, events, proxy, runtime, sessions, webhooks } from "@kavishkagaya/connectd-runtime";
+import { cloudflare, d1Index } from "@kavishkagaya/connectd-runtime/cloudflare";
 import github from "./oc/github/connection.ts";
 
 const rt = runtime({
@@ -53,7 +53,7 @@ export default { fetch: cf.fetch };
   "compatibility_date": "2026-10-01",
   "durable_objects": { "bindings": [{ "name": "CONNECTION", "class_name": "Connection" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Connection"] }],
-  "d1_databases": [{ "binding": "INDEX", "database_name": "my-connectd-index", "database_id": "…", "migrations_dir": "node_modules/@connectd/runtime/migrations" }]
+  "d1_databases": [{ "binding": "INDEX", "database_name": "my-connectd-index", "database_id": "…", "migrations_dir": "node_modules/@kavishkagaya/connectd-runtime/migrations" }]
 }
 ```
 
@@ -73,7 +73,7 @@ Leaving out an extension turns its feature off. Each built-in one is also a no-o
 | `sessions?` | `{ key, origins }`: the browser connect UI |
 | `fetch?` | Outbound fetch for definitions (tests pass a fake) |
 
-Unlike the CLI, `runtime()` doesn't read `.config((env) => …)` for you. Pass each connection's config in `settings.config`. Or use `options(config, env, index)` from `@connectd/cli`, which is exactly what the generated Worker does: it resolves an `oc.config.ts` against an env and returns everything `runtime()` takes.
+Unlike the CLI, `runtime()` doesn't read `.config((env) => …)` for you. Pass each connection's config in `settings.config`. Or use `options(config, env, index)` from `@kavishkagaya/connectd`, which is exactly what the generated Worker does: it resolves an `oc.config.ts` against an env and returns everything `runtime()` takes.
 
 ## On a Node server, in memory
 
@@ -81,8 +81,8 @@ The memory driver isn't durable on its own, but `dump()` and `snapshot` save and
 
 ```ts
 import { createServer } from "node:http";
-import { memory } from "@connectd/kernel/memory";
-import { memoryIndex, runtime /* , … */ } from "@connectd/runtime";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
+import { memoryIndex, runtime /* , … */ } from "@kavishkagaya/connectd-runtime";
 
 const rt = runtime({ definitions, settings, extensions: [/* …, */ directory(memoryIndex())] });
 const world = memory(rt.program, { clock: Date.now });   // real clock: timers fire on their own
@@ -98,7 +98,7 @@ Keep it to dev, demos and tests. Production wants a durable driver.
 A driver is the [L0 contract](/concepts/architecture/#l0--drivers-infrastructure-only): per-instance `store` (`get`, `put`, `cas`, `take`, `delete`, optional TTL), named durable `timer`s, `call` to another instance, and `now()`. Then expose it as a host for `Program`s:
 
 ```ts
-import type { Driver, Program } from "@connectd/kernel";
+import type { Driver, Program } from "@kavishkagaya/connectd-kernel";
 
 // Your platform's equivalent of "one actor per key, with storage and an alarm".
 export function myDriver(program: Program) { /* create a Driver per instance, route calls and timer fires to program(driver, instance) */ }
@@ -112,7 +112,7 @@ Two properties matter most:
 Prove it with the shared parity suite, the same one the memory and Durable Object drivers pass:
 
 ```ts
-import { parity, probe } from "@connectd/kernel/parity";
+import { parity, probe } from "@kavishkagaya/connectd-kernel/parity";
 import { expect, test } from "vitest";
 
 parity("my driver", () => makeWorld(myDriver(probe)), { test, expect });

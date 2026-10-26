@@ -15,7 +15,7 @@ const REGISTRY = join(import.meta.dir, "..", "..", "..", "registry");
 
 function project(env?: string) {
   const dir = mkdtempSync(join(TMP, "p-"));
-  writeFileSync(join(dir, "oc.config.ts"), `import { defineConfig } from "@connectd/cli";\nexport default defineConfig({ dir: "src/oc" });\n`);
+  writeFileSync(join(dir, "oc.config.ts"), `import { defineConfig } from "@kavishkagaya/connectd";\nexport default defineConfig({ dir: "src/oc" });\n`);
   mkdirSync(join(dir, "src/oc"), { recursive: true });
   if (env !== undefined) writeFileSync(join(dir, ".env"), env);
   const lines: string[] = [];
@@ -27,8 +27,8 @@ test("add: the provider as source in its folder, an empty events.ts, its env nam
   await add({ ...p.o, provider: "github" });
   const src = readFileSync(join(p.dir, "src/oc/github/connection.ts"), "utf8");
   expect(src.split("\n")[0]).toBe("// connectd: github@0.0.0. Copied by `connectd add`; yours to edit. `connectd diff github` shows what changed upstream.");
-  expect(src).toContain('from "@connectd/connections";');
-  expect(src).not.toContain("@connectd/kernel");
+  expect(src).toContain('from "@kavishkagaya/connectd-connections";');
+  expect(src).not.toContain("@kavishkagaya/connectd-kernel");
   expect(readFileSync(join(p.dir, "src/oc/github/events.ts"), "utf8")).toContain('export default listen("github");');
   expect(readFileSync(join(p.dir, ".env"), "utf8")).toBe("APP_ORIGIN=http://localhost:3000\n\n# github (connectd add github)\nGITHUB_CLIENT_ID=\nGITHUB_CLIENT_SECRET=\n");
   expect(p.lines[0]).toContain("added github@0.0.0 as github: src/oc/github/connection.ts, src/oc/github/events.ts, .env");
@@ -97,7 +97,9 @@ test("catalog: listed from index.json; fetched over HTTP at this version's tag (
   const p = project();
   await list(p.o);
   expect(p.lines[0]).toContain("github-app");
-  expect(registryOf({})).toBe("https://raw.githubusercontent.com/Kavishkagaya/connectd/main/registry");
+  const { version } = JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string };
+  const ref = version === "0.0.0" ? "main" : `v${version}`;
+  expect(registryOf({})).toBe(`https://raw.githubusercontent.com/Kavishkagaya/connectd/${ref}/registry`);
   expect(registryOf({ env: { CONNECTD_REGISTRY: "https://r.test/x" } })).toBe("https://r.test/x");
   const asked: string[] = [];
   const fetch = (async (url: string) => {

@@ -1,4 +1,4 @@
-import type { Json, Limit, Observed } from "@connectd/kernel";
+import type { Json, Limit, Observed } from "@kavishkagaya/connectd-kernel";
 import { BEARER, type ConfigFrom, type Ctx, type Definition, type Inject, inject, type Webhooks } from "./define.ts";
 import { type Flow, type Flows, flows, IDENTITY, STEPS } from "./flows.ts";
 import type { Credential } from "./lifecycle.ts";

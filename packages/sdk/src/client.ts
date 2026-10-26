@@ -1,12 +1,12 @@
-import type { Credential, Device, State } from "@connectd/connections";
-import type { Json } from "@connectd/kernel";
-import type { ConnectionEvent, Fault, Page, Query, Row, SessionArgs } from "@connectd/runtime";
+import type { Credential, Device, State } from "@kavishkagaya/connectd-connections";
+import type { Json } from "@kavishkagaya/connectd-kernel";
+import type { ConnectionEvent, Fault, Page, Query, Row, SessionArgs } from "@kavishkagaya/connectd-runtime";
 import { events, type EventsOptions } from "./events.ts";
 import { isListener, type Listener } from "./listen.ts";
 import { routes, type User } from "./routes.ts";
 import type { ActionsOf, EntryOf, IdentityOf, Known, Registry, SubscriptionOf } from "./registry.ts";
 
-// ponytail: depends on @connectd/runtime only for types (erased) and signature.ts (no imports);
+// ponytail: depends on @kavishkagaya/connectd-runtime only for types (erased) and signature.ts (no imports);
 // split signature.ts into its own package before publishing, so installing the SDK doesn't pull the runtime.
 
 /**
@@ -186,7 +186,7 @@ export function connectd<R = Registry>(o: Options = {}) {
       /**
        * Start (or redo) authorization. `url` is where to send the user; null if it finished inline
        * (API keys: pass the fields as `args`). For a user in a browser, prefer `session()` and
-       * `@connectd/connect`: this URL isn't tied to the browser that opens it, so anyone who
+       * `@kavishkagaya/connectd-connect`: this URL isn't tied to the browser that opens it, so anyone who
        * gets it (a user of your app sending it to someone else) can have another person's provider
        * account land on this connection (login CSRF). Sessions bind the flow to the browser and the
        * result to your page. A device flow (#56) also returns `device`: show its `userCode` and
@@ -197,7 +197,7 @@ export function connectd<R = Registry>(o: Options = {}) {
       token: () => call<Credential>("token"),
       revoke: (reason?: string) => call<Status<IdentityOf<E>>>("revoke", reason === undefined ? null : { reason }),
       /**
-       * A short-lived token for the browser (#29, `@connectd/connect`): it can start this
+       * A short-lived token for the browser (#29, `@kavishkagaya/connectd-connect`): it can start this
        * connection's authorization from `origin` (or `returnUrl`'s), and nothing else. Both must be in
        * the runtime's `settings.sessions.origins`; `returnUrl` is where a redirect-mode flow ends.
        */

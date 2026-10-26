@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { definitionOf, hmacHex, type Jwk, type OAuth2, verifyJwt } from "@connectd/connections";
-import { fakeOAuth, harness } from "@connectd/connections/testing";
-import { base64url, type Json } from "@connectd/kernel";
+import { definitionOf, hmacHex, type Jwk, type OAuth2, verifyJwt } from "@kavishkagaya/connectd-connections";
+import { fakeOAuth, harness } from "@kavishkagaya/connectd-connections/testing";
+import { base64url, type Json } from "@kavishkagaya/connectd-kernel";
 import { github } from "./github.ts";
 import { githubApp } from "./github-app.ts";
 import { google } from "./google.ts";

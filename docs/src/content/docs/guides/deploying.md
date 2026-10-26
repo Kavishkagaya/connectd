@@ -60,7 +60,7 @@ Put those three in your app's host (Vercel, Fly, wherever your app runs).
 ## The target
 
 ```ts title="oc.config.ts"
-import { cloudflare } from "@connectd/cloudflare";
+import { cloudflare } from "@kavishkagaya/connectd-cloudflare";
 
 export default defineConfig({
   target: cloudflare({

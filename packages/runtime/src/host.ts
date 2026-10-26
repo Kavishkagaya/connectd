@@ -1,5 +1,5 @@
-import { bind, type Definition, IllegalTransition, InputError, NotActive, OAuthError, safeEqual } from "@connectd/connections";
-import { type Driver, handleRate, type Json, type Kernel, type Keys, kernel, type Program, RATE, type Ticket } from "@connectd/kernel";
+import { bind, type Definition, IllegalTransition, InputError, NotActive, OAuthError, safeEqual } from "@kavishkagaya/connectd-connections";
+import { type Driver, handleRate, type Json, type Kernel, type Keys, kernel, type Program, RATE, type Ticket } from "@kavishkagaya/connectd-kernel";
 
 /**
  * The connection host: one Program that runs any definition from a registry, one instance per

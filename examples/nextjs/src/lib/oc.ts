@@ -1,4 +1,4 @@
-import { connectd } from "@connectd/sdk";
+import { connectd } from "@kavishkagaya/connectd-sdk";
 import { cookies } from "next/headers";
 import { listeners } from "../../.connectd/app";
 

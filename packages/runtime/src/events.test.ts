@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection } from "@connectd/connections";
-import { type Driver, importHmacKey, importKeys, type Json, type Program } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
+import { apiKey, defineConnection } from "@kavishkagaya/connectd-connections";
+import { type Driver, importHmacKey, importKeys, type Json, type Program } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { BODY_KEPT, type ConnectionEvent, directory, emit, events, type EventsStatus, type Extension, KEPT, memoryIndex, proxy, runtime } from "./index.ts";
 import { sign, verify } from "./signature.ts";
 

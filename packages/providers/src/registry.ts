@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type AnyConnection, definitionOf, envConfig } from "@connectd/connections";
+import { type AnyConnection, definitionOf, envConfig } from "@kavishkagaya/connectd-connections";
 import { github, githubApp, google, slack } from "./index.ts";
 
 /**

@@ -19,11 +19,11 @@ flowchart TB
 
 | Layer | Package | Knows about |
 | --- | --- | --- |
-| L4 DevX | `@connectd/sdk`, `@connectd/connect`, `@connectd/cli`, `@connectd/dashboard`, `@connectd/cloudflare` | Your app, your project, your deploy |
-| L3 Runtime | `@connectd/runtime` | HTTP, extensions, events, webhooks |
-| L2 Connections | `@connectd/connections` | OAuth, credentials, states, providers |
-| L1 Kernel | `@connectd/kernel` | Safe storage, timers and delivery. Nothing about connections. |
-| L0 Drivers | `@connectd/kernel/memory`, `/do` | Where bytes and alarms live |
+| L4 DevX | `@kavishkagaya/connectd-sdk`, `@kavishkagaya/connectd-connect`, `@kavishkagaya/connectd`, `@kavishkagaya/connectd-dashboard`, `@kavishkagaya/connectd-cloudflare` | Your app, your project, your deploy |
+| L3 Runtime | `@kavishkagaya/connectd-runtime` | HTTP, extensions, events, webhooks |
+| L2 Connections | `@kavishkagaya/connectd-connections` | OAuth, credentials, states, providers |
+| L1 Kernel | `@kavishkagaya/connectd-kernel` | Safe storage, timers and delivery. Nothing about connections. |
+| L0 Drivers | `@kavishkagaya/connectd-kernel/memory`, `/do` | Where bytes and alarms live |
 
 ## L0 · Drivers: infrastructure only
 

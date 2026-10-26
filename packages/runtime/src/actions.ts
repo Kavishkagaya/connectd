@@ -1,5 +1,5 @@
-import { type ActionSpec, type AnyAction, actionOf, apiFor, badActionName, NotActive, type SchemaIssue, type State, type Store } from "@connectd/connections";
-import type { Json } from "@connectd/kernel";
+import { type ActionSpec, type AnyAction, actionOf, apiFor, badActionName, NotActive, type SchemaIssue, type State, type Store } from "@kavishkagaya/connectd-connections";
+import type { Json } from "@kavishkagaya/connectd-kernel";
 import { emit } from "./events.ts";
 import { Fail, type Hooks, type Hosted } from "./host.ts";
 import type { Extension } from "./runtime.ts";

@@ -2,10 +2,10 @@
 // copies it into .connectd/deploy/ and points each import below at a resolved path. It runs in
 // workerd, so it's typechecked with Workers types (tsconfig.workers.json), not by the root tsc.
 import { env } from "cloudflare:workers";
-import { runtime } from "@connectd/runtime";
-import { cloudflare, d1Index } from "@connectd/runtime/cloudflare";
+import { runtime } from "@kavishkagaya/connectd-runtime";
+import { cloudflare, d1Index } from "@kavishkagaya/connectd-runtime/cloudflare";
 import config from "connectd:config";
-import { type Env, options } from "@connectd/cli";
+import { type Env, options } from "@kavishkagaya/connectd";
 
 // Module scope: `options` resolves the config against the Worker's vars and secrets (definitions are
 // needed up front); keys are imported lazily on the first request, since Workers can't do crypto here.

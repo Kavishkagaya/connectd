@@ -1,5 +1,5 @@
-import { apiKey, connection, defineConnection, oauth2 } from "@connectd/connections";
-import { defineConfig } from "@connectd/cli";
+import { apiKey, connection, defineConnection, oauth2 } from "@kavishkagaya/connectd-connections";
+import { defineConfig } from "@kavishkagaya/connectd";
 import { cloudflare } from "../../src/index.ts";
 
 // The project the workerd test deploys: its generated Worker entry runs the real runtime in workerd.

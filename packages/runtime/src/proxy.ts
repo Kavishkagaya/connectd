@@ -1,5 +1,5 @@
-import { BEARER, type Credential, inject, MissingField } from "@connectd/connections";
-import type { Json, Limit, Limiter } from "@connectd/kernel";
+import { BEARER, type Credential, inject, MissingField } from "@kavishkagaya/connectd-connections";
+import type { Json, Limit, Limiter } from "@kavishkagaya/connectd-kernel";
 import { type AnyDefinition, Fail, type Hosted, instanceOf } from "./host.ts";
 import { ERROR_HEADER, reply } from "./http.ts";
 import type { Extension } from "./runtime.ts";

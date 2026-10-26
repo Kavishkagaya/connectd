@@ -72,8 +72,8 @@ tsc("node", pkgs((p) => !DOM.includes(p)).filter((f) => !WORKERS.includes(f)), {
 tsc("workers", WORKERS, WORKERS_TYPES);
 tsc("dom", pkgs((p) => DOM.includes(p)), { lib: ["ES2022", "DOM", "DOM.Iterable"] });
 
-const version = (p: string) => (JSON.parse(readFileSync(join(ROOT, "packages", p, "package.json"), "utf8")) as { version: string }).version;
-const versions = Object.fromEntries(packages.map((p) => [`@connectd/${p}`, version(p)]));
+const manifest = (p: string) => JSON.parse(readFileSync(join(ROOT, "packages", p, "package.json"), "utf8")) as { name: string; version: string };
+const versions = Object.fromEntries(packages.map((p) => [manifest(p).name, manifest(p).version]));
 /** `./src/x.ts` → `./dist/x.js` (and its declarations). */
 const dist = (f: string) => f.replace(/^\.\/src\//, "./dist/").replace(/\.ts$/, ".js");
 const pin = (deps?: Record<string, string>) =>

@@ -1,6 +1,11 @@
 {
-  "name": "@connectd/sdk",
-  "version": "0.0.0",
+  "name": "@kavishkagaya/connectd-sdk",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kavishkagaya/connectd.git",
+    "directory": "packages/sdk"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -11,8 +16,8 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@connectd/connections": "workspace:*",
-    "@connectd/kernel": "workspace:*",
-    "@connectd/runtime": "workspace:*"
+    "@kavishkagaya/connectd-connections": "workspace:*",
+    "@kavishkagaya/connectd-kernel": "workspace:*",
+    "@kavishkagaya/connectd-runtime": "workspace:*"
   }
 }

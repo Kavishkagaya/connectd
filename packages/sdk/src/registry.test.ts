@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { type ActionCtx, action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@connectd/connections";
-import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
-import { events as eventsExt, runtime, webhooks } from "@connectd/runtime";
+import { type ActionCtx, action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@kavishkagaya/connectd-connections";
+import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
+import { events as eventsExt, runtime, webhooks } from "@kavishkagaya/connectd-runtime";
 import { type Client, type Connection, ConnectdError, connectd } from "./client.ts";
 import type { Entry, RegistryOf } from "./registry.ts";
 

@@ -1,7 +1,7 @@
 import { env } from "cloudflare:workers";
-import type { State } from "@connectd/connections";
-import type { Handler } from "@connectd/kernel";
-import { durableObject } from "@connectd/kernel/do";
+import type { State } from "@kavishkagaya/connectd-connections";
+import type { Handler } from "@kavishkagaya/connectd-kernel";
+import { durableObject } from "@kavishkagaya/connectd-kernel/do";
 import { after, type Index, LIMIT, page, type Row } from "./directory.ts";
 import type { Runtime } from "./runtime.ts";
 

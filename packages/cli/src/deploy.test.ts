@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { main } from "./cli.ts";
-import { type CloudflareDeployed, generate, NO_WRANGLER } from "@connectd/cloudflare/adapter";
+import { type CloudflareDeployed, generate, NO_WRANGLER } from "@kavishkagaya/connectd-cloudflare/adapter";
 import { deploy, type DeployOptions } from "./deploy.ts";
 import { loadProject } from "./load.ts";
 
@@ -48,8 +48,8 @@ else if (c1 === "deploy") {
 } else { console.error("fake wrangler: unknown command"); process.exit(1); }
 `;
 
-const CONFIG = (events = false, target = "cloudflare()") => `import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
-import { cloudflare } from "@connectd/cloudflare";
+const CONFIG = (events = false, target = "cloudflare()") => `import { apiKey, defineConnection, oauth2 } from "@kavishkagaya/connectd-connections";
+import { cloudflare } from "@kavishkagaya/connectd-cloudflare";
 export default (env) => ({
   target: ${target},
   definitions: [
@@ -371,8 +371,8 @@ test("targets: deploy needs one; the options give the name and URL, flags win; d
   expect(r.name).toBe("from-config");
   expect(r.url).toBe("https://oc.example.com");
   expect((await s.run({ dryRun: true, name: "from-flag" })).name).toBe("from-flag");
-  const bad = setup({ target: '{ adapter: "@connectd/nope/adapter", options: {} }' });
-  await expect(bad.run()).rejects.toThrow("adapter @connectd/nope/adapter isn't installed: npm i -D @connectd/nope");
+  const bad = setup({ target: '{ adapter: "@kavishkagaya/connectd-nope/adapter", options: {} }' });
+  await expect(bad.run()).rejects.toThrow("adapter @kavishkagaya/connectd-nope/adapter isn't installed: npm i -D @kavishkagaya/connectd-nope");
   await expect(setup({ target: '{ adapter: "nope-adapter/deploy" }' }).run()).rejects.toThrow("isn't installed: npm i -D nope-adapter");
   await expect(setup({ target: "cloudflare" }).run()).rejects.toThrow("did you forget the call?");
   const old = setup({ target: "cloudflare(), deploy: { name: 'x' }" });

@@ -1,5 +1,5 @@
-import { type Credential, type Incoming, NotActive, type SchemaIssue, type Webhook } from "@connectd/connections";
-import { base64url, type Json } from "@connectd/kernel";
+import { type Credential, type Incoming, NotActive, type SchemaIssue, type Webhook } from "@kavishkagaya/connectd-connections";
+import { base64url, type Json } from "@kavishkagaya/connectd-kernel";
 import { findByExternal } from "./directory.ts";
 import { emit } from "./events.ts";
 import { Fail, fault, type Hosted, instanceOf, type Reply, type Settings } from "./host.ts";

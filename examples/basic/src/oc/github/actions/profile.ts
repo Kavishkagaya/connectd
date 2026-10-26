@@ -1,4 +1,4 @@
-import { action } from "@connectd/connections";
+import { action } from "@kavishkagaya/connectd-connections";
 
 // `oc.connection("github", id).actions.profile()`: the connected user's GitHub profile, through the
 // connection's authenticated api. The file's name is the action's, the folder its connection.

@@ -1,6 +1,6 @@
-import type { ActionSpec, StandardSchemaV1 } from "@connectd/connections";
-import type { Json } from "@connectd/kernel";
-import { type Api, authorized, type EventsStatus, type Extension, Fail, instanceOf, type Reply, type Route } from "@connectd/runtime";
+import type { ActionSpec, StandardSchemaV1 } from "@kavishkagaya/connectd-connections";
+import type { Json } from "@kavishkagaya/connectd-kernel";
+import { type Api, authorized, type EventsStatus, type Extension, Fail, instanceOf, type Reply, type Route } from "@kavishkagaya/connectd-runtime";
 import { css, js, version } from "./assets.ts";
 
 /**
