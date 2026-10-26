@@ -1,5 +1,5 @@
 // connectd: google@0.0.0. Copied by `connectd add`; yours to edit. `connectd diff google` shows what changed upstream.
-import { connection, type Credential, fromBase64url, type OAuth2, type OAuth2Config, rateHeaders, safeEqual } from "@connectd/connections";
+import { connection, type Credential, fromBase64url, type OAuth2, type OAuth2Config, rateHeaders, safeEqual } from "@kavishkagaya/connectd-connections";
 
 /**
  * `watchCalendar` registers a push channel on each connection's primary calendar (#25); the app

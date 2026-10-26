@@ -76,7 +76,7 @@ Your app's origin must be in `sessions.origins` in `oc.config.ts`.
 
 ## 2. The connect UI in the browser
 
-`@connectd/connect` is a zero-dependency browser package for a popup flow or an inline form. Your backend creates a short-lived **session token**, and the browser uses only that.
+`@kavishkagaya/connectd-connect` is a zero-dependency browser package for a popup flow or an inline form. Your backend creates a short-lived **session token**, and the browser uses only that.
 
 ```ts title="server: an endpoint your page calls"
 export async function POST(req: Request) {
@@ -89,7 +89,7 @@ export async function POST(req: Request) {
 **Prebuilt UI.** A button, or a form for API-key definitions:
 
 ```ts title="browser"
-import { mount } from "@connectd/connect";
+import { mount } from "@kavishkagaya/connectd-connect";
 
 const unmount = mount(document.getElementById("github")!, {
   url: "https://connect.example.com",                     // your connectd URL
@@ -103,7 +103,7 @@ The markup is unstyled, with `oc-*` classes. In React: `useEffect(() => mount(re
 **Headless.** Build your own UI on `connect()`:
 
 ```ts
-import { connect, resume } from "@connectd/connect";
+import { connect, resume } from "@kavishkagaya/connectd-connect";
 
 button.onclick = async () => {
   const r = await connect({ url, token: getToken, mode: "popup" });

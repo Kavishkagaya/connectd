@@ -38,16 +38,16 @@ sequenceDiagram
 ## 2. Install
 
 ```sh
-npm i @connectd/sdk @connectd/connections @connectd/cli @connectd/cloudflare @connectd/runtime @connectd/kernel
+npm i @kavishkagaya/connectd-sdk @kavishkagaya/connectd-connections @kavishkagaya/connectd @kavishkagaya/connectd-cloudflare @kavishkagaya/connectd-runtime @kavishkagaya/connectd-kernel
 ```
 
 | Package | What it's for |
 | --- | --- |
-| `@connectd/sdk` | The client your app uses: `connectd()`, `oc.routes`, `listen()` |
-| `@connectd/connections` | What connection files import: `connection()`, `action()` |
-| `@connectd/cli` | The `connectd` command: `init`, `add`, `dev`, `deploy` |
-| `@connectd/cloudflare` | The deploy target for `connectd deploy` |
-| `@connectd/runtime`, `@connectd/kernel` | The runtime that `dev` and `deploy` run |
+| `@kavishkagaya/connectd-sdk` | The client your app uses: `connectd()`, `oc.routes`, `listen()` |
+| `@kavishkagaya/connectd-connections` | What connection files import: `connection()`, `action()` |
+| `@kavishkagaya/connectd` | The `connectd` command: `init`, `add`, `dev`, `deploy` |
+| `@kavishkagaya/connectd-cloudflare` | The deploy target for `connectd deploy` |
+| `@kavishkagaya/connectd-runtime`, `@kavishkagaya/connectd-kernel` | The runtime that `dev` and `deploy` run |
 
 ## 3. Set up the project
 
@@ -96,7 +96,7 @@ The callback goes to **connectd** (port 8787), not to your app. connectd does th
 Open `src/lib/oc.ts` and return your signed-in user's id. That id becomes the connection id, so every user gets their own GitHub connection:
 
 ```ts title="src/lib/oc.ts"
-import { connectd } from "@connectd/sdk";
+import { connectd } from "@kavishkagaya/connectd-sdk";
 import { listeners } from "../../.connectd/app";
 
 export const oc = connectd({
@@ -139,7 +139,7 @@ export default async function Page() {
 ## 7. React to events
 
 ```ts title="src/oc/github/events.ts"
-import { listen } from "@connectd/sdk";
+import { listen } from "@kavishkagaya/connectd-sdk";
 
 export default listen("github")
   .on("connection.active", (e) => console.log(`github connected for ${e.connection.id}`))

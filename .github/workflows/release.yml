@@ -1,0 +1,65 @@
+# After CI passes on main: every package whose version isn't on npm yet is published (from the
+# tarballs `bun run pack` makes), and the CLI's version gets its `v<version>` tag + GitHub release
+# (`connectd add` fetches registry/ at that tag). Version 0.0.0 means unreleased and is skipped.
+# To release: bump the versions in packages/*/package.json in a PR, merge it.
+# Publishes with npm trusted publishing (OIDC, no token): every package on npmjs.com trusts this
+# repo's release.yml. A package's first version is published by hand (npm can only trust an
+# existing package); provenance is added automatically.
+name: Release
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # npm trusted publishing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24 # npm 11.5.1+ for trusted publishing
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile
+      - run: bun run pack
+
+      - name: Publish new versions to npm
+        run: |
+          # Dependencies first, so a half-finished run never leaves a package pointing at a missing version.
+          for p in kernel connections runtime dashboard cli cloudflare sdk connect; do
+            name=$(node -p "require('./packages/$p/package.json').name")
+            version=$(node -p "require('./packages/$p/package.json').version")
+            if [ "$version" = "0.0.0" ]; then echo "$name: unreleased (0.0.0), skipped"; continue; fi
+            if [ -n "$(npm view "$name@$version" version 2>/dev/null)" ]; then echo "$name@$version: already on npm"; continue; fi
+            tarball=".pack/$(echo "$name" | sed 's/^@//; s/\//-/')-$version.tgz"
+            echo "publishing $name@$version ($tarball)"
+            npm publish "$tarball" --access public
+          done
+
+      - name: Tag and release the CLI's version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./packages/cli/package.json').version")
+          tag="v$version"
+          if [ "$version" = "0.0.0" ]; then echo "unreleased (0.0.0), no tag"; exit 0; fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then echo "$tag exists"; exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$tag"
+          git push origin "$tag"
+          gh release create "$tag" --title "$tag" --generate-notes

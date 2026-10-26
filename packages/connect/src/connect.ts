@@ -16,7 +16,7 @@
  */
 
 /** `GET /session` (the runtime's `SessionInfo`). */
-// ponytail: copied from @connectd/runtime to keep this package dependency-free; move both to a shared types package with the SDK's.
+// ponytail: copied from @kavishkagaya/connectd-runtime to keep this package dependency-free; move both to a shared types package with the SDK's.
 export type SessionInfo = {
   definition: string;
   id: string;

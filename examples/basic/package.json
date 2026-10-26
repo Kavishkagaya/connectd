@@ -7,11 +7,11 @@
     "deploy": "connectd deploy"
   },
   "dependencies": {
-    "@connectd/cli": "workspace:*",
-    "@connectd/cloudflare": "workspace:*",
-    "@connectd/connections": "workspace:*",
-    "@connectd/kernel": "workspace:*",
-    "@connectd/runtime": "workspace:*",
-    "@connectd/sdk": "workspace:*"
+    "@kavishkagaya/connectd": "workspace:*",
+    "@kavishkagaya/connectd-cloudflare": "workspace:*",
+    "@kavishkagaya/connectd-connections": "workspace:*",
+    "@kavishkagaya/connectd-kernel": "workspace:*",
+    "@kavishkagaya/connectd-runtime": "workspace:*",
+    "@kavishkagaya/connectd-sdk": "workspace:*"
   }
 }

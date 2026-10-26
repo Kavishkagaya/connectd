@@ -29,7 +29,7 @@ export function template(t: Template, id: string): { source: string; env: string
     case "oauth2":
       return {
         env: client,
-        source: `import { connection, type OAuth2Config } from "@connectd/connections";
+        source: `import { connection, type OAuth2Config } from "@kavishkagaya/connectd-connections";
 
 /** ${id}: OAuth 2.0 authorization code with PKCE. The provider's endpoints, scopes and API base URL go here. */
 export default connection()
@@ -50,7 +50,7 @@ ${identity(id)};
     case "oidc":
       return {
         env: client,
-        source: `import { connection, type OAuth2Config } from "@connectd/connections";
+        source: `import { connection, type OAuth2Config } from "@kavishkagaya/connectd-connections";
 
 /** ${id}: OpenID Connect. Endpoints come from the issuer's discovery document; the verified id_token's claims are the identity. */
 export default connection()
@@ -62,7 +62,7 @@ export default connection()
     case "api-key":
       return {
         env: [],
-        source: `import { connection } from "@connectd/connections";
+        source: `import { connection } from "@kavishkagaya/connectd-connections";
 
 /** ${id}: an API key the user enters (the connect UI shows a form with these fields). */
 export default connection()
@@ -76,7 +76,7 @@ ${identity(id)};
     case "client-credentials":
       return {
         env: client,
-        source: `import { connection, type OAuth2Config } from "@connectd/connections";
+        source: `import { connection, type OAuth2Config } from "@kavishkagaya/connectd-connections";
 
 /** ${id}: the app's own token (client credentials grant). No user; minted again when it expires. */
 export default connection()
@@ -88,7 +88,7 @@ export default connection()
     case "jwt-bearer":
       return {
         env: [`${p}_CLIENT_EMAIL`, `${p}_PRIVATE_KEY`],
-        source: `import { connection, type ServiceAccount } from "@connectd/connections";
+        source: `import { connection, type ServiceAccount } from "@kavishkagaya/connectd-connections";
 
 /** ${id}: a JWT signed with a service account's key, traded for a token (RFC 7523). \`connect({ subject })\` acts as that user. */
 export default connection()
@@ -100,7 +100,7 @@ export default connection()
     case "device":
       return {
         env: client,
-        source: `import { connection, type OAuth2Config } from "@connectd/connections";
+        source: `import { connection, type OAuth2Config } from "@kavishkagaya/connectd-connections";
 
 /** ${id}: device authorization (RFC 8628). \`connect()\` returns a code to show; the runtime polls until the user approves. */
 export default connection()

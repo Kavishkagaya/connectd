@@ -8,7 +8,7 @@ sidebar:
 connectd POSTs **events** to your app whenever something happens to a connection: it became active, it needs a new login, a webhook arrived, an action finished.
 
 ```ts title="src/oc/github/events.ts"
-import { listen } from "@connectd/sdk";
+import { listen } from "@kavishkagaya/connectd-sdk";
 
 export default listen("github")
   .on("connection.active", async (e, conn) => {
@@ -112,10 +112,10 @@ ev.on("connection.reauth_required", async (e, conn) => {
 export const POST = (req: Request) => ev.handle(req);   // Next, Hono (c.req.raw), Bun, Workers, Deno
 ```
 
-For Express or Node's `http`, wrap it with `toNode` from `@connectd/sdk/node`:
+For Express or Node's `http`, wrap it with `toNode` from `@kavishkagaya/connectd-sdk/node`:
 
 ```ts
-import { toNode } from "@connectd/sdk/node";
+import { toNode } from "@kavishkagaya/connectd-sdk/node";
 app.post("/connectd/events", toNode((req) => ev.handle(req)));   // before express.json(), or after express.raw()
 ```
 
@@ -131,7 +131,7 @@ webhook-timestamp: 1761400000
 webhook-signature: v1,<base64 HMAC-SHA256(secret, "<id>.<timestamp>.<body>")>
 ```
 
-The secret is `whsec_` plus base64 key bytes. `@connectd/runtime/signature` exports `sign` and `verify` with no other imports.
+The secret is `whsec_` plus base64 key bytes. `@kavishkagaya/connectd-runtime/signature` exports `sign` and `verify` with no other imports.
 
 ## Operating the queue
 

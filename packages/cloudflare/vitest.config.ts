@@ -1,7 +1,7 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 import { generate } from "./src/generate.ts";
-import { generateKeys } from "@connectd/cli/keys";
+import { generateKeys } from "@kavishkagaya/connectd/keys";
 
 // What `connectd deploy` would upload for test/fixture, run in workerd from its own wrangler.json:
 // the generated entry, the DO class and migration, the D1 binding and the copied migrations.

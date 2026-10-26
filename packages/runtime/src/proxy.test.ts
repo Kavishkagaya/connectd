@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection, oauth2, rateHeaders } from "@connectd/connections";
-import { fakeOAuth } from "@connectd/connections/testing";
-import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
+import { apiKey, defineConnection, oauth2, rateHeaders } from "@kavishkagaya/connectd-connections";
+import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
+import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { proxy, runtime } from "./index.ts";
 
 const TOKEN = "https://example.test/token";

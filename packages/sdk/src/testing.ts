@@ -1,8 +1,8 @@
-import { apiKey, defineConnection, type OAuth2, oauth2 } from "@connectd/connections";
-import { fakeOAuth } from "@connectd/connections/testing";
-import { importHmacKey, importKeys } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
-import { directory, emit, events, type Extension, memoryIndex, proxy, runtime, sessions } from "@connectd/runtime";
+import { apiKey, defineConnection, type OAuth2, oauth2 } from "@kavishkagaya/connectd-connections";
+import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
+import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
+import { directory, emit, events, type Extension, memoryIndex, proxy, runtime, sessions } from "@kavishkagaya/connectd-runtime";
 import { connectd } from "./client.ts";
 
 /** The real runtime on the memory driver, fake providers, and an SDK client pointed at its fetch. Tests only. */

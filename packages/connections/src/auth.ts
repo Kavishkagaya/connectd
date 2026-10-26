@@ -1,5 +1,5 @@
 import { type Auth, type Ctx, InputError } from "./define.ts";
-import type { Json } from "@connectd/kernel";
+import type { Json } from "@kavishkagaya/connectd-kernel";
 import { type Credential, credentialFrom, type OAuth2 } from "./lifecycle.ts";
 import { authorizeUrl, type Client, exchangeCode, OAuthError, pkce, refreshGrant, revoke, type TokenResponse } from "./oauth.ts";
 

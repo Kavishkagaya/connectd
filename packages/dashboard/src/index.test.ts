@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { hmacHex } from "@connectd/connections";
+import { hmacHex } from "@kavishkagaya/connectd-connections";
 import { sourceHash } from "../build.ts";
 import { js, version } from "./assets.ts";
 import { API_KEY, CLIENT_SECRET, EVENTS_SECRET, OC, setup, T0, tickFailures } from "./fake.ts";

@@ -1,5 +1,5 @@
-import type { State } from "@connectd/connections";
-import { base64url, fromBase64url, type Json } from "@connectd/kernel";
+import type { State } from "@kavishkagaya/connectd-connections";
+import { base64url, fromBase64url, type Json } from "@kavishkagaya/connectd-kernel";
 import { Fail } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 

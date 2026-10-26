@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection, hmacHex, type StandardSchemaV1, safeEqual } from "@connectd/connections";
-import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
+import { apiKey, defineConnection, hmacHex, type StandardSchemaV1, safeEqual } from "@kavishkagaya/connectd-connections";
+import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { type ConnectionEvent, directory, events, MAX_PAYLOAD, memoryIndex, runtime, type WebhookEvent, webhooks } from "./index.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));

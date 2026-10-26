@@ -1,5 +1,5 @@
 // connectd: github@0.0.0. Copied by `connectd add`; yours to edit. `connectd diff github` shows what changed upstream.
-import { connection, type Credential, hmacHex, type Json, type OAuth2Config, rateHeaders, safeEqual, type StandardSchemaV1 } from "@connectd/connections";
+import { connection, type Credential, hmacHex, type Json, type OAuth2Config, rateHeaders, safeEqual, type StandardSchemaV1 } from "@kavishkagaya/connectd-connections";
 
 const API = "https://api.github.com";
 // The REST API rejects requests without a User-Agent.

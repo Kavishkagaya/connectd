@@ -2,9 +2,9 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve as resolvePath } from "node:path";
-import type { DeployContext, Deployed, Env } from "@connectd/cli";
-import { ENV, generateKeys } from "@connectd/cli/keys";
-import { workdir } from "@connectd/cli/workdir";
+import type { DeployContext, Deployed, Env } from "@kavishkagaya/connectd";
+import { ENV, generateKeys } from "@kavishkagaya/connectd/keys";
+import { workdir } from "@kavishkagaya/connectd/workdir";
 import { type Generated, generate, publicUrl, workerName } from "./generate.ts";
 import type { CloudflareOptions } from "./index.ts";
 

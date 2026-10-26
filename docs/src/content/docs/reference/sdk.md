@@ -1,18 +1,18 @@
 ---
 title: SDK
-description: "@connectd/sdk (server) and @connectd/connect (browser): every function and option."
+description: "@kavishkagaya/connectd-sdk (server) and @kavishkagaya/connectd-connect (browser): every function and option."
 sidebar:
   order: 2
 ---
 
-## `@connectd/sdk`
+## `@kavishkagaya/connectd-sdk`
 
 The server SDK. It uses fetch only, with no Node APIs, so it runs on Node 18+, Bun, Workers and Deno.
 
 ### `connectd(options?)`
 
 ```ts
-import { connectd } from "@connectd/sdk";
+import { connectd } from "@kavishkagaya/connectd-sdk";
 const oc = connectd({ user, listeners });
 ```
 
@@ -36,7 +36,7 @@ Environment values are read on first use, so importing the client before the env
 | `fetch(path, init?)` | `Response` | Through the proxy. `init.retry: true \| { attempts, maxWaitMs }` retries connectd's own 429s. |
 | `actions.<name>(input?)` | the action's output | Typed per action |
 | `connect(args?)` | `{ url, device? }` | Server-side start. `url: null` when it finished inline. |
-| `session({ origin?, returnUrl?, ttlMs? })` | `{ token, expiresAt, flow }` | A browser session token for `@connectd/connect` |
+| `session({ origin?, returnUrl?, ttlMs? })` | `{ token, expiresAt, flow }` | A browser session token for `@kavishkagaya/connectd-connect` |
 | `link({ next?, ttlMs?, confirm? })` | `{ url, expiresAt }` | A single-use link to the hosted connect page |
 | `token()` | `Credential` | The raw credential, refreshed if due. Prefer `fetch`. |
 | `revoke(reason?)` | status | Unregisters webhooks, revokes at the provider, marks revoked |
@@ -92,10 +92,10 @@ The default export of a folder's `events.ts`. Typed to that connection's events.
 
 Thrown for anything the runtime refused: `{ code, status, message, state?, reason?, retryAfterMs? }`. A non-JSON failure in front of the runtime is `code: "http_error"`. See [error codes](/reference/http-api/#errors).
 
-### `@connectd/sdk/node`
+### `@kavishkagaya/connectd-sdk/node`
 
 ```ts
-import { toNode } from "@connectd/sdk/node";
+import { toNode } from "@kavishkagaya/connectd-sdk/node";
 app.post("/connectd/events", toNode(ev.handle));   // mount before express.json(), or after express.raw()
 ```
 
@@ -105,7 +105,7 @@ app.post("/connectd/events", toNode(ev.handle));   // mount before express.json(
 
 ---
 
-## `@connectd/connect`
+## `@kavishkagaya/connectd-connect`
 
 The browser package. Zero dependencies, DOM only.
 

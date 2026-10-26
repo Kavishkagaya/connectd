@@ -1,4 +1,4 @@
-import { connection } from "@connectd/connections";
+import { connection } from "@kavishkagaya/connectd-connections";
 
 /** A connection of your own, next to the bundled providers: an API key, proxied as a header. Edit it while `connectd dev` runs. */
 export default connection()

@@ -139,15 +139,15 @@ export async function init(o: InitOptions): Promise<void> {
   // src/ when the app has one (Next's src/app), else the root.
   const src = existsSync(join(dir, "src")) ? join(dir, "src") : dir;
   const folders = relative(dir, join(src, "oc")).split("\\").join("/");
-  const cloudflare = uses(dir, "@connectd/cloudflare");
+  const cloudflare = uses(dir, "@kavishkagaya/connectd-cloudflare");
   const name = (pkg(dir) as { name?: string } | null)?.name?.replace(/^@[^/]+\//, "") ?? "connectd";
   const config = CONFIG_FILES.map((f) => join(dir, f)).find((f) => existsSync(f));
   if (config) kept.push(relative(dir, config));
   else
     write(
       join(dir, CONFIG_FILES[0] as string),
-      `import { defineConfig } from "@connectd/cli";
-${cloudflare ? 'import { cloudflare } from "@connectd/cloudflare";\n' : ""}
+      `import { defineConfig } from "@kavishkagaya/connectd";
+${cloudflare ? 'import { cloudflare } from "@kavishkagaya/connectd-cloudflare";\n' : ""}
 // Your connections are the folders in ${folders}/ (\`connectd add github\` adds one). APP_URL, in .env, is
 // your app's origin: where the connect flow returns and where events are posted (oc.routes).
 export default defineConfig((env) => ({
@@ -162,7 +162,7 @@ ${cloudflare ? `  target: cloudflare({ name: ${JSON.stringify(name)} }),\n` : ""
   const client = join(src, "lib", "oc.ts");
   write(
     client,
-    `import { connectd } from "@connectd/sdk";
+    `import { connectd } from "@kavishkagaya/connectd-sdk";
 import { listeners } from "${spec(client, join(workdir(dir), "app.ts"))}";
 
 // CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET come from .env (connectd init wrote them);
@@ -207,9 +207,9 @@ export const oc = connectd({
   const next = [
     step("connectd add github", `a provider into ${folders}/ (\`connectd add\` lists them), then its env names in .env`),
     step(relative(dir, client), "return your signed-in user's id from user(req)"),
-    isNext ? "" : step("oc.routes", "mount GET and POST at /api/connectd/* in your app (Express: toNode from @connectd/sdk/node)"),
+    isNext ? "" : step("oc.routes", "mount GET and POST at /api/connectd/* in your app (Express: toNode from @kavishkagaya/connectd-sdk/node)"),
     step("connectd dev", `the runtime on ${have.CONNECTD_URL || `http://localhost:${port}`}`),
-    cloudflare ? "" : step("to deploy", "npm i -D @connectd/cloudflare, then target: cloudflare({ name }) in the config"),
+    cloudflare ? "" : step("to deploy", "npm i -D @kavishkagaya/connectd-cloudflare, then target: cloudflare({ name }) in the config"),
   ];
   log([...done.filter(Boolean), "", "Next:", ...next.filter(Boolean)].join("\n"));
 }

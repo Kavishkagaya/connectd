@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { importHmacKey, importKeys, kernel, type Keys, routeTicket } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
+import { importHmacKey, importKeys, kernel, type Keys, routeTicket } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { IllegalTransition, type LifecycleOptions, lifecycle, NotActive, type OAuth2 } from "./lifecycle.ts";
 import { OAuthError, type TokenResponse } from "./oauth.ts";
 

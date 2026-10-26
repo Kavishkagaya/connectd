@@ -1,4 +1,4 @@
-import type { Json } from "@connectd/kernel";
+import type { Json } from "@kavishkagaya/connectd-kernel";
 import { apiKey as apiKeySteps, deadAs, type OAuth2Config, type OAuth2Spec, oauth2Steps } from "./auth.ts";
 import type { Auth, Ctx } from "./define.ts";
 import { type Claims, decodeJwt, type Jwk, signingKey, signJwt, verifyJwt } from "./jwt.ts";

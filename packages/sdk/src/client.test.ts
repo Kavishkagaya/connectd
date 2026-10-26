@@ -168,7 +168,7 @@ test("the SDK imports no runtime code but signature.ts, which imports nothing", 
   const imports = readdirSync(dir)
     .filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "testing.ts")
     .flatMap((f) => [...readFileSync(dir + f, "utf8").matchAll(/^(?:import|export)\s+(?!type\b)[^;]*?from\s+"([^"]+)"/gms)].map((m) => m[1]!));
-  expect(imports.filter((s) => !s.startsWith("./"))).toEqual(["@connectd/runtime/signature", "@connectd/runtime/signature"]);
-  const sig = readFileSync(new URL(import.meta.resolve("@connectd/runtime/signature")).pathname, "utf8");
+  expect(imports.filter((s) => !s.startsWith("./"))).toEqual(["@kavishkagaya/connectd-runtime/signature", "@kavishkagaya/connectd-runtime/signature"]);
+  const sig = readFileSync(new URL(import.meta.resolve("@kavishkagaya/connectd-runtime/signature")).pathname, "utf8");
   expect(sig).not.toMatch(/^\s*(import|export .* from)\b/m);
 });

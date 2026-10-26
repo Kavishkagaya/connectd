@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { apiKey, defineConnection } from "@connectd/connections";
-import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
+import { apiKey, defineConnection } from "@kavishkagaya/connectd-connections";
+import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { directory, type Extension, findByExternal, type Index, memoryIndex, runtime } from "./index.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));

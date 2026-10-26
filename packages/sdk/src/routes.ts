@@ -1,5 +1,5 @@
 import { ConnectdError } from "./client.ts";
-import type { SessionArgs } from "@connectd/runtime";
+import type { SessionArgs } from "@kavishkagaya/connectd-runtime";
 
 /**
  * The app's one route (#54, app side), mounted anywhere (`app/api/connectd/[...path]/route.ts`):

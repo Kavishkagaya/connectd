@@ -1,12 +1,12 @@
 import { afterAll, afterEach, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Overview } from "@connectd/dashboard";
-import { type ConnectionEvent, connectd } from "@connectd/sdk";
+import type { Overview } from "@kavishkagaya/connectd-dashboard";
+import { type ConnectionEvent, connectd } from "@kavishkagaya/connectd-sdk";
 import { main } from "./cli.ts";
 import { type Dev, dev, ignored, serve, swappable } from "./dev.ts";
-import type { Program } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
+import type { Program } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { parseEnv } from "./env.ts";
 import { generateKeys } from "./keys.ts";
 import { NO_CLOUDFLARED, tunnel, tunnelUrl } from "./tunnel.ts";
@@ -34,7 +34,7 @@ const until = async <T>(f: () => T | Promise<T>, ms = 3000): Promise<NonNullable
 };
 
 const CONFIG = `
-import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
+import { apiKey, defineConnection, oauth2 } from "@kavishkagaya/connectd-connections";
 import { label } from "./label.ts";
 
 export default (env) => ({
@@ -156,7 +156,7 @@ test("config: function of the env (.env < process env), banner, unconfigured def
 
 test("one .env: a connection reads its config with env(); only the names read reach the runtime; .dev.vars is refused", async () => {
   const w = world();
-  const conn = `import { connection } from "@connectd/connections";
+  const conn = `import { connection } from "@kavishkagaya/connectd-connections";
 export default connection().config((env) => ({ clientId: env("TRACKER_ID"), region: env.optional("TRACKER_REGION") ?? "us" })).auth((f) => f.apiKey("key"))
   .identity(async (ctx) => ({ config: ctx.config }));`;
   const dir = project({ ".env": `TRACKER_ID=t1\nDATABASE_URL=postgres://app\n${keyLines}`, "oc/tracker/connection.ts": conn });
@@ -186,7 +186,7 @@ export default connection().config((env) => ({ clientId: env("TRACKER_ID"), regi
 test("config errors: no config file, duplicate ids, a broken config serves 503 until fixed", async () => {
   const w = world();
   await expect(dev({ dir: mkdtempSync(join(TMP, "e-")), port: 0, watch: false, log: () => {} })).rejects.toThrow(/no oc.config.ts/);
-  const dir = project({ "oc.config.ts": `import { apiKey, defineConnection } from "@connectd/connections";
+  const dir = project({ "oc.config.ts": `import { apiKey, defineConnection } from "@kavishkagaya/connectd-connections";
 const k = defineConnection({ id: "k", auth: apiKey(["key"]) });
 export default { definitions: [k, k] };` });
   const { d, lines } = await start(dir, w.env);

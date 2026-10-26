@@ -1,6 +1,11 @@
 {
-  "name": "@connectd/cli",
-  "version": "0.0.0",
+  "name": "@kavishkagaya/connectd",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kavishkagaya/connectd.git",
+    "directory": "packages/cli"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "bin": {
@@ -15,19 +20,19 @@
     "test": "bun test src"
   },
   "dependencies": {
-    "@connectd/dashboard": "workspace:*",
+    "@kavishkagaya/connectd-dashboard": "workspace:*",
     "esbuild": "^0.28.2"
   },
   "devDependencies": {
-    "@connectd/cloudflare": "workspace:*",
-    "@connectd/connections": "workspace:*",
-    "@connectd/kernel": "workspace:*",
-    "@connectd/runtime": "workspace:*",
-    "@connectd/sdk": "workspace:*"
+    "@kavishkagaya/connectd-cloudflare": "workspace:*",
+    "@kavishkagaya/connectd-connections": "workspace:*",
+    "@kavishkagaya/connectd-kernel": "workspace:*",
+    "@kavishkagaya/connectd-runtime": "workspace:*",
+    "@kavishkagaya/connectd-sdk": "workspace:*"
   },
   "peerDependencies": {
-    "@connectd/connections": "workspace:*",
-    "@connectd/kernel": "workspace:*",
-    "@connectd/runtime": "workspace:*"
+    "@kavishkagaya/connectd-connections": "workspace:*",
+    "@kavishkagaya/connectd-kernel": "workspace:*",
+    "@kavishkagaya/connectd-runtime": "workspace:*"
   }
 }

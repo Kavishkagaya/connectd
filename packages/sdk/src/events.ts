@@ -1,5 +1,5 @@
-import type { ConnectionEvent } from "@connectd/runtime";
-import { verify } from "@connectd/runtime/signature";
+import type { ConnectionEvent } from "@kavishkagaya/connectd-runtime";
+import { verify } from "@kavishkagaya/connectd-runtime/signature";
 import type { Connection } from "./client.ts";
 import type { EventFor, EventsOf, Registry } from "./registry.ts";
 

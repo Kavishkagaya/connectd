@@ -17,7 +17,7 @@ const KEYS = ["CONNECTD_API_KEY", "CONNECTD_EVENTS_SECRET", "CONNECTD_KEY_V1", "
 
 test("init in a Next.js app: .env (keys, CONNECTD_URL, APP_URL), .gitignore, config, lib/oc.ts, the route", async () => {
   const dir = app({
-    "package.json": JSON.stringify({ name: "@acme/web", dependencies: { next: "16.0.0", "@connectd/cloudflare": "0.0.0" } }),
+    "package.json": JSON.stringify({ name: "@acme/web", dependencies: { next: "16.0.0", "@kavishkagaya/connectd-cloudflare": "0.0.0" } }),
     "src/app/page.tsx": "export default () => null;\n",
     ".env": "DATABASE_URL=postgres://app",
     ".gitignore": "node_modules\n",
@@ -65,7 +65,7 @@ test("init elsewhere: a new .env (owner only), the config at the root, the route
   expect(existsSync(join(dir, "app"))).toBe(false);
   const out = lines.join("\n");
   expect(out).toContain("mount GET and POST at /api/connectd/*");
-  expect(out).toContain("npm i -D @connectd/cloudflare");
+  expect(out).toContain("npm i -D @kavishkagaya/connectd-cloudflare");
   expect(out).toContain("http://localhost:9000");
   expect(await main(["init", "--app-url", "localhost:3000"], { dir: app(), log: () => {} })).toBe(1);
 });

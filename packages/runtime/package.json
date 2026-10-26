@@ -1,6 +1,11 @@
 {
-  "name": "@connectd/runtime",
-  "version": "0.0.0",
+  "name": "@kavishkagaya/connectd-runtime",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kavishkagaya/connectd.git",
+    "directory": "packages/runtime"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -16,8 +21,8 @@
     "test": "bun test src && vitest run"
   },
   "dependencies": {
-    "@connectd/connections": "workspace:*",
-    "@connectd/kernel": "workspace:*"
+    "@kavishkagaya/connectd-connections": "workspace:*",
+    "@kavishkagaya/connectd-kernel": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.0",

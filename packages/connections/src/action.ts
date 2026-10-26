@@ -1,4 +1,4 @@
-import type { Json } from "@connectd/kernel";
+import type { Json } from "@kavishkagaya/connectd-kernel";
 import type { Api, Connection } from "./builder.ts";
 import type { Credential, State } from "./lifecycle.ts";
 

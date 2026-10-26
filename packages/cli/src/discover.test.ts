@@ -9,12 +9,12 @@ mkdirSync(TMP, { recursive: true });
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
 
 const CONFIG = (extra = "") => `
-import { defineConfig } from "@connectd/cli";
-import { connection } from "@connectd/connections";
+import { defineConfig } from "@kavishkagaya/connectd";
+import { connection } from "@kavishkagaya/connectd-connections";
 export const listed = connection("listed").config().auth((f) => f.apiKey("key"));
 export default defineConfig(() => ({ definitions: [listed]${extra} }));
 `;
-const KEYED = `import { connection } from "@connectd/connections";
+const KEYED = `import { connection } from "@kavishkagaya/connectd-connections";
 export default connection().config().auth((f) => f.apiKey("key"));`;
 
 function project(files: Record<string, string>) {
@@ -31,15 +31,15 @@ test("connection folders: the folder names the connection, actions/<name>.ts its
   const dir = project({
     "oc.config.ts": CONFIG(),
     "src/oc/tracker/connection.ts": KEYED,
-    "src/oc/tracker/actions/open.ts": `import { action } from "@connectd/connections";
+    "src/oc/tracker/actions/open.ts": `import { action } from "@kavishkagaya/connectd-connections";
 export default action({ run: () => ({ ok: true }) });`,
-    "src/oc/tracker/actions/close.ts": `import { action } from "@connectd/connections";
+    "src/oc/tracker/actions/close.ts": `import { action } from "@kavishkagaya/connectd-connections";
 export default action({ run: () => null });`,
     "src/oc/tracker/actions/open.test.ts": "throw new Error('tests are not imported');",
     "src/oc/tracker/actions/_shared.ts": "export const helper = 1;",
     "src/oc/tracker/events.ts": "throw new Error('the app side: never in the Worker');",
     // A connection with its own id (a provider's) runs as the folder's.
-    "src/oc/gh/connection.ts": `import { connection } from "@connectd/connections";
+    "src/oc/gh/connection.ts": `import { connection } from "@kavishkagaya/connectd-connections";
 export default connection("github").config().auth((f) => f.apiKey("token"));`,
     "src/oc/_shared/util.ts": "throw new Error('not a connection folder');",
   });

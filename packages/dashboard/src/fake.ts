@@ -1,8 +1,8 @@
-import { action, apiKey, defineConnection, hmacHex, oauth2, type StandardSchemaV1, safeEqual } from "@connectd/connections";
-import { fakeOAuth } from "@connectd/connections/testing";
-import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
-import { directory, type Extension, events, memoryIndex, runtime, webhooks } from "@connectd/runtime";
+import { action, apiKey, defineConnection, hmacHex, oauth2, type StandardSchemaV1, safeEqual } from "@kavishkagaya/connectd-connections";
+import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
+import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
+import { directory, type Extension, events, memoryIndex, runtime, webhooks } from "@kavishkagaya/connectd-runtime";
 import { dashboard } from "./index.ts";
 
 /**

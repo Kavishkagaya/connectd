@@ -1,8 +1,8 @@
-import { apiKey, defineConnection, oauth2 } from "@connectd/connections";
-import { fakeOAuth } from "@connectd/connections/testing";
-import { importHmacKey, importKeys } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
-import { runtime, sessions } from "@connectd/runtime";
+import { apiKey, defineConnection, oauth2 } from "@kavishkagaya/connectd-connections";
+import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
+import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
+import { runtime, sessions } from "@kavishkagaya/connectd-runtime";
 
 /**
  * Tests only: just enough of a browser window (DOM elements, window.open, location, postMessage,

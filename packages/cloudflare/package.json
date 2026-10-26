@@ -1,6 +1,11 @@
 {
-  "name": "@connectd/cloudflare",
-  "version": "0.0.0",
+  "name": "@kavishkagaya/connectd-cloudflare",
+  "version": "0.1.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kavishkagaya/connectd.git",
+    "directory": "packages/cloudflare"
+  },
   "license": "Apache-2.0",
   "type": "module",
   "exports": {
@@ -13,14 +18,14 @@
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.4.0",
     "@cloudflare/workers-types": "^5.20261011.1",
-    "@connectd/cli": "workspace:*",
-    "@connectd/connections": "workspace:*",
-    "@connectd/kernel": "workspace:*",
-    "@connectd/runtime": "workspace:*",
+    "@kavishkagaya/connectd": "workspace:*",
+    "@kavishkagaya/connectd-connections": "workspace:*",
+    "@kavishkagaya/connectd-kernel": "workspace:*",
+    "@kavishkagaya/connectd-runtime": "workspace:*",
     "vitest": "5.0.3"
   },
   "peerDependencies": {
-    "@connectd/cli": "workspace:*",
-    "@connectd/runtime": "workspace:*"
+    "@kavishkagaya/connectd": "workspace:*",
+    "@kavishkagaya/connectd-runtime": "workspace:*"
   }
 }

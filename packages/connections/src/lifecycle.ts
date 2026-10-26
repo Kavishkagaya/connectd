@@ -1,4 +1,4 @@
-import type { Backoff, Json, Kernel } from "@connectd/kernel";
+import type { Backoff, Json, Kernel } from "@kavishkagaya/connectd-kernel";
 import { OAuthError, type TokenResponse } from "./oauth.ts";
 
 /**

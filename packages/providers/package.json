@@ -1,5 +1,5 @@
 {
-  "name": "@connectd/providers",
+  "name": "@kavishkagaya/connectd-providers",
   "private": true,
   "version": "0.0.0",
   "license": "Apache-2.0",
@@ -12,9 +12,9 @@
     "registry": "bun src/registry.ts"
   },
   "dependencies": {
-    "@connectd/connections": "workspace:*"
+    "@kavishkagaya/connectd-connections": "workspace:*"
   },
   "devDependencies": {
-    "@connectd/kernel": "workspace:*"
+    "@kavishkagaya/connectd-kernel": "workspace:*"
   }
 }

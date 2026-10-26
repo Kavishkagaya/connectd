@@ -18,7 +18,7 @@ flowchart TB
 ## 1. Write the connection
 
 ```ts title="packages/providers/src/acme.ts"
-import { connection, type OAuth2Config, rateHeaders } from "@connectd/connections";
+import { connection, type OAuth2Config, rateHeaders } from "@kavishkagaya/connectd-connections";
 
 /**
  * Acme. What's unusual about it: …
@@ -37,7 +37,7 @@ export const acme = connection("acme")
 
 Guidelines:
 
-- **Import only `@connectd/connections`.** The file is copied into users' apps as is.
+- **Import only `@kavishkagaya/connectd-connections`.** The file is copied into users' apps as is.
 - **Read config from env** with `.config((env) => …)`, using `<PROVIDER>_CLIENT_ID`-style names. Use `env.optional` for extras.
 - **Comment the quirks.** The doc comment at the top should say what's unusual, and why each override exists. Users read this file.
 - **Mark known limits** with `// ponytail:`, naming the limit and the upgrade path.
@@ -58,7 +58,7 @@ const CATALOG = [
 
 ## 3. Test it against a fake
 
-Add a test to `providers.test.ts` that drives the real flow with `fakeOAuth` and `harness` from `@connectd/connections/testing`. Cover what's specific to the provider: the authorize URL's parameters, the token response shape, refresh and rotation, the dead-refresh code, revocation, identity, and webhook verify and parse. See [testing connections](/extending/custom-providers/#testing).
+Add a test to `providers.test.ts` that drives the real flow with `fakeOAuth` and `harness` from `@kavishkagaya/connectd-connections/testing`. Cover what's specific to the provider: the authorize URL's parameters, the token response shape, refresh and rotation, the dead-refresh code, revocation, identity, and webhook verify and parse. See [testing connections](/extending/custom-providers/#testing).
 
 ```sh
 cd packages/providers && bun test

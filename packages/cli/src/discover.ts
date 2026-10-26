@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { badActionName } from "@connectd/connections";
+import { badActionName } from "@kavishkagaya/connectd-connections";
 import type { Config, Env } from "./project.ts";
 import { workdir } from "./workdir.ts";
 
@@ -15,7 +15,7 @@ import { workdir } from "./workdir.ts";
  * Three generated files in `.connectd/`, rebuilt by dev, deploy and `types`, never edited:
  *
  *   entry.ts         the config plus the folders (`withFolders`): what dev and deploy run
- *   registry.d.ts    `interface Registry` for @connectd/sdk, so `oc.connection("github", id)` is typed
+ *   registry.d.ts    `interface Registry` for @kavishkagaya/connectd-sdk, so `oc.connection("github", id)` is typed
  *   app.ts           the app's side: each folder's events.ts, for `connectd({ listeners })` in the app
  *
  * Node APIs only (fs, path), no Bun: deploy's plan runs it too.
@@ -114,12 +114,12 @@ export function writeDiscovered(dir: string, configPath: string, found: Found[])
     registry,
     [
       head,
-      "// Include it in the tsconfig of the app that uses @connectd/sdk.",
+      "// Include it in the tsconfig of the app that uses @kavishkagaya/connectd-sdk.",
       `import type config from ${spec(work, configPath)};`,
       ...imports(true),
-      `import type { ${found.length ? "Entry, " : ""}RegistryOf } from "@connectd/sdk";`,
+      `import type { ${found.length ? "Entry, " : ""}RegistryOf } from "@kavishkagaya/connectd-sdk";`,
       "",
-      'declare module "@connectd/sdk" {',
+      'declare module "@kavishkagaya/connectd-sdk" {',
       `  interface Registry extends RegistryOf<typeof config> {`,
       ...found.map((f, i) => `    ${JSON.stringify(f.id)}: Entry<typeof c${i}, ${actions(f, i, true)}>;`),
       "  }",
@@ -156,7 +156,7 @@ export function writeDiscovered(dir: string, configPath: string, found: Found[])
       head,
       `import config from ${spec(work, configPath)};`,
       // By package name, like the config's own import: the bundle keeps packages external, resolved from the app.
-      'import { withFolders } from "@connectd/cli";',
+      'import { withFolders } from "@kavishkagaya/connectd";',
       ...imports(false),
       "",
       "export default withFolders(config, [",
@@ -169,14 +169,14 @@ export function writeDiscovered(dir: string, configPath: string, found: Found[])
 }
 
 /**
- * A note when `@connectd/sdk` doesn't resolve from the project: the registry then types nothing
+ * A note when `@kavishkagaya/connectd-sdk` doesn't resolve from the project: the registry then types nothing
  * (its `declare module` augments a module TypeScript can't find). Null when it resolves.
  */
 export function sdkNote(dir: string): string | null {
   try {
-    createRequire(join(dir, "package.json")).resolve("@connectd/sdk");
+    createRequire(join(dir, "package.json")).resolve("@kavishkagaya/connectd-sdk");
     return null;
   } catch {
-    return "note: @connectd/sdk isn't installed here, so .connectd/registry.d.ts types nothing; add it to the app's dependencies";
+    return "note: @kavishkagaya/connectd-sdk isn't installed here, so .connectd/registry.d.ts types nothing; add it to the app's dependencies";
   }
 }

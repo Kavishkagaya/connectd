@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { type ActionCtx, action, connection, type StandardSchemaV1 } from "@connectd/connections";
-import { fakeOAuth } from "@connectd/connections/testing";
-import { importHmacKey, importKeys, type Json } from "@connectd/kernel";
-import { memory } from "@connectd/kernel/memory";
+import { type ActionCtx, action, connection, type StandardSchemaV1 } from "@kavishkagaya/connectd-connections";
+import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
+import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
+import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { type ConnectionEvent, events, runtime } from "./index.ts";
 
 const MIN = 60_000;
