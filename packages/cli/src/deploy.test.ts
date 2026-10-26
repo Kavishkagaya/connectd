@@ -246,7 +246,7 @@ test("--dry-run: writes the entry, wrangler config and migrations, prints the pl
   const entry = readFileSync(r.generated.entry, "utf8");
   expect(entry).toContain('from "../../oc.config.ts"');
   expect(entry).not.toContain("connectd:config");
-  expect(entry).toMatch(/from "\.\.\/.*runtime\/src\/cloudflare\.ts"/);
+  expect(entry).toMatch(/from "\.\.\/.*src\/runtime-cloudflare\.ts"/);
   expect(readFileSync(join(s.dir, ".connectd", ".gitignore"), "utf8")).toBe("*\n");
 });
 
@@ -299,8 +299,8 @@ test("new-Worker detection: only Cloudflare's 10007; an index without its Worker
 test("generated entry: the runtime the project resolves", async () => {
   const s = setup();
   const r = await s.run({ dryRun: true });
-  // In this repo the project and the CLI resolve the same packages/runtime; the project's is asked first.
-  expect(readFileSync(r.generated.entry, "utf8")).toMatch(/runtime\/src\/index\.ts"/);
+  // The runtime through @kavishkagaya/connectd/runtime, as the project resolves it: in this repo, the CLI's re-export.
+  expect(readFileSync(r.generated.entry, "utf8")).toMatch(/src\/runtime\.ts"/);
 });
 
 test("a signal during wrangler deploy removes the secrets file, stops wrangler, exits non-zero", async () => {

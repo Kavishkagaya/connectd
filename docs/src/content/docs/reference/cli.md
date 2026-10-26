@@ -29,11 +29,14 @@ Writes only what's missing, and never overwrites:
 - `.env`: `APP_URL`, `CONNECTD_URL`, and dev's keys (`CONNECTD_API_KEY`, `CONNECTD_EVENTS_SECRET`, `CONNECTD_KEY_V1`, `CONNECTD_STATE_KEY`, `CONNECTD_SESSIONS_KEY`, `CONNECTD_WEBHOOKS_KEY`). It's made owner-only (`0600`).
 - `.gitignore`: adds `.env`. It refuses to write keys into a `.env` that git tracks.
 - `oc.config.ts`, `<src>/lib/oc.ts`, and for Next.js (App Router) `app/api/connectd/[...path]/route.ts`.
+- The deploy target, for a new `oc.config.ts`: asked in a terminal (or `--target`). For Cloudflare it installs `@kavishkagaya/connectd-cloudflare` and `wrangler` as dev dependencies, with your lockfile's package manager (else the one that ran it, else npm), and writes `target: cloudflare({ name })`. Already installed: used without asking.
 
 | Flag | |
 | --- | --- |
 | `--port <n>` | Where `connectd dev` will run (default 8787), written as `CONNECTD_URL` |
 | `--app-url <url>` | Your app's origin (default `APP_URL` from `.env`, else `http://localhost:3000`) |
+| `--target <t>` | Where it deploys: `cloudflare`, or `none` to decide later (default: asked in a terminal; none in CI) |
+| `--skip-install` | Write the target into the config without installing its packages |
 
 Keys an older `connectd dev` kept in `.connectd/dev.vars` are moved to `.env`, so sealed credentials stay readable.
 

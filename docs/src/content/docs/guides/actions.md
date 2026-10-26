@@ -8,7 +8,7 @@ sidebar:
 An **action** is a function that runs *inside* the connection's instance, next to its token, with an authenticated API client. One file per action, in the connection's folder:
 
 ```ts title="src/oc/github/actions/starRepo.ts"
-import { action } from "@kavishkagaya/connectd-connections";
+import { action } from "@kavishkagaya/connectd/connections";
 import { z } from "zod";
 
 export default action({

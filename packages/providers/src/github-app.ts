@@ -12,7 +12,7 @@ import {
   signingKey,
   signJwt,
   type TokenResponse,
-} from "@kavishkagaya/connectd-connections";
+} from "@kavishkagaya/connectd/connections";
 
 const API = "https://api.github.com";
 const headers = (auth: string) => ({ authorization: auth, accept: "application/vnd.github+json", "user-agent": "connectd" });

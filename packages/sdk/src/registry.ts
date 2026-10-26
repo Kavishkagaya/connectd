@@ -7,7 +7,7 @@ import type { ConnectionEvent, LifecycleEvent, WebhookData } from "@kavishkagaya
  * generated `.connectd/registry.d.ts` fills it in (`connectd dev`, `deploy`, `types`), one
  * entry per connection folder, named after it:
  *
- *   declare module "@kavishkagaya/connectd-sdk" {
+ *   declare module "@kavishkagaya/connectd/sdk" {
  *     interface Registry extends RegistryOf<typeof config> {
  *       github: Entry<typeof c0, { starRepo: typeof a0 }>;
  *     }

@@ -11,10 +11,6 @@
   "dependencies": {
     "@kavishkagaya/connectd": "workspace:*",
     "@kavishkagaya/connectd-cloudflare": "workspace:*",
-    "@kavishkagaya/connectd-connections": "workspace:*",
-    "@kavishkagaya/connectd-kernel": "workspace:*",
-    "@kavishkagaya/connectd-runtime": "workspace:*",
-    "@kavishkagaya/connectd-sdk": "workspace:*",
     "next": "16.0.10",
     "react": "19.2.3",
     "react-dom": "19.2.3"

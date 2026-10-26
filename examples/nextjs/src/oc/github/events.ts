@@ -1,4 +1,4 @@
-import { listen } from "@kavishkagaya/connectd-sdk";
+import { listen } from "@kavishkagaya/connectd/sdk";
 
 // Runs in the Next app (through oc.routes), never in the runtime.
 export default listen("github")

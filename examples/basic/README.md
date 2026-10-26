@@ -25,7 +25,7 @@ run `connectd types` before building the app in CI.
 
 ```ts
 // lib/oc.ts: CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET come from the environment.
-import { connectd } from "@kavishkagaya/connectd-sdk";
+import { connectd } from "@kavishkagaya/connectd/sdk";
 import { listeners } from "../.connectd/app";
 export const oc = connectd({ user: async (req) => (await getSession(req))?.userId ?? null, listeners });
 

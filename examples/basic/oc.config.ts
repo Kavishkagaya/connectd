@@ -8,7 +8,7 @@ export default defineConfig((env) => ({
   dir: "src/oc",
   // Where `connectd deploy` puts it; dev ignores it.
   target: cloudflare({ name: "basic" }),
-  // Your app's endpoint for signed events (`oc.events({ secret }).handle`, @kavishkagaya/connectd-sdk).
+  // Your app's endpoint for signed events (`oc.events({ secret }).handle`, @kavishkagaya/connectd/sdk).
   ...(env.EVENTS_URL ? { events: { url: env.EVENTS_URL } } : {}),
   // Pages that run the connect UI (@kavishkagaya/connectd-connect).
   sessions: { origins: [env.APP_ORIGIN ?? "http://localhost:3000"] },

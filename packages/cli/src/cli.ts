@@ -3,7 +3,7 @@ import { dev, PORT } from "./dev.ts";
 import { join } from "node:path";
 import { add, custom, diff, list } from "./add.ts";
 import { TEMPLATES } from "./templates.ts";
-import { init } from "./init.ts";
+import { init, TARGETS } from "./init.ts";
 import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
 import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
@@ -25,6 +25,8 @@ Commands
 connectd init
   --port <n>       where connectd dev will run (default ${PORT}; written as CONNECTD_URL)
   --app-url <url>  your app's origin (default APP_URL from .env, else http://localhost:3000)
+  --target <t>     where it deploys: ${Object.keys(TARGETS).join(", ")} or none (default: asked in a terminal); installs the target's packages
+  --skip-install   don't install the target's packages
   Writes only what's missing; keys an older connectd dev kept in .connectd/dev.vars move to .env.
 
 connectd dev
@@ -80,6 +82,8 @@ const SPEC = {
   custom: "string",
   template: "string",
   "app-url": "string",
+  target: "string",
+  "skip-install": "boolean",
 } as const;
 
 /** Runs a command; resolves to an exit code, or to a running dev server's stop function. */
@@ -97,8 +101,18 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
     case "init": {
       const port = a.flags.port === undefined ? undefined : Number(a.flags.port);
       if (port !== undefined && !(Number.isInteger(port) && port > 0 && port < 65536)) return log(`--port must be a port number`), 2;
+      const target = a.flags.target;
+      if (typeof target === "string" && target !== "none" && !Object.hasOwn(TARGETS, target))
+        return log(`--target must be one of ${Object.keys(TARGETS).join(", ")}, none`), 2;
       try {
-        await init({ dir: o.dir ?? process.cwd(), ...(port ? { port } : {}), ...(typeof a.flags["app-url"] === "string" ? { appUrl: a.flags["app-url"] } : {}), log });
+        await init({
+          dir: o.dir ?? process.cwd(),
+          ...(port ? { port } : {}),
+          ...(typeof a.flags["app-url"] === "string" ? { appUrl: a.flags["app-url"] } : {}),
+          ...(typeof target === "string" ? { target: target as keyof typeof TARGETS | "none" } : {}),
+          ...(a.flags["skip-install"] ? { skipInstall: true } : {}),
+          log,
+        });
         return 0;
       } catch (e) {
         log((e as Error).message);

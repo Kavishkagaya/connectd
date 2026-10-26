@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "./cli.ts";
 import { parseEnv } from "./env.ts";
-import { init } from "./init.ts";
+import { init, installCommand, packageManager } from "./init.ts";
 
 const app = (files: Record<string, string> = {}) => {
   const dir = mkdtempSync(join(tmpdir(), "connectd-init-"));
@@ -53,7 +53,7 @@ test("init in a Next.js app: .env (keys, CONNECTD_URL, APP_URL), .gitignore, con
 });
 
 test("init elsewhere: a new .env (owner only), the config at the root, the route left to mount; --port, --app-url", async () => {
-  const dir = app({ "package.json": JSON.stringify({ name: "api" }) });
+  const dir = app({ "package.json": JSON.stringify({ name: "api" }), "package-lock.json": "{}" });
   const lines: string[] = [];
   expect(await main(["init", "--port", "9000", "--app-url", "http://localhost:4000/"], { dir, log: (l) => void lines.push(l) })).toBe(0);
   expect(statSync(join(dir, ".env")).mode & 0o777).toBe(0o600);
@@ -65,7 +65,7 @@ test("init elsewhere: a new .env (owner only), the config at the root, the route
   expect(existsSync(join(dir, "app"))).toBe(false);
   const out = lines.join("\n");
   expect(out).toContain("mount GET and POST at /api/connectd/*");
-  expect(out).toContain("npm i -D @kavishkagaya/connectd-cloudflare");
+  expect(out).toContain("npm install -D @kavishkagaya/connectd-cloudflare wrangler, then target: cloudflare({ name })");
   expect(out).toContain("http://localhost:9000");
   expect(await main(["init", "--app-url", "localhost:3000"], { dir: app(), log: () => {} })).toBe(1);
 });
@@ -136,4 +136,64 @@ test("init refuses to put keys in a .env git tracks", async () => {
   await init({ dir, log: () => {} });
   expect(parseEnv(read(dir, ".env")).CONNECTD_API_KEY).toStartWith("oc_");
   expect(git("check-ignore", "-q", ".env").status).toBe(0);
+});
+
+test("init --target: installs the target's packages with the project's package manager, then writes it into the config", async () => {
+  const dir = app({ "package.json": JSON.stringify({ name: "web" }), "pnpm-lock.yaml": "" });
+  const ran: string[][] = [];
+  const lines: string[] = [];
+  await init({ dir, target: "cloudflare", run: (cmd, args) => (ran.push([cmd, ...args]), 0), log: (l) => void lines.push(l) });
+  const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
+  expect(ran).toEqual([["pnpm", "add", "-D", `@kavishkagaya/connectd-cloudflare@^${version}`, "wrangler"]]);
+  const config = read(dir, "oc.config.ts");
+  expect(config).toContain('import { cloudflare } from "@kavishkagaya/connectd-cloudflare";');
+  expect(config).toContain('target: cloudflare({ name: "web" })');
+  expect(lines.join("\n")).toContain("connectd deploy");
+});
+
+test("init asks where it deploys (in a terminal): Cloudflare installs, 'decide later' writes no target", async () => {
+  const asked: string[][] = [];
+  const ran: string[][] = [];
+  const pick = (v: string) => async (_q: string, choices: { value: string }[]) => (asked.push(choices.map((c) => c.value)), v);
+  const run = (cmd: string, args: string[]) => (ran.push([cmd, ...args]), 0);
+  const yes = app({ "package.json": JSON.stringify({ name: "a" }), "package-lock.json": "{}" });
+  await init({ dir: yes, ask: pick("cloudflare"), run, log: () => {} });
+  expect(asked[0]).toEqual(["cloudflare", "none"]);
+  expect(ran[0]?.slice(0, 3)).toEqual(["npm", "install", "-D"]);
+  expect(read(yes, "oc.config.ts")).toContain("target: cloudflare(");
+
+  const later = app({ "package.json": JSON.stringify({ name: "b" }) });
+  await init({ dir: later, ask: pick("none"), run, log: () => {} });
+  expect(ran).toHaveLength(1);
+  expect(read(later, "oc.config.ts")).not.toContain("target:");
+
+  // Already installed: not asked, not installed again; an existing config: not asked at all.
+  const has = app({ "package.json": JSON.stringify({ name: "c", devDependencies: { "@kavishkagaya/connectd-cloudflare": "^0.2.0" } }) });
+  await init({ dir: has, ask: pick("none"), run, log: () => {} });
+  expect(read(has, "oc.config.ts")).toContain('target: cloudflare({ name: "c" })');
+  await init({ dir: later, ask: pick("cloudflare"), run, log: () => {} });
+  expect(asked).toHaveLength(2);
+  expect(ran).toHaveLength(1);
+});
+
+test("init --target with --skip-install, and a failed install: the config is written, the command printed", async () => {
+  let ran = 0;
+  const skip = app({ "package.json": JSON.stringify({ name: "a" }) });
+  await init({ dir: skip, target: "cloudflare", skipInstall: true, run: () => (ran++, 0), log: () => {} });
+  expect(ran).toBe(0);
+  expect(read(skip, "oc.config.ts")).toContain("target: cloudflare(");
+
+  const fail = app({ "package.json": JSON.stringify({ name: "b" }), "bun.lock": "" });
+  const lines: string[] = [];
+  await init({ dir: fail, target: "cloudflare", run: () => 1, log: (l) => void lines.push(l) });
+  expect(lines.join("\n")).toMatch(/the install failed: run bun add -d @kavishkagaya\/connectd-cloudflare@\S+ wrangler yourself/);
+  expect(await main(["init", "--target", "aws"], { dir: app(), log: () => {} })).toBe(2);
+});
+
+test("package manager: the lockfile's, else the one running connectd, else npm", () => {
+  expect(packageManager(app({ "yarn.lock": "" }), "npm/10.9.8 node/v22.23.0 linux x64")).toBe("yarn");
+  expect(packageManager(app(), "pnpm/10.25.0 npm/? node/v22.23.0 linux x64")).toBe("pnpm");
+  expect(packageManager(app(), "")).toBe("npm");
+  expect(installCommand("bun", ["x"])).toEqual(["bun", ["add", "-d", "x"]]);
+  expect(installCommand("yarn", ["x"])).toEqual(["yarn", ["add", "-D", "x"]]);
 });

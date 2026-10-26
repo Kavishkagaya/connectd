@@ -2,6 +2,6 @@
   // The DO driver and its tests run in workerd: Workers types instead of Bun's.
   "extends": "../../tsconfig.json",
   "compilerOptions": { "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"] },
-  "include": ["src/drivers/do.ts", "test"],
+  "include": ["src/drivers/do.ts", "test", "../cli/src/kernel-do.ts"],
   "exclude": []
 }

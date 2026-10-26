@@ -1,18 +1,18 @@
 ---
 title: SDK
-description: "@kavishkagaya/connectd-sdk (server) and @kavishkagaya/connectd-connect (browser): every function and option."
+description: "@kavishkagaya/connectd/sdk (server) and @kavishkagaya/connectd-connect (browser): every function and option."
 sidebar:
   order: 2
 ---
 
-## `@kavishkagaya/connectd-sdk`
+## `@kavishkagaya/connectd/sdk`
 
 The server SDK. It uses fetch only, with no Node APIs, so it runs on Node 18+, Bun, Workers and Deno.
 
 ### `connectd(options?)`
 
 ```ts
-import { connectd } from "@kavishkagaya/connectd-sdk";
+import { connectd } from "@kavishkagaya/connectd/sdk";
 const oc = connectd({ user, listeners });
 ```
 
@@ -92,10 +92,10 @@ The default export of a folder's `events.ts`. Typed to that connection's events.
 
 Thrown for anything the runtime refused: `{ code, status, message, state?, reason?, retryAfterMs? }`. A non-JSON failure in front of the runtime is `code: "http_error"`. See [error codes](/reference/http-api/#errors).
 
-### `@kavishkagaya/connectd-sdk/node`
+### `@kavishkagaya/connectd/sdk/node`
 
 ```ts
-import { toNode } from "@kavishkagaya/connectd-sdk/node";
+import { toNode } from "@kavishkagaya/connectd/sdk/node";
 app.post("/connectd/events", toNode(ev.handle));   // mount before express.json(), or after express.raw()
 ```
 
@@ -108,6 +108,10 @@ app.post("/connectd/events", toNode(ev.handle));   // mount before express.json(
 ## `@kavishkagaya/connectd-connect`
 
 The browser package. Zero dependencies, DOM only.
+
+:::note
+Not published yet.
+:::
 
 ### `mount(element, options)`
 
