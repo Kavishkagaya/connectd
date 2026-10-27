@@ -7,7 +7,12 @@
 
 [Docs](https://kavishkagaya.github.io/connectd/) · [Quickstart](https://kavishkagaya.github.io/connectd/start/quickstart/) · [Example app](examples/nextjs)
 
-> **Status:** early (v0.2). It works end to end and is tested, but the API can still change between minor versions.
+> **Status:** early (v0.2). Expect the API to change between minor versions.
+>
+> - **Tested end to end locally:** `connectd dev` with a Next.js app and a real GitHub OAuth app.
+> - **Providers:** GitHub has been tried against the real API. GitHub App, Slack and Google are tested against fakes of their APIs, not yet against the real ones.
+> - **`connectd init` sets up Next.js (App Router) only.** For any other framework it prints one step to do by hand: mount `oc.routes` at `/api/connectd/*` (Express through `toNode`).
+> - **`connectd deploy` hasn't been run against a real Cloudflare account yet.** The Worker it generates is tested in Cloudflare's local runtime (workerd) and the command against a stubbed `wrangler`, but treat production deploys as experimental for now.
 
 ```mermaid
 flowchart LR
@@ -27,9 +32,11 @@ You write one small file per provider. connectd runs each connection as its own 
 - **Rate limits** per connection and per app.
 - **One file per provider.** A typed builder, copied from the catalog with `connectd add` or written from a template. Provider code is yours to read and change.
 - **Typed actions.** Functions that run next to the token, called from your app, on a schedule, or when a connection changes state.
-- **Runs where you run.** `connectd dev` runs everything in memory on your laptop, with a dashboard. `connectd deploy` puts it on your own Cloudflare account, one Durable Object per connection.
+- **Runs where you run.** `connectd dev` runs everything in memory on your laptop, with a dashboard. `connectd deploy` targets your own Cloudflare account, one Durable Object per connection (experimental, see Status).
 
 ## Quickstart
+
+In a Next.js app (App Router):
 
 ```sh
 npm i @kavishkagaya/connectd
@@ -38,15 +45,18 @@ npx connectd add github    # copies the GitHub provider into src/oc/github/
 npx connectd dev           # the runtime on :8787, dashboard at /dashboard
 ```
 
-A connection is a folder. The provider is one file:
+A connection is a folder. The provider is one file (`connectd add github` writes a fuller version of this one):
 
 ```ts
 // src/oc/github/connection.ts
 import { connection } from "@kavishkagaya/connectd/connections";
 
 export default connection()
-  .auth((f) => f.oauth2(endpoints).scopes("repo"))
-  .api({ baseUrl: "https://api.github.com" })
+  .config((env) => ({ clientId: env("GITHUB_CLIENT_ID"), clientSecret: env("GITHUB_CLIENT_SECRET") }))
+  .auth((f) =>
+    f.oauth2({ authorizeUrl: "https://github.com/login/oauth/authorize", tokenUrl: "https://github.com/login/oauth/access_token" }).scopes("repo"),
+  )
+  .api({ baseUrl: "https://api.github.com", headers: { "user-agent": "my-app" } }) // GitHub rejects requests without one
   .identity(({ api }) => api.get("/user"));
 ```
 
@@ -60,7 +70,7 @@ const { state } = await gh.status();                    // "active", "reauth_req
 const repos = await (await gh.fetch("/user/repos")).json(); // token added by the proxy
 ```
 
-Actions run next to the token and are typed end to end:
+Actions run next to the token and are typed end to end. Input takes any [Standard Schema](https://standardschema.dev) library; this one uses zod (`npm i zod`):
 
 ```ts
 // src/oc/github/actions.ts: one object, keyed by the action's name
@@ -119,6 +129,8 @@ npx connectd deploy --env staging    # its own Worker, database and keys
 ```
 
 Each environment is a separate deployment on your Cloudflare account, with its own keys, so staging never reads production's connections. See [deploying](https://kavishkagaya.github.io/connectd/guides/deploying/).
+
+> Not yet tried against a real Cloudflare account (see Status above). `npx connectd deploy --dry-run` shows the plan without touching Cloudflare.
 
 ## How it's built
 
