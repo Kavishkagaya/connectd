@@ -57,7 +57,7 @@ type Program = (atom: Atom, platform: Platform) => Handler;
 - `cas` writes only if the version still matches. It's how every race is resolved.
 - `take` reads and deletes in one step, so at most one caller gets the value. It's what single-use tickets are built on.
 - **At most one live handler per atom name**, across the deployment. Durable Objects give this by construction; a server platform needs leases.
-- An atom that can't be reached throws `Unavailable`; going over `limits` throws `LimitExceeded`, on every platform.
+- An atom that can't be reached throws `Unavailable` (from `call` and `destroy`); going over `limits` throws `LimitExceeded`, on every platform.
 - `db` holds fixed operations for connectd's own needs (today: the connection index), never a generic query and never user-facing. Each platform implements them in its own storage.
 - Store and timers survive restarts and redeploys; anything in memory doesn't.
 - There are two platforms: **Cloudflare** (production: one Durable Object per atom, D1 for `db`, the Worker's env) and **memory** (dev and tests, with a fake or real clock, snapshot/restore and fault injection).

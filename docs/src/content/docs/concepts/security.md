@@ -23,7 +23,7 @@ Each deployment (dev, staging, production) has its own set. `connectd init` writ
 | Name | Used for |
 | --- | --- |
 | `CONNECTD_API_KEY` | Your backend → connectd. Bearer token on every non-public route. |
-| `CONNECTD_KEY_V1`, `_V2`, … | Encrypting credentials (AES-GCM). The highest version is current. |
+| `CONNECTD_KEY_V1`, `_V2`, … | Encrypting credentials (AES-GCM). Versions run from `V0` to `V255`; the highest is current. |
 | `CONNECTD_STATE_KEY` | Signing OAuth `state` and other single-use tickets |
 | `CONNECTD_SESSIONS_KEY` | Signing browser session tokens |
 | `CONNECTD_WEBHOOKS_KEY` | Deriving each connection's own webhook secret |

@@ -19,7 +19,7 @@ A layer only uses the one below it. The kernel never imports Cloudflare; the Clo
 ```
 packages/kernel/
   src/index.ts        public API (re-exports only)
-  src/platform.ts     L0 contract: Platform (per deployment: version, now, env, fetch, log, defer, atoms.call/destroy, db: Management, limits) + Atom (per connection: name, now, store, timer); Handler, Program = (atom, platform) => Handler; Unavailable, LimitExceeded; the connection index's row types and cursors
+  src/platform.ts     L0 contract: Platform (per deployment: version, now, env, fetch, log, defer, atoms.call/destroy, db: Management, limits) + Atom (per connection: name, now, store, timer); Handler, Program = (atom, platform) => Handler; Unavailable, LimitExceeded, LIMITS (every platform's); the connection index's row types and cursors
   src/drivers/        the platforms: memory.ts (tests + dev; `unreachable` fault injection, memoryDb()), do.ts (Durable Objects + D1: durableObject(), cloudflarePlatform()), parity.ts (two shared suites: `parity` for an atom, `platformParity` for the deployment)
   migrations/         the D1 schema of the Cloudflare platform's management db (copied by `connectd deploy`)
   src/kernel.ts        kernel(atom, platform, { keys, stateKey }): the management layer of one atom (#53): name claims, seal/unseal, serve (the Handler)
