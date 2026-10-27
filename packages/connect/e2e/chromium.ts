@@ -39,11 +39,10 @@ const settings = {
   apiKey: "secret",
   redirectUri: `${RT}/callback`,
   config: { example: { clientId: "cid" }, coopy: { clientId: "cid" }, keyed: null },
-  fetch: p.fetch,
   sessions: { key: await importHmacKey(key(5)), origins: [APP] },
 };
 const rt = runtime({ definitions: { example, coopy, keyed }, settings: async () => settings, extensions: [sessions()] });
-const w = memory(rt.program, { now: Date.now() });
+const w = memory(rt.program, { fetch: p.fetch, clock: Date.now });
 const rtServer = Bun.serve({
   port: 8788,
   hostname: "localhost",
@@ -55,7 +54,7 @@ const rtServer = Bun.serve({
         headers: { "content-type": "text/html", ...(u.searchParams.get("coop") ? { "cross-origin-opener-policy": "same-origin" } : {}) },
       });
     }
-    return rt.fetch(req, w.call);
+    return rt.fetch(req, w.platform);
   },
 });
 const bundle = await Bun.build({ entrypoints: [`${import.meta.dir}/page.ts`], target: "browser" });
@@ -75,7 +74,7 @@ const appServer = Bun.serve({
           headers: { authorization: "Bearer secret" },
           body: JSON.stringify(args),
         }),
-        w.call,
+        w.platform,
       );
       return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } });
     }
@@ -86,7 +85,7 @@ const appServer = Bun.serve({
   },
 });
 const state = async (def: string, id: string) =>
-  (await (await rt.fetch(new Request(`${RT}/connections/${def}/${id}`, { headers: { authorization: "Bearer secret" } }), w.call)).json()).state;
+  (await (await rt.fetch(new Request(`${RT}/connections/${def}/${id}`, { headers: { authorization: "Bearer secret" } }), w.platform)).json()).state;
 
 const { chromium } = await import(process.env.PLAYWRIGHT ?? "playwright");
 const browser = await chromium.launch();
@@ -173,7 +172,7 @@ try {
       headers: { origin: APP, authorization: `Bearer ${t.token}` },
       body: JSON.stringify({ mode: "redirect" }),
     }),
-    w.call,
+    w.platform,
   );
   const ticket = ((await tic.json()) as { ticket: string }).ticket;
   const victim = await (await browser.newContext()).newPage();

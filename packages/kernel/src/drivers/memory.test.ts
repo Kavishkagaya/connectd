@@ -1,16 +1,23 @@
 import { expect, test } from "bun:test";
-import type { Handler, Json, Program } from "../driver.ts";
+import type { Handler, Json, Program } from "../platform.ts";
 import { memory, type MemoryOptions } from "./memory.ts";
-import { parity, probe } from "./parity.ts";
+import { PARITY_ENV, parity, platformParity, probe, type World } from "./parity.ts";
 
-const world = (o: MemoryOptions = {}) => {
-  const m = memory(probe, o);
-  return { ...m, restart: () => world({ ...o, now: m.now(), snapshot: JSON.parse(JSON.stringify(m.dump())) }) };
+const quiet = () => {}; // the parity suite makes timers and deferred work fail on purpose
+const world = (o: MemoryOptions = {}): World => {
+  const m = memory(probe, { env: PARITY_ENV, log: quiet, ...o });
+  return {
+    ...m,
+    cut: (name, on) => void (on ? m.unreachable.add(name) : m.unreachable.delete(name)),
+    restart: () => world({ ...o, now: m.now(), snapshot: JSON.parse(JSON.stringify(m.dump())) }),
+  };
 };
 
 parity("memory", () => world(), { test, expect });
 // A clock that doesn't move on its own: the real-clock mode with advance() as a skew on top.
-parity("memory (clock)", () => memory(probe, { clock: () => 1_000 }), { test, expect });
+// No restart: a restart keeps the fake clock, not a skew.
+parity("memory (clock)", () => ({ ...world({ clock: () => 1_000 }), restart: undefined }) as World, { test, expect });
+platformParity("memory", () => world(), { test, expect });
 
 // Memory-only: with a moving clock, timers fire on their own (the DO's real alarms, which the DO
 // parity run keeps off with a far-future fake clock).
@@ -45,7 +52,7 @@ const sync: Program = (d) => ({
 
 test("memory: a synchronously throwing timer doesn't stop later ones (fake clock and clock mode)", async () => {
   fired = [];
-  const w = memory(sync);
+  const w = memory(sync, { log: quiet });
   await w.call("a", "set", [["throws", 10], ["after", 20]]);
   await w.advance(20);
   expect(fired).toEqual(["after"]);
@@ -54,7 +61,7 @@ test("memory: a synchronously throwing timer doesn't stop later ones (fake clock
   expect(fired).toEqual(["after", "again"]);
 
   fired = [];
-  const r = memory(sync, { clock: Date.now });
+  const r = memory(sync, { clock: Date.now, log: quiet });
   await r.call("a", "set", [["throws", 5], ["after", 15]]);
   await Bun.sleep(40);
   expect(fired).toEqual(["after"]);

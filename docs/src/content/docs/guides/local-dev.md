@@ -30,7 +30,7 @@ connectd dev
 It prints one line per request after that, and `reloaded: …` when you save a file.
 
 - The full runtime (every extension) runs **in memory** on a real clock: timers fire, tokens refresh, and events are delivered.
-- State is saved to `.connectd/state.json` and restored on start, so connections survive restarts. `--reset` starts empty.
+- State is saved to `.connectd/state.json` and restored on start, so connections survive restarts. `--reset` starts empty. If the config fails to load on start, the file is left as it was and its timers wait for the first good load.
 - The config and the connection folders are bundled with esbuild and **swapped in place on save**, without losing state. The watcher ignores build output, hidden folders and generated types.
 - Keys come from `.env` (written by `connectd init`). `dev` never creates keys itself.
 - The port comes from `CONNECTD_URL` in `.env` (default 8787), or `--port`.

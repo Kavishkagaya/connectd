@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { apiKey, defineConnection } from "@kavishkagaya/connectd-connections";
-import { type Driver, importHmacKey, importKeys, type Json, type Program } from "@kavishkagaya/connectd-kernel";
+import { type Atom, importHmacKey, importKeys, type Json, type Program } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { BODY_KEPT, type ConnectionEvent, directory, emit, events, type EventsStatus, type Extension, KEPT, memoryIndex, proxy, runtime } from "./index.ts";
+import { BODY_KEPT, type ConnectionEvent, directory, emit, events, type EventsStatus, type Extension, KEPT, proxy, runtime } from "./index.ts";
 import { sign, verify } from "./signature.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -18,19 +18,19 @@ const LIMIT = 2 * 1024 * 1024;
 function checked(program: Program) {
   const live = new Set<string>();
   const reads = { record: 0, bodies: 0 };
-  const wrapped: Program = (d, instance) => {
+  const wrapped: Program = (d, platform) => {
     const fit = (k: string, v: Json) => {
       if (JSON.stringify(v).length > LIMIT) throw new Error(`value too large: ${k}`);
       if (k.startsWith("q:events/e/")) live.add(k);
     };
-    const store: Driver["store"] = {
+    const store: Atom["store"] = {
       ...d.store,
       get: (k) => (k === "c:record" && reads.record++, k.startsWith("q:events/e/") && reads.bodies++, d.store.get(k)),
       put: (k, v, o) => (fit(k, v), d.store.put(k, v, o)),
       cas: (k, e, v, o) => (fit(k, v), d.store.cas(k, e, v, o)),
       delete: (k) => (live.delete(k), d.store.delete(k)),
     };
-    return program({ ...d, store }, instance);
+    return program({ ...d, store }, platform);
   };
   return { wrapped, live, reads };
 }
@@ -53,12 +53,11 @@ async function setup(opts: { configured?: boolean } = {}) {
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { keyed: null },
-    fetch,
     ...(opts.configured === false ? {} : { events: { url: URL_, secret: SECRET } }),
   };
   const rt = runtime({ definitions: { keyed }, settings: async () => settings, extensions: [events(), hook] });
   const c = checked(rt.program);
-  const w = memory(c.wrapped, { now: 1_700_000_000_000 });
+  const w = memory(c.wrapped, { fetch, now: 1_700_000_000_000 });
   const call = (m: string, a: Json = null) => w.call("conn:keyed:k1", m, a);
   const delivered = () => got.filter((g) => g.status < 300);
   const bodies = () => delivered().map((g) => JSON.parse(g.body) as ConnectionEvent);
@@ -243,15 +242,13 @@ test("alongside proxy() and directory(): proxied calls send nothing, state chang
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { keyed: null },
-    fetch,
     events: { url: URL_, secret: SECRET },
   };
-  const index = memoryIndex();
-  const rt = runtime({ definitions: { keyed: proxied }, settings: async () => settings, extensions: [directory(index), proxy(), events()] });
+  const rt = runtime({ definitions: { keyed: proxied }, settings: async () => settings, extensions: [directory(), proxy(), events()] });
   const c = checked(rt.program);
-  const w = memory(c.wrapped);
+  const w = memory(c.wrapped, { fetch });
   const send = (method: string, path: string, body?: Json) =>
-    rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.call);
+    rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.platform);
 
   expect((await send("POST", "/connections/keyed/k1/connect", { key: "sk" })).status).toBe(200);
   await w.advance(0);
@@ -261,7 +258,7 @@ test("alongside proxy() and directory(): proxied calls send nothing, state chang
   await send("POST", "/connections/keyed/k1/revoke");
   await w.advance(0);
   expect(sent).toEqual(["connection.active", "connection.revoked"]);
-  expect((await index.list({})).connections.map((r) => [r.id, r.state])).toEqual([["k1", "revoked"]]);
+  expect((await w.platform.db.connections.list({})).connections.map((r) => [r.id, r.state])).toEqual([["k1", "revoked"]]);
   expect(c.live.size).toBe(2); // kept for the dashboard (events.status, events.redeliver)
 });
 

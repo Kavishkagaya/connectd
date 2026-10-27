@@ -1,5 +1,5 @@
-// The kernel on the Durable Object driver (#53): a program exercising each stored tool, driven by tools.test.ts.
-import type { Handler, Json, Program } from "../src/driver.ts";
+// The kernel on the Cloudflare platform (#53): a program exercising each stored tool, driven by tools.test.ts.
+import type { Handler, Json, Program } from "../src/platform.ts";
 import { importHmacKey, importKeys } from "../src/secrets.ts";
 import { kernel } from "../src/kernel.ts";
 
@@ -11,10 +11,10 @@ const s = () => log.ocTools!;
 const raw = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 
 /** Keys are imported on the first event (Workers can't do crypto at global scope), as the runtime host does. */
-export const tools: Program = (d, instance) => {
+export const tools: Program = (d, platform) => {
   let ready: Promise<Handler> | undefined;
   async function init(): Promise<Handler> {
-    const k = kernel(d, { instance, keys: await importKeys({ 1: raw(1) }, 1), stateKey: await importHmacKey(raw(9)) });
+    const k = kernel(d, platform, { keys: await importKeys({ 1: raw(1) }, 1), stateKey: await importHmacKey(raw(9)) });
     const counter = k.cell<{ n: number }, string>("counter");
     const events = k.queue<string>("events", {
       deliver: async (m) => (s().down ? "HTTP 503" : (s().delivered.push(`${m.seq}:${m.msg}`), null)),

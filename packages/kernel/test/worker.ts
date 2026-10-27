@@ -7,7 +7,8 @@ import { tools } from "./tools.ts";
 const g = globalThis as { ocNow?: number };
 g.ocNow ??= Date.now() + 10 * 365 * 86400_000;
 
-export class Probe extends durableObject(probe, { binding: "PROBE", now: () => g.ocNow! }) {}
+export const PROBE = { binding: "PROBE", db: "DB", now: () => g.ocNow! };
+export class Probe extends durableObject(probe, PROBE) {}
 
-// The kernel's tools (#53) on the same driver.
+// The kernel's tools (#53) on the same platform.
 export class Tools extends durableObject(tools, { binding: "TOOLS", now: () => g.ocNow! }) {}

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import type { Json } from "./driver.ts";
+import type { Json } from "./platform.ts";
 import type { Cell } from "./cell.ts";
 import type { Kernel } from "./kernel.ts";
 import { type Delivery, QueueError, type QueueOptions } from "./queue.ts";

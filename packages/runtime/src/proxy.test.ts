@@ -44,14 +44,13 @@ async function setup(o: { expiresIn?: number; timeoutMs?: number } = {}) {
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null, hooked: null },
-    fetch: p.fetch,
   };
   const rt = runtime({ definitions: { example, keyed, hooked }, settings: async () => settings, extensions: [proxy({ timeoutMs: o.timeoutMs ?? 1000 })] });
-  const w = memory(rt.program);
+  const w = memory(rt.program, { fetch: p.fetch });
   let settleThrows = false;
   const call = (i: string, m: string, a: Json) => (settleThrows && m === "proxy.settle" ? Promise.reject(new Error("DO gone")) : w.call(i, m, a));
   const send = (method: string, path: string, init: RequestInit = {}) =>
-    rt.fetch(new Request(`https://oc.test${path}`, { method, ...init, headers: { authorization: "Bearer secret", ...init.headers } }), call);
+    rt.fetch(new Request(`https://oc.test${path}`, { method, ...init, headers: { authorization: "Bearer secret", ...init.headers } }), { ...w.platform, atoms: { ...w.platform.atoms, call } });
   const connect = async (id: string) => {
     const url = ((await (await send("POST", `/connections/example/${id}/connect`)).json()) as { url: string }).url;
     const back = p.approve(url);

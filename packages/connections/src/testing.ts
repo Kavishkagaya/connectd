@@ -7,15 +7,15 @@ import { bind, type Definition } from "./define.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 
-/** One definition on the in-memory driver, with the public /callback route. */
+/** One definition on the memory platform, with the public /callback route. */
 export async function harness<C, M extends Json>(d: Definition<C, M> | Connection<string, C, M>, config: C, fetch: typeof globalThis.fetch) {
   const def = definitionOf(d);
   const opts = { config, fetch, redirectUri: "https://oc.test/callback" };
   const keys = { keys: await importKeys({ 1: key(1) }, 1), stateKey: await importHmacKey(key(9)) };
   const bound = new Map<string, ReturnType<typeof bind<C, M>>>();
-  const w = memory((d, id) => {
-    const k = kernel(d, { instance: id, ...keys });
-    bound.set(id, bind(def, k, opts));
+  const w = memory((atom, platform) => {
+    const k = kernel(atom, platform, keys);
+    bound.set(atom.name, bind(def, k, opts));
     return k.serve({ init: async () => null });
   });
   const get = async (id: string) => {

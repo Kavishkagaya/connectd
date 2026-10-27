@@ -5,8 +5,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "files": [
-    "src",
-    "migrations"
+    "src"
   ],
   "exports": {
     ".": "./src/index.ts",

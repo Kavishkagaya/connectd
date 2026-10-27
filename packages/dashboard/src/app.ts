@@ -506,6 +506,7 @@ export function start(win: Win) {
         ["Events", o.events ? h("code", {}, o.events.url) : "off"],
         ["Sessions", o.sessions ? o.sessions.origins.join(", ") || "no origins" : "off"],
         ["Index", o.index ? "on" : "off"],
+        ["Version", h("code", {}, o.version)],
       ]),
       h("p", { class: "oc-hint" }, "Register the callback URL as the redirect URI with each OAuth provider."),
       h("h2", {}, "Definitions"),

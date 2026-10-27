@@ -4,8 +4,8 @@ import { kernel } from "./kernel.ts";
 import { keys, world } from "./testkit.ts";
 
 test("kernel: a stored name is declared once per kind; names are checked", async () => {
-  const w = memory((d, instance) => {
-    const k = kernel(d, { instance });
+  const w = memory((atom, platform) => {
+    const k = kernel(atom, platform);
     k.cell("record");
     k.timer("record", { handle: async () => {} }); // another kind may reuse it
     return k.serve({
@@ -27,19 +27,11 @@ test("kernel: serve routes methods, refuses unknown and kernel.* ones", async ()
 });
 
 test("kernel: a timer nobody declared is dropped with a warning", async () => {
-  const { w, get } = await world(() => ({}));
-  await get();
-  const warn = console.warn;
   const seen: unknown[][] = [];
-  console.warn = (...a: unknown[]) => void seen.push(a);
-  try {
-    const h = kernel({} as never, { instance: "x" }).serve({});
-    await h.onTimer("ghost", null);
-  } finally {
-    console.warn = warn;
-  }
-  expect(seen[0]?.[2]).toBe("ghost");
-  expect(w.now()).toBe(0);
+  const w = memory((atom, platform) => kernel(atom, platform).serve({}), { log: (...a) => void seen.push(a) });
+  const h = kernel({ name: "x" } as never, w.platform).serve({});
+  await h.onTimer("ghost", null);
+  expect(seen).toEqual([["warn", "kernel.timer.unhandled", { atom: "x", timer: "ghost" }]]);
 });
 
 test("kernel: seal and unseal; stale after a key rotation", async () => {
@@ -55,7 +47,7 @@ test("kernel: seal and unseal; stale after a key rotation", async () => {
 });
 
 test("kernel: tools that need keys say so", async () => {
-  const k = kernel({} as never, { instance: "x" });
+  const k = kernel({ name: "x" } as never, {} as never);
   await expect(k.seal(1)).rejects.toThrow("needs opts.keys");
   expect(() => k.ticket("login", { ttlMs: 1 })).toThrow("needs opts.stateKey");
   expect((await keys()).current).toBe(1);

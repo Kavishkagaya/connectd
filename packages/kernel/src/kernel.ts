@@ -1,4 +1,4 @@
-import type { Driver, Handler, Json } from "./driver.ts";
+import type { Atom, Handler, Json, Platform } from "./platform.ts";
 import { decrypt, encrypt, type Keys, keyVersion } from "./secrets.ts";
 import { type Cell, cell, type Value } from "./cell.ts";
 import { acquire, type Limit, type Limiter, limiter, RATE, rate, refund } from "./limiter.ts";
@@ -11,8 +11,8 @@ import { type Timer, type TimerOptions, timer } from "./timer.ts";
  * The kernel (#53): the management layer of one instance. Mechanism only: it knows how to store,
  * update, retry and deliver safely, never what a connection, a token or a provider is.
  *
- *   const program: Program = (driver, instance) => {
- *     const k = kernel(driver, { instance, keys, stateKey });
+ *   const program: Program = (atom, platform) => {
+ *     const k = kernel(atom, platform, { keys, stateKey });
  *     const record = k.cell<Record, Msg>("record");     // declare once…
  *     const refresh = k.flight<Credential>();
  *     return k.serve({ token: … });                     // …use the handles in methods
@@ -24,7 +24,6 @@ import { type Timer, type TimerOptions, timer } from "./timer.ts";
  */
 
 export type KernelOptions = {
-  instance: string;
   /** For `seal` / `unseal`. */
   keys?: Keys;
   /** For tickets. */
@@ -36,10 +35,10 @@ export type Method = (args: Json) => Promise<Json>;
 /** Letters, digits, `_ . -`: no `:` or `/`, which the kernel uses to build its own keys. */
 const NAME = /^[A-Za-z0-9_.-]+$/;
 
-export function kernel(d: Driver, o: KernelOptions) {
-  const { instance } = o;
+export function kernel(d: Atom, p: Platform, o: KernelOptions = {}) {
+  const instance = d.name;
   const claimed = new Set<string>();
-  /** Timer name → what runs when the driver fires it. `serve` routes `onTimer` here. */
+  /** Timer name → what runs when the platform fires it. `serve` routes `onTimer` here. */
   const fires = new Map<string, (payload: Json) => Promise<void>>();
 
   function claim(kind: string, name: string) {
@@ -57,17 +56,19 @@ export function kernel(d: Driver, o: KernelOptions) {
     /** A limiter stored in this instance. */
     (name: string, limit: Limit): Limiter => {
       claim("limiter", name);
-      return limiter(d, instance, instance, name, limit);
+      return limiter(d, p, instance, name, limit);
     },
     {
-      /** A limiter stored in another instance (an app-wide scope), reached with `driver.call`. */
-      at: (other: string, name: string, limit: Limit): Limiter => limiter(d, instance, other, name, limit),
+      /** A limiter stored in another atom (an app-wide scope), reached with `platform.atoms.call`. */
+      at: (other: string, name: string, limit: Limit): Limiter => limiter(d, p, other, name, limit),
     },
   );
 
   return {
     instance,
     now: () => d.now(),
+    /** The platform's log, for code that only sees the kernel (connections). */
+    log: p.log,
 
     /** A value with safe updates and an outbox. */
     cell<V extends Value, M extends Json = never>(name: string, opts: { ttlMs?: number } = {}): Cell<V, M> {
@@ -85,7 +86,7 @@ export function kernel(d: Driver, o: KernelOptions) {
     /** A named alarm and its handler; `throw` in the handler means retry (with `retry`). */
     timer<P extends Json = null>(name: string, opts: TimerOptions<P>): Timer<P> {
       claim("timer", name);
-      const t = timer<P>(d, instance, name, opts);
+      const t = timer<P>(d, p, name, opts);
       fires.set(name, t.fire);
       return t.timer;
     },
@@ -94,7 +95,7 @@ export function kernel(d: Driver, o: KernelOptions) {
     queue<M extends Json>(name: string, opts: QueueOptions<M>): Queue<M> {
       claim("queue", name);
       const t = `q:${name}`;
-      const q = queue<M>(d, instance, name, t, t, opts);
+      const q = queue<M>(d, p, name, t, t, opts);
       fires.set(t, () => q.drain());
       return q.queue;
     },
@@ -121,7 +122,7 @@ export function kernel(d: Driver, o: KernelOptions) {
     },
 
     /**
-     * The driver's Handler: `kernel.rate` (another instance using a limiter stored here) goes to the
+     * The atom's Handler: `kernel.rate` (another instance using a limiter stored here) goes to the
      * limiter, other `kernel.*` methods are refused, the rest go to `methods`; timers go to the
      * handler declared under their name. Keeping `kernel.*` away from outside callers is the front
      * desk's job (the HTTP layer refuses them).
@@ -138,7 +139,7 @@ export function kernel(d: Driver, o: KernelOptions) {
         async onTimer(name, payload) {
           const f = fires.get(name);
           // ponytail: an alarm left by older code (a renamed timer) is dropped with a warning.
-          if (!f) return console.warn("kernel: no handler for timer", instance, name);
+          if (!f) return p.log("warn", "kernel.timer.unhandled", { atom: instance, timer: name });
           await f(payload);
         },
       };

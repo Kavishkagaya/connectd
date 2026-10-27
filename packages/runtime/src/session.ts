@@ -165,7 +165,7 @@ async function signed<T extends { typ: string }>(api: Api, value: string, typ: T
 async function claimsOf(api: Api, token: string): Promise<Claims> {
   const c = await signed<Claims>(api, token, TYP);
   if (typeof c.exp !== "number" || typeof c.origin !== "string") throw new Fail("unauthorized", 401, "missing or forged session token");
-  if (c.exp <= api.now()) throw new Fail("session_expired", 401, "session token expired");
+  if (c.exp <= api.platform.now()) throw new Fail("session_expired", 401, "session token expired");
   return c;
 }
 
@@ -333,7 +333,7 @@ const session: Route = {
       }
       throw new Fail("not_found", 404, "no such route");
     } catch (e) {
-      const f = e instanceof Refused ? e.fault : fault(e, "worker");
+      const f = e instanceof Refused ? e.fault : fault(e, "front door", api.platform.log);
       return Response.json({ error: f }, { status: f.status, headers: { ...headers, [ERROR_HEADER]: f.code } });
     }
   },
@@ -414,7 +414,7 @@ function methods(h: Hosted): Record<string, (a: Json) => Promise<Json>> {
       try {
         return { target, url: await h.bound.connect({}, target as unknown as Json) } as unknown as Json;
       } catch (e) {
-        return { target, error: fault(e, h.instance) } as unknown as Json;
+        return { target, error: fault(e, h.instance, h.platform.log) } as unknown as Json;
       }
     },
 

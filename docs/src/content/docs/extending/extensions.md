@@ -142,4 +142,4 @@ export const deploy: Adapter["deploy"] = async (ctx: DeployContext): Promise<Dep
 };
 ```
 
-`@kavishkagaya/connectd-cloudflare` is the reference implementation: it generates the Worker entry, `wrangler.json` and migrations, then runs wrangler. A target for another platform also needs a [driver](/extending/self-hosting/#writing-a-driver) for it.
+`@kavishkagaya/connectd-cloudflare` is the reference implementation: it generates the Worker entry, `wrangler.json` and migrations, then runs wrangler. A target for another platform also needs a [platform](/extending/self-hosting/#writing-a-platform) for it.

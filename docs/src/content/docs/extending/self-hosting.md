@@ -1,19 +1,19 @@
 ---
 title: Self-hosting without the CLI
-description: Use runtime() directly. Your own Worker, your own server, your own settings, or a new driver.
+description: Use runtime() directly. Your own Worker, your own server, your own settings, or a new platform.
 sidebar:
   order: 3
 ---
 
-The CLI is a convenience. Underneath, everything is one function, `runtime()`, plus a driver. Use it directly when you want full control: your own Worker with other routes, a custom settings source, or a platform the CLI doesn't target.
+The CLI is a convenience. Underneath, everything is one function, `runtime()`, plus a platform. Use it directly when you want full control: your own Worker with other routes, a custom settings source, or a platform the CLI doesn't target.
 
 ```mermaid
 flowchart LR
   DEFS["definitions<br/>(connection builders)"] --> RT["runtime({ definitions, settings, actions, extensions })"]
   SET["settings()"] --> RT
   EXT["extensions<br/>proxy · events · webhooks · sessions · directory · dashboard"] --> RT
-  RT --> PG["program<br/>→ a driver (DO, memory, yours)"]
-  RT --> FE["fetch(req, call)<br/>→ your HTTP server"]
+  RT --> PG["program<br/>→ a platform's atoms (DO, memory, yours)"]
+  RT --> FE["fetch(req, platform)<br/>→ your HTTP server"]
 ```
 
 ## On Cloudflare, by hand
@@ -22,7 +22,7 @@ flowchart LR
 import { env } from "cloudflare:workers";
 import { importHmacKey, importKeys } from "@kavishkagaya/connectd/kernel";
 import { directory, events, proxy, runtime, sessions, webhooks } from "@kavishkagaya/connectd/runtime";
-import { cloudflare, d1Index } from "@kavishkagaya/connectd/runtime/cloudflare";
+import { cloudflare } from "@kavishkagaya/connectd/runtime/cloudflare";
 import github from "./oc/github/connection.ts";
 
 const rt = runtime({
@@ -38,10 +38,11 @@ const rt = runtime({
     webhooks: { url: "https://connect.example.com/webhooks", key: await importHmacKey(env.CONNECTD_WEBHOOKS_KEY) },
     sessions: { key: await importHmacKey(env.CONNECTD_SESSIONS_KEY), origins: ["https://app.example.com"] },
   }),
-  extensions: [proxy(), events(), webhooks(), sessions(), directory(d1Index("INDEX"))],
+  extensions: [proxy(), events(), webhooks(), sessions(), directory()],
 });
 
-const cf = cloudflare(rt, { binding: "CONNECTION" });
+// The platform: atoms in the CONNECTION Durable Objects, the management db (the index) in D1.
+const cf = cloudflare(rt, { binding: "CONNECTION", db: "INDEX" });
 export class Connection extends cf.ConnectionDO {}
 export default { fetch: cf.fetch };
 ```
@@ -51,9 +52,10 @@ export default { fetch: cf.fetch };
   "name": "my-connectd",
   "main": "worker.ts",
   "compatibility_date": "2026-10-01",
+  "version_metadata": { "binding": "CF_VERSION_METADATA" },
   "durable_objects": { "bindings": [{ "name": "CONNECTION", "class_name": "Connection" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Connection"] }],
-  "d1_databases": [{ "binding": "INDEX", "database_name": "my-connectd-index", "database_id": "…", "migrations_dir": "node_modules/@kavishkagaya/connectd/runtime/migrations" }]
+  "d1_databases": [{ "binding": "INDEX", "database_name": "my-connectd-index", "database_id": "…", "migrations_dir": "node_modules/@kavishkagaya/connectd/kernel/migrations" }]
 }
 ```
 
@@ -71,51 +73,54 @@ Leaving out an extension turns its feature off. Each built-in one is also a no-o
 | `events?` | `{ url, secret }`: event delivery |
 | `webhooks?` | `{ url, key }`: the ingress URL, and the key per-connection secrets derive from |
 | `sessions?` | `{ key, origins }`: the browser connect UI |
-| `fetch?` | Outbound fetch for definitions (tests pass a fake) |
 
-Unlike the CLI, `runtime()` doesn't read `.config((env) => …)` for you. Pass each connection's config in `settings.config`. Or use `options(config, env, index)` from `@kavishkagaya/connectd`, which is exactly what the generated Worker does: it resolves an `oc.config.ts` against an env and returns everything `runtime()` takes.
+Unlike the CLI, `runtime()` doesn't read `.config((env) => …)` for you. Pass each connection's config in `settings.config`. Or use `options(config, platform.env)` from `@kavishkagaya/connectd`, which is exactly what the generated Worker does: it resolves an `oc.config.ts` against the platform's env, name by name, and returns everything `runtime()` takes.
+
+Outbound HTTP (providers, the proxy, event delivery) and logs are the platform's: `platform.fetch` and `platform.log`. In tests, give the memory platform a fake: `memory(rt.program, { fetch })`.
 
 ## On a Node server, in memory
 
-The memory driver isn't durable on its own, but `dump()` and `snapshot` save and restore it. That's how `connectd dev` works:
+The memory platform isn't durable on its own, but `dump()` and `snapshot` save and restore it. That's how `connectd dev` works:
 
 ```ts
 import { createServer } from "node:http";
 import { memory } from "@kavishkagaya/connectd/kernel/memory";
-import { memoryIndex, runtime /* , … */ } from "@kavishkagaya/connectd/runtime";
+import { runtime /* , … */ } from "@kavishkagaya/connectd/runtime";
 
-const rt = runtime({ definitions, settings, extensions: [/* …, */ directory(memoryIndex())] });
-const world = memory(rt.program, { clock: Date.now });   // real clock: timers fire on their own
+const rt = runtime({ definitions, settings, extensions: [/* …, */ directory()] });
+const world = memory(rt.program, { clock: Date.now, env: process.env });   // real clock: timers fire on their own
 
 // Any Request → Response server works; this is the whole bridge:
-const handle = (req: Request) => rt.fetch(req, (instance, method, args) => world.call(instance, method, args));
+const handle = (req: Request) => rt.fetch(req, world.platform);
 ```
 
-Keep it to dev, demos and tests. Production wants a durable driver.
+Keep it to dev, demos and tests. Production wants a durable platform.
 
-## Writing a driver
+## Writing a platform
 
-A driver is the [L0 contract](/concepts/architecture/#l0--drivers-infrastructure-only): per-instance `store` (`get`, `put`, `cas`, `take`, `delete`, optional TTL), named durable `timer`s, `call` to another instance, and `now()`. Then expose it as a host for `Program`s:
+A platform implements the [L0 contract](/concepts/architecture/#l0--platform-infrastructure-only): the `Atom` (per connection: `store`, named durable `timer`s, `now()`) and the `Platform` (per deployment: `env`, `fetch`, `log`, `defer`, `atoms.call`/`destroy`, the `db` management operations, `limits`, `version`). Then host `Program`s on it:
 
 ```ts
-import type { Driver, Program } from "@kavishkagaya/connectd/kernel";
+import type { Atom, Platform, Program } from "@kavishkagaya/connectd/kernel";
 
-// Your platform's equivalent of "one actor per key, with storage and an alarm".
-export function myDriver(program: Program) { /* create a Driver per instance, route calls and timer fires to program(driver, instance) */ }
+// Your platform's equivalent of "one actor per key, with storage and an alarm", plus the deployment around it.
+export function myPlatform(program: Program) { /* one Atom per name, a single owner each; route calls and timer fires to program(atom, platform) */ }
 ```
 
-Two properties matter most:
+The properties that matter most:
 
-- **Each store operation is atomic** against other events on the same instance. `cas` compares versions, so there's no ABA problem.
+- **One live handler per atom name** across the deployment. On a server, that means leases.
+- **Each store operation is atomic** against other events on the same atom. `cas` compares versions, so there's no ABA problem, even across a `destroy`.
 - **Timers survive restarts** and fire roughly on time, with at least one delivery.
 
-Prove it with the shared parity suite, the same one the memory and Durable Object drivers pass:
+Prove it with the two shared parity suites, the same ones the memory and Cloudflare platforms pass:
 
 ```ts
-import { parity, probe } from "@kavishkagaya/connectd-kernel/parity";
+import { parity, platformParity, probe } from "@kavishkagaya/connectd-kernel/parity";
 import { expect, test } from "vitest";
 
-parity("my driver", () => makeWorld(myDriver(probe)), { test, expect });
+parity("my platform", () => makeWorld(myPlatform(probe)), { test, expect });
+platformParity("my platform", () => makeWorld(myPlatform(probe)), { test, expect });
 ```
 
-A Postgres or SQLite-backed server driver is on the roadmap. If you'd like to build it, see [contributing](/contributing/overview/).
+A Postgres or SQLite-backed server platform is on the roadmap. If you'd like to build it, see [contributing](/contributing/overview/).

@@ -23,7 +23,7 @@ Each deployment (dev, staging, production) has its own set. `connectd init` writ
 | Name | Used for |
 | --- | --- |
 | `CONNECTD_API_KEY` | Your backend → connectd. Bearer token on every non-public route. |
-| `CONNECTD_KEY_V1`, `_V2`, … | Encrypting credentials (AES-GCM). The highest version is current. |
+| `CONNECTD_KEY_V1`, `_V2`, … | Encrypting credentials (AES-GCM). Versions run from `V0` to `V255`; the highest is current. |
 | `CONNECTD_STATE_KEY` | Signing OAuth `state` and other single-use tickets |
 | `CONNECTD_SESSIONS_KEY` | Signing browser session tokens |
 | `CONNECTD_WEBHOOKS_KEY` | Deriving each connection's own webhook secret |
@@ -39,7 +39,7 @@ Your app needs only `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECR
 
 ## Definition code is sandboxed by interface
 
-A definition's functions get a narrow `ctx`: `config`, `fetch`, `redirectUri`, `now`. They never see the driver, the encryption keys or other connections, and the kernel performs every write. A definition that throws leaves state untouched.
+A definition's functions get a narrow `ctx`: `config`, `fetch`, `redirectUri`, `now`. They never see the platform, the encryption keys or other connections, and the kernel performs every write. A definition that throws leaves state untouched.
 
 That's isolation by API inside one isolate. A definition can still burn CPU or hang until workerd's limits stop it. It's your own code, so that's the right trade for self-hosting.
 

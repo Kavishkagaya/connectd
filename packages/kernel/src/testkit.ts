@@ -1,5 +1,5 @@
 // Test harness for the kernel (not exported): instances on the memory driver, each running `setup`.
-import type { Json, Program } from "./driver.ts";
+import type { Json, Program } from "./platform.ts";
 import { memory, type Snapshot } from "./drivers/memory.ts";
 import { importHmacKey, importKeys } from "./secrets.ts";
 import { type Kernel, kernel, type Method } from "./kernel.ts";
@@ -16,10 +16,10 @@ export async function world<T>(
 ) {
   const opts = { keys: await keys(o.versions, o.current), stateKey: await stateKey() };
   const made = new Map<string, T>();
-  const program: Program = (d, instance) => {
-    const k = kernel(d, { instance, ...opts });
+  const program: Program = (atom, platform) => {
+    const k = kernel(atom, platform, opts);
     const t = setup(k);
-    made.set(instance, t);
+    made.set(atom.name, t);
     return k.serve({ ...t.methods, "test.touch": async () => null });
   };
   const w = memory(program, o.snapshot ? { snapshot: o.snapshot } : {});

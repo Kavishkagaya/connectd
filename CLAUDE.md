@@ -9,25 +9,26 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
  L3  Runtime     ConnectionDO · proxy · webhooks · events      (done)
  L2  Connections defineConnection(), lifecycle, OAuth, providers   (in progress)
  L1  Kernel      cell · flight · mutex · timer · queue · ticket · limiter · seal (#53)   (done)
- L0  Drivers     Durable Objects · in-memory · server (deferred)           (done)
+ L0  Platform    Platform (env · fetch · log · defer · atoms · db · limits) + Atom (store · timer) on: Durable Objects + D1 · memory · server (deferred)
 ```
 
-A layer only uses the one below it. The kernel never imports Cloudflare; the DO driver, `runtime/src/cloudflare.ts` and the Cloudflare target's Worker template are the only places `cloudflare:workers` appears.
+A layer only uses the one below it. The kernel never imports Cloudflare; the Cloudflare platform (`kernel/src/drivers/do.ts`) and the Cloudflare target's Worker template are the only places `cloudflare:workers` appears.
 
 ## Layout
 
 ```
 packages/kernel/
   src/index.ts        public API (re-exports only)
-  src/driver.ts       L0 contract: Json, Driver, Handler, Program
-  src/drivers/        memory.ts, do.ts, parity.ts (shared driver suite)
-  src/kernel.ts        kernel(): the management layer of one instance (#53): name claims, seal/unseal, serve (the Handler)
+  src/platform.ts     L0 contract: Platform (per deployment: version, now, env, fetch, log, defer, atoms.call/destroy, db: Management, limits) + Atom (per connection: name, now, store, timer); Handler, Program = (atom, platform) => Handler; Unavailable, LimitExceeded, LIMITS (every platform's); the connection index's row types and cursors
+  src/drivers/        the platforms: memory.ts (tests + dev; `unreachable` fault injection, memoryDb()), do.ts (Durable Objects + D1: durableObject(), cloudflarePlatform()), parity.ts (two shared suites: `parity` for an atom, `platformParity` for the deployment)
+  migrations/         the D1 schema of the Cloudflare platform's management db (copied by `connectd deploy`)
+  src/kernel.ts        kernel(atom, platform, { keys, stateKey }): the management layer of one atom (#53): name claims, seal/unseal, serve (the Handler)
   src/cell.ts         cell (read-decide-cas update + outbox, take) and `loop`, the one cas loop every tool uses
   src/sync.ts         flight / flights (single-flight), mutex (one at a time); in memory
   src/timer.ts, queue.ts, ticket.ts, limiter.ts   alarms with retry · ordered retried delivery · signed one-time passes · GCRA permits
   src/secrets.ts, schedule.ts                      pure helpers: AES-GCM with key versions, HMAC sign/verify · backoff
-  src/testkit.ts      memory-driver harness for the kernel's tests (not exported); tests next to each file
-  test/               DO driver tests in workerd (vitest); tools.ts + tools.test.ts run the kernel's tools on the DO driver
+  src/testkit.ts      memory-platform harness for the kernel's tests (not exported); tests next to each file
+  test/               both parity suites on Durable Objects + D1 in workerd (vitest); tools.ts + tools.test.ts run the kernel's tools there
 
 packages/connections/
   src/lifecycle.ts    one connection on the kernel: the `record` cell (state, sealed credential, Transition outbox), token/refresh (flight + timer), login ticket; State, Credential, NotActive
@@ -46,15 +47,15 @@ packages/providers/   private (not published): the catalog's source. One connect
 registry/             <provider>.json + index.json, generated and committed; the CLI fetches it at its version's tag
 
 packages/runtime/
-  src/host.ts         the Program every connection instance runs: one kernel per instance, registry lookup, bind, extensions' hooks (Hosted.k), methods, faults
-  src/http.ts         the Worker's fetch: routes table by first path segment, API key, /connections, /callback
+  src/host.ts         the Program every connection's atom runs: one kernel per atom, registry lookup, bind, extensions' hooks (Hosted.k, Hosted.platform), methods, faults
+  src/http.ts         the front door's fetch(req, platform): routes table by first path segment, API key, /connections, /callback
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
   src/actions.ts      actions on the connection's instance (added by runtime({ actions })): actions.<id> methods + /actions/:id route, actions.status, input validation, .every timers while active, .on per state entry, <action>.completed/failed events, conn.emit for the connection's own .events()
   src/proxy.ts        proxy() extension: /proxy/:def/:id/<path>, token + rate permits in one DO call
   src/events.ts       events extension: what an event is and how it's signed and POSTed, on the kernel's queue (relays the record's outbox); emit(); events.status/flush/redeliver
   src/signature.ts    Standard Webhooks sign/verify, no imports (`/signature` export, for the SDK)
-  src/cloudflare.ts   DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
-  src/directory.ts    connection index extension: Index, memoryIndex, list route, findByExternal (D1 in cloudflare.ts, migrations/)
+  src/cloudflare.ts   the runtime on the Cloudflare platform: DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
+  src/directory.ts    connection index extension: keeps each connection's row in platform.db.connections, list route (api.index)
   src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection, or explicit subscriptions (subscribe/list/unsubscribe) when the definition has a `subscription` schema; webhooks.status
   src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step; GET /connect, the hosted connect page (`link()`)
 
@@ -65,7 +66,7 @@ packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.j
   src/listen.ts       listen(id).on(type, handler): a folder's events.ts (app side), one connection's events
   src/routes.ts       oc.routes { GET, POST } (#54, app side): connect/:def (server-started redirect session), return (page + confirm), events (to listeners)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
-  src/testing.ts      the real runtime on the memory driver + fake providers, for the SDK's tests
+  src/testing.ts      the real runtime on the memory platform + fake providers, for the SDK's tests
 
 packages/connect/     browser package (#29), zero dependencies, DOM only (tsconfig.web.json; the root tsc skips it)
   src/connect.ts      headless: connect({ url, token, mode: popup | redirect, fields? }) → Result, resume() on the return URL, session(), claims()
@@ -77,7 +78,7 @@ packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /
   src/index.ts        the extension: the page (strict CSP), assets, /dashboard/api/overview, /connections/:def/:id (actions.status, webhooks.list) and /failures (API key)
   src/app.ts          the UI, zero dependencies, DOM only (tsconfig.web.json via main.ts); API key in sessionStorage, Bearer on same-origin fetch; actions panel + Run form (from JSON Schema), subscriptions, #/actions
   src/assets.ts       generated by `bun run build` (build.ts) from app.ts/main.ts/app.css and committed; a test fails when it's stale
-  src/fake.ts         the real runtime + dashboard() on the memory driver and a fake DOM, for the tests and e2e
+  src/fake.ts         the real runtime + dashboard() on the memory platform and a fake DOM, for the tests and e2e
   e2e/chromium.ts     real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 
 packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed). `@kavishkagaya/connectd`, the one package an app installs: exports project.ts, and src/sdk.ts, sdk-node.ts, connections.ts, connections-testing.ts, runtime*.ts, kernel*.ts re-export the private packages (`/sdk`, `/sdk/node`, `/connections`, `/connections/testing`, `/runtime`, `/runtime/cloudflare`, `/runtime/signature`, `/kernel`, `/kernel/memory`, `/kernel/do`); `bun run pack` carries those packages inside it
@@ -89,7 +90,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bu
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: the environment (--env <name>, default production: .env.<name> or --env-file, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `connectd dev`: memory driver on a real clock behind node:http, keys from .env (init's; never made here), port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save (watcher skips build output, hidden dirs, generated types)
+  src/dev.ts          `connectd dev`: memory platform on a real clock behind node:http, keys from .env (init's; never made here), port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save (watcher skips build output, hidden dirs, generated types)
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) `connectd add --custom <id> --template <flow>` (the same folder from src/templates.ts: oauth2, oidc, api-key, client-credentials, jwt-bearer, device) and `connectd diff <id>` (unified diff against the catalog)
   src/cli.ts, args.ts commands (init, dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
@@ -123,15 +124,16 @@ Published: `@kavishkagaya/connectd` and `@kavishkagaya/connectd-cloudflare` only
 
 ## Patterns
 
-- **Driver = infrastructure only, per instance**: `store` (get/put/cas/take/delete, optional TTL), named durable `timer`s, `call` to another instance, `now()`. Everything else is kernel code on top.
-- **Concurrency:** handlers interleave at every await (like DOs); the memory driver doesn't serialize either, on purpose. Anything that races goes through `cas` (versioned, no ABA) or `take` (single consumer), in the kernel: `cell.update` (read-decide-cas) and `cell.take`.
-- **Kernel (#53):** `const k = kernel(driver, { instance, keys, stateKey })` once per Program call (the host does it, after settings load); every tool declared once as a typed handle (stored names: letters, digits, `_ . -`), `k.serve(methods)` as the Handler. Mechanism only: nothing about connections, tokens or providers goes in it. Extensions get the instance's kernel as `Hosted.k` and declare their own cells, timers and queues (names `<extension>.<name>`).
-- **Program composition:** a `Program` is `(driver, instance) => { onCall, onTimer }`. `k.serve` routes timers to the handler declared under their name and `kernel.rate` to the limiter; instances without a kernel (app-wide limiters) answer `RATE` with `handleRate`.
-- **Cross-instance:** a scope (app, workspace) is just another instance key reached with `d.call`. Args and results must be `Json`.
+- **Platform + Atom = infrastructure only** (`platform.ts`). The Atom is one connection's state, single owner: `store` (get/put/cas/take/delete, optional TTL), named durable `timer`s, `now()`. The Platform is the deployment: `env`, outbound `fetch`, `log`, `defer`, `atoms.call`/`destroy` by name, `db` (connectd's management data: fixed named operations, never generic, never user-facing), `limits`, `version`. Everything else is kernel code on top. Store and timers survive restarts and redeploys; memory doesn't.
+- **Above L0, everything goes through the platform:** outbound HTTP is `platform.fetch` (definitions' `ctx.fetch`, the proxy, events), logs are `platform.log(level, event, fields)` (connections use `k.log`), configuration is `platform.env` read name by name (`options(config, platform.env)`). No global `fetch`, `console` or env record above L0; tests hand the memory platform a fake `fetch`.
+- **Concurrency:** handlers interleave at every await (like DOs); the memory platform doesn't serialize either, on purpose. Anything that races goes through `cas` (versioned, no ABA) or `take` (single consumer), in the kernel: `cell.update` (read-decide-cas) and `cell.take`.
+- **Kernel (#53):** `const k = kernel(atom, platform, { keys, stateKey })` once per Program call (the host does it, after settings load); every tool declared once as a typed handle (stored names: letters, digits, `_ . -`), `k.serve(methods)` as the Handler. Mechanism only: nothing about connections, tokens or providers goes in it. Extensions get the instance's kernel as `Hosted.k` and declare their own cells, timers and queues (names `<extension>.<name>`).
+- **Program composition:** a `Program` is `(atom, platform) => { onCall, onTimer }`. `k.serve` routes timers to the handler declared under their name and `kernel.rate` to the limiter; instances without a kernel (app-wide limiters) answer `RATE` with `handleRate`.
+- **Cross-atom:** a scope (app, workspace) is just another atom name reached with `platform.atoms.call`. Args and results must be `Json`; an atom that can't be reached throws `Unavailable`.
 - **Durability:** a change and its messages land in one `cas` (the cell's outbox: the record holds state + sealed credential + Transitions); `queue.relay` moves them on exactly once. Timers aren't atomic with `cas`; there's always an on-demand fallback.
 - **Time:** always `d.now()`, never `Date.now()`, so the fake clock works. Memory `advance(ms)` jumps once; step it to drive retries. `memory(p, { clock: Date.now })` is the real-clock mode (dev): timers fire on their own, `advance` still skews; `dump()`/`snapshot` restore state.
 - **Secrets:** AES-GCM with a key-version byte; values sealed under old keys are re-sealed on read.
-- **Tests:** the kernel's tools and the lifecycle are tested on the memory driver with `bun:test`. Drivers prove equivalence through `parity.ts` (memory under bun, DO under vitest in workerd). New driver behaviour goes into parity, not one driver's tests.
+- **Tests:** the kernel's tools and the lifecycle are tested on the memory platform with `bun:test`. Platforms prove equivalence through `parity.ts`: `parity` (an atom) and `platformParity` (atoms, destroy, limits, env, defer, every `db` operation), memory under bun, Durable Objects + D1 under vitest in workerd. New platform behaviour goes into parity, not one platform's tests.
 - **Style:** small, minimal code; no abstraction without a second use. Deliberate shortcuts carry a `// ponytail:` comment naming the ceiling and the upgrade path. Strict TS with `noUncheckedIndexedAccess`; `.ts` extensions in imports.
 
 ## Process

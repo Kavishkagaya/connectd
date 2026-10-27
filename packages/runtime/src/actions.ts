@@ -1,7 +1,7 @@
 import { type ActionSpec, type AnyAction, actionOf, apiFor, badActionName, NotActive, type SchemaIssue, type State, type Store } from "@kavishkagaya/connectd-connections";
 import type { Json } from "@kavishkagaya/connectd-kernel";
 import { emit } from "./events.ts";
-import { Fail, type Hooks, type Hosted } from "./host.ts";
+import { Fail, type Hooks, type Hosted, message } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 
 /**
@@ -23,7 +23,6 @@ const issues = (list: ReadonlyArray<SchemaIssue>): Json =>
     ...(i.path ? { path: i.path.map((p) => String(typeof p === "object" ? p.key : p)) } : {}),
   }));
 
-const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The actions by connection, checked: each on a known connection, each name usable. */
 export function group(by: Record<string, Record<string, AnyAction>>, definitions: Record<string, unknown>): Map<string, ActionSpec[]> {
@@ -105,7 +104,7 @@ function hooks(h: Hosted, mine: ActionSpec[]): Hooks {
       output = await a.run(await ctx(sent), undefined);
     } catch (e) {
       if (e instanceof NotActive) return false;
-      console.error("action failed", h.instance, a.id, trigger, attempt, e);
+      h.platform.log("error", "actions.failed", { atom: h.instance, action: a.id, trigger, attempt, error: message(e) });
       await emit(h, { action: a.id, trigger, error: message(e), attempt: attempt + 1 }, `${a.id}.failed`);
       throw e;
     }

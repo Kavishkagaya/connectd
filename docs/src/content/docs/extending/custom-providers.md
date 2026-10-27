@@ -76,7 +76,7 @@ Each catalog provider is a worked example, worth reading in the [registry](https
 
 ## Testing
 
-`@kavishkagaya/connectd/connections/testing` runs your connection on the in-memory driver against a fake authorization server. No network, and a clock you control:
+`@kavishkagaya/connectd/connections/testing` runs your connection on the memory platform against a fake authorization server. No network, and a clock you control:
 
 ```ts title="src/oc/acme/connection.test.ts"
 import { expect, test } from "bun:test";   // or vitest

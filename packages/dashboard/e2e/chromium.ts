@@ -21,7 +21,7 @@ for (const [id, key] of [
 ] as const)
   await t.api(`/connections/keyed/${encodeURIComponent(id)}/connect`, { apiKey: key });
 await t.w.advance(0); // the first deliveries fail: alice's outbox is parked
-const server = Bun.serve({ port: 8789, hostname: "localhost", fetch: (req) => t.rt.fetch(req, t.w.call) });
+const server = Bun.serve({ port: 8789, hostname: "localhost", fetch: (req) => t.rt.fetch(req, t.w.platform) });
 
 const { chromium } = await import(process.env.PLAYWRIGHT ?? "playwright");
 const browser = await chromium.launch();

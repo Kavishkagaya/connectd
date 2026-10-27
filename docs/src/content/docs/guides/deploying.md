@@ -85,7 +85,7 @@ npx connectd deploy --env staging    # staging:    .env.staging    → Worker my
 ```mermaid
 flowchart TB
   subgraph dev["dev (connectd dev)"]
-    E1[".env"] --> M["memory driver<br/>.connectd/state.json"]
+    E1[".env"] --> M["memory platform<br/>.connectd/state.json"]
   end
   subgraph stg["staging"]
     E2[".env.staging"] --> W2["my-app-staging + D1"]
@@ -154,4 +154,4 @@ npx wrangler deploy --dry-run -c .connectd/deploy/wrangler.json   # bundles it o
 
 ## Other hosts
 
-The Cloudflare target is the one built in. The runtime itself only needs a [driver](/concepts/architecture/#l0--drivers-infrastructure-only): see [self-hosting without the CLI](/extending/self-hosting/) and [targets](/extending/extensions/#deploy-targets).
+The Cloudflare target is the one built in. The runtime itself only needs a [platform](/concepts/architecture/#l0--platform-infrastructure-only): see [self-hosting without the CLI](/extending/self-hosting/) and [targets](/extending/extensions/#deploy-targets).

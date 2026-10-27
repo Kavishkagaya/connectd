@@ -1,4 +1,4 @@
-import type { Driver, Json } from "./driver.ts";
+import type { Atom, Json, Platform } from "./platform.ts";
 import { type Backoff, backoff } from "./schedule.ts";
 
 export type TimerOptions<P extends Json> = {
@@ -24,24 +24,26 @@ type Stored = { attempt: number; data: Json };
  * is a nudge: timer and cell writes aren't atomic, so whatever it does must also happen on demand,
  * and `handle` re-checks before acting (running twice is harmless). Recurring work sets itself again.
  */
-export function timer<P extends Json>(d: Driver, instance: string, name: string, o: TimerOptions<P>) {
+export function timer<P extends Json>(d: Atom, p: Platform, name: string, o: TimerOptions<P>) {
   const t: Timer<P> = {
     set: (at, ...payload) => d.timer.set(name, at, { attempt: 0, data: payload[0] ?? null } satisfies Stored),
     cancel: () => d.timer.cancel(name),
   };
-  /** Routed here by `serve` when the driver fires `name`. */
+  /** Routed here by `serve` when the platform fires `name`. */
   async function fire(raw: Json) {
     const { attempt = 0, data = null } = (raw ?? {}) as Partial<Stored>;
     try {
       await o.handle(data as P, { attempt });
     } catch (e) {
-      console.error("timer failed", instance, name, attempt, e);
+      p.log("error", "kernel.timer.failed", { atom: d.name, timer: name, attempt, error: message(e) });
       if (o.retry && attempt + 1 < o.retry.maxAttempts) {
         await d.timer.set(name, d.now() + backoff(attempt, o.retry), { attempt: attempt + 1, data } satisfies Stored);
       } else if (o.giveUp) {
-        await o.giveUp(data as P, e).catch((err) => console.error("timer giveUp failed", instance, name, err));
+        await o.giveUp(data as P, e).catch((err) => p.log("error", "kernel.timer.give_up_failed", { atom: d.name, timer: name, error: message(err) }));
       }
     }
   }
   return { timer: t, fire };
 }
+
+export const message = (e: unknown) => (e instanceof Error ? e.message : String(e));

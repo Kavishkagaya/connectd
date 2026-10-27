@@ -10,7 +10,7 @@ export default defineConfig({
         durableObjects: { CONNECTION: { className: "Connection", useSQLite: true } },
         d1Databases: ["INDEX"],
         // Applied by the tests (applyD1Migrations), after each reset.
-        bindings: { MIGRATIONS: await readD1Migrations(`${import.meta.dirname}/migrations`) },
+        bindings: { MIGRATIONS: await readD1Migrations(`${import.meta.dirname}/../kernel/migrations`) },
       },
     })),
   ],

@@ -35,14 +35,13 @@ async function setup(extensions: Extension[] = []) {
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null },
-    fetch: p.fetch,
   };
   const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions });
-  const w = memory(rt.program);
+  const w = memory(rt.program, { fetch: p.fetch });
   const req = async (method: string, path: string, body?: Json, auth = "Bearer secret") => {
     const res = await rt.fetch(
       new Request(`https://oc.test${path}`, { method, headers: { authorization: auth }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
-      w.call,
+      w.platform,
     );
     return { status: res.status, body: (await res.json()) as any };
   };
@@ -144,12 +143,11 @@ test("device flow over HTTP: connect returns the code to show, the runtime polls
     apiKey: "secret",
     redirectUri: "https://oc.test/callback",
     config: { tv: { clientId: "cid" } },
-    fetch,
   };
   const rt = runtime({ definitions: { tv }, settings: async () => settings });
-  const w = memory(rt.program);
+  const w = memory(rt.program, { fetch });
   const req = async (method: string, path: string) =>
-    (await rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" } }), w.call)).json() as Promise<any>;
+    (await rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" } }), w.platform)).json() as Promise<any>;
 
   expect(await req("POST", "/connections/tv/t1/connect")).toEqual({
     url: "https://dev.test/activate",

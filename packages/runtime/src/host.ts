@@ -1,8 +1,8 @@
 import { bind, type Definition, IllegalTransition, InputError, NotActive, OAuthError, safeEqual } from "@kavishkagaya/connectd-connections";
-import { type Driver, handleRate, type Json, type Kernel, type Keys, kernel, type Program, RATE, type Ticket } from "@kavishkagaya/connectd-kernel";
+import { type Atom, handleRate, type Json, type Kernel, type Keys, kernel, message, type Platform, type Program, RATE, type Ticket } from "@kavishkagaya/connectd-kernel";
 
 /**
- * The connection host: one Program that runs any definition from a registry, one instance per
+ * The connection host: one Program that runs any definition from a registry, one atom per
  * connection. Each instance gets one kernel (#53); the lifecycle (`bind`) and every extension
  * declare their tools on it, and `serve` routes timers to them. Definition code only ever sees its
  * `ctx` (config, fetch, redirectUri, now), never the kernel, so a hook that throws can't leave
@@ -25,8 +25,6 @@ export type Settings = {
   /** Connector config per definition id (client id/secret). */
   // ponytail: one app per deployment; per-app config moves to an app instance via `secrets` (#10) when multi-app.
   config: Record<string, unknown>;
-  /** Outbound fetch for definitions; tests pass a fake. */
-  fetch?: typeof fetch;
   /** Where the events extension delivers, and the `whsec_...` secret it signs with (#24). */
   events?: { url: string; secret: string };
   /** Public base URL of the `/webhooks` route, and the HMAC key each connection's webhook secret derives from (#25). */
@@ -68,11 +66,21 @@ export type Reply = { ok: Json } | { error: Fault };
 export type Method = (args: Json) => Promise<Json>;
 
 /**
- * What an extension sees of one hosted connection. `k` is the instance's kernel: declare cells,
- * timers, queues and tickets on it once (stored names `<extension>.<name>`). `done` holds a session's
- * authorized credential for `session.complete` (#29).
+ * What an extension sees of one hosted connection. `k` is the atom's kernel: declare cells,
+ * timers, queues and tickets on it once (stored names `<extension>.<name>`). `platform` is the
+ * deployment's (its management db, env, fetch, log). `done` holds a session's authorized credential
+ * for `session.complete` (#29).
  */
-export type Hosted = { k: Kernel; instance: string; def: AnyDefinition; id: string; bound: Bound; settings: Settings; done: Ticket<string> };
+export type Hosted = {
+  k: Kernel;
+  platform: Platform;
+  instance: string;
+  def: AnyDefinition;
+  id: string;
+  bound: Bound;
+  settings: Settings;
+  done: Ticket<string>;
+};
 
 /** An extension's per-connection part. Created once per instance, next to `bind`. Timers are declared on `k`. */
 export type Hooks = {
@@ -99,7 +107,11 @@ export class Fail extends Error {
 /** Connection instance key. The definition id is part of it, so a DO knows what to run with no lookup. */
 export const instanceOf = (def: string, id: string) => `conn:${def}:${id}`;
 
-export function fault(e: unknown, instance: string): Fault {
+/** An error's message, for logs and faults (the kernel's, for the extensions that import it from here). */
+export { message };
+
+/** What went wrong, as data. Errors that aren't connectd's own (definition code, bugs) are logged. */
+export function fault(e: unknown, instance: string, log: Platform["log"]): Fault {
   if (e instanceof Fail) return { code: e.code, status: e.status, message: e.message, ...(e.issues === undefined ? {} : { issues: e.issues }) };
   if (e instanceof InputError) return { code: "bad_request", status: 400, message: e.message };
   if (e instanceof NotActive)
@@ -108,8 +120,8 @@ export function fault(e: unknown, instance: string): Fault {
   // The provider (or the user at the consent screen) said no; a provider 5xx is a bad gateway.
   if (e instanceof OAuthError) return { code: e.code, status: e.status >= 500 ? 502 : 400, message: e.message };
   // Definition code or a kernel bug. The record is intact either way: hooks run before any cas.
-  console.error("connection error", instance, e);
-  return { code: "error", status: 500, message: e instanceof Error ? e.message : String(e) };
+  log("error", "runtime.connection.error", { atom: instance, error: message(e) });
+  return { code: "error", status: 500, message: message(e) };
 }
 
 function input(a: Json): Record<string, string> {
@@ -153,57 +165,58 @@ const builtins = (b: Bound, hooks: Hooks[], instance: string, k: Kernel, done: T
       const completion = await done.issue(await k.seal((await b.exchange(params, hs)) as unknown as Json));
       return { target, completion };
     } catch (e) {
-      return { target, error: fault(e, instance) } as unknown as Json;
+      return { target, error: fault(e, instance, k.log) } as unknown as Json;
     }
   },
   token: async () => await b.token(),
   status: () => status(b),
   revoke: async (a) => {
     const reason = (a as { reason?: Json } | null)?.reason;
-    for (const h of hooks) await h.beforeRevoke?.().catch((e) => console.error("before revoke", instance, e));
+    for (const h of hooks) await h.beforeRevoke?.().catch((e) => k.log("error", "runtime.before_revoke.failed", { atom: instance, error: message(e) }));
     await b.revoke(typeof reason === "string" ? reason : undefined);
     return status(b);
   },
 });
 
 export function host(o: { definitions: Record<string, AnyDefinition>; settings: () => Promise<Settings>; connection: ((h: Hosted) => Hooks)[] }): Program {
-  async function init(d: Driver, instance: string) {
+  async function init(atom: Atom, platform: Platform) {
+    const instance = atom.name;
     const m = /^conn:([^:]+):(.+)$/.exec(instance);
-    // ponytail: other instances (app-scope limiters) only answer RATE; give them a kernel when an extension needs one.
+    // ponytail: other atoms (app-scope limiters) only answer RATE; give them a kernel when an extension needs one.
     if (!m) return null;
     const [, defId, id] = m as unknown as [string, string, string];
     const def = Object.hasOwn(o.definitions, defId) ? o.definitions[defId] : undefined;
     if (!def) throw new Fail("not_found", 404, `unknown definition ${defId}`);
     const s = await o.settings();
     if (!Object.hasOwn(s.config, defId)) throw new Fail("not_configured", 503, `no config for ${defId}`);
-    // One kernel per instance, built once the keys are loaded (Workers can't do crypto at global scope).
-    const k = kernel(d, { instance, keys: s.keys, stateKey: s.stateKey });
+    // One kernel per atom, built once the keys are loaded (Workers can't do crypto at global scope).
+    const k = kernel(atom, platform, { keys: s.keys, stateKey: s.stateKey });
     // ponytail: definition code shares the isolate; no per-hook timeout or sandbox beyond workerd's limits (managed: #34).
     const bound = bind(def, k, {
       config: s.config[defId],
-      // Wrapped: workerd's fetch throws "Illegal invocation" when called as a method of ctx.
-      fetch: s.fetch ?? (((...a: Parameters<typeof fetch>) => fetch(...a)) as typeof fetch),
+      fetch: platform.fetch as typeof fetch,
       redirectUri: s.redirectUri,
     }) as Bound;
     const done = k.ticket<string>("session.done", { ttlMs: DONE_TTL_MS });
-    const hooks = o.connection.map((f) => f({ k, instance, def, id, bound, settings: s, done }));
+    const hooks = o.connection.map((f) => f({ k, platform, instance, def, id, bound, settings: s, done }));
     const methods: Record<string, Method> = Object.assign({}, ...hooks.map((h) => h.methods), builtins(bound, hooks, instance, k, done));
     // Timers go to whoever declared them (the lifecycle's refresh, extensions' own).
     const timers = k.serve({});
     return { bound, hooks, methods, timers };
   }
 
-  return (d, instance) => {
+  return (atom, platform) => {
+    const instance = atom.name;
     let ready: ReturnType<typeof init> | undefined;
-    const get = () => (ready ??= init(d, instance));
+    const get = () => (ready ??= init(atom, platform));
     async function after(h: Awaited<ReturnType<typeof init>>, cause: string) {
-      for (const x of h?.hooks ?? []) await x.after?.(cause).catch((e) => console.error("after hook", instance, cause, e));
+      for (const x of h?.hooks ?? []) await x.after?.(cause).catch((e) => platform.log("error", "runtime.after_hook.failed", { atom: instance, cause, error: message(e) }));
     }
 
     return {
       async onCall(method, args): Promise<Json> {
         // Kernel-to-kernel (rate scopes on other instances): raw, not a Reply.
-        if (method === RATE) return handleRate(d, args);
+        if (method === RATE) return handleRate(atom, args);
         let h: Awaited<ReturnType<typeof init>> = null;
         try {
           h = await get();
@@ -211,7 +224,7 @@ export function host(o: { definitions: Record<string, AnyDefinition>; settings: 
           if (!Object.hasOwn(h.methods, method)) throw new Fail("bad_request", 400, `unknown method ${method}`);
           return { ok: await (h.methods[method] as Method)(args) };
         } catch (e) {
-          return { error: fault(e, instance) };
+          return { error: fault(e, instance, platform.log) };
         } finally {
           await after(h, method);
         }

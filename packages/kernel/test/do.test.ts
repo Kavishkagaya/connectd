@@ -1,23 +1,34 @@
-import { listDurableObjectIds, reset, runDurableObjectAlarm } from "cloudflare:test";
+import { applyD1Migrations, type D1Migration, listDurableObjectIds, reset, runDurableObjectAlarm } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { afterEach, expect, test } from "vitest";
-import type { Json } from "../src/driver.ts";
-import { parity } from "../src/drivers/parity.ts";
+import { afterEach, beforeEach, expect, test } from "vitest";
+import type { Json } from "../src/platform.ts";
+import { cloudflarePlatform } from "../src/drivers/do.ts";
+import { parity, platformParity, type World } from "../src/drivers/parity.ts";
+import { PROBE } from "./worker.ts";
 
-const ns = (env as unknown as { PROBE: DurableObjectNamespace }).PROBE;
+const e = env as unknown as Record<string, unknown> & { PROBE: DurableObjectNamespace; DB: D1Database; MIGRATIONS: D1Migration[] };
 const g = globalThis as { ocNow?: number };
 
-afterEach(() => reset()); // wipe DO storage and instances between tests
+beforeEach(() => applyD1Migrations(e.DB, e.MIGRATIONS));
+afterEach(() => reset()); // wipe DO storage, D1 and instances between tests
 
-parity(
-  "do",
-  () => ({
-    call: (id: string, method: string, args: Json) =>
-      (ns.get(ns.idFromName(id)) as unknown as { onCall(m: string, a: Json): Promise<Json> }).onCall(method, args),
+// The probe's platform is built from the same env (PARITY_VALUE is a binding in vitest.config.ts).
+const world = (): World => {
+  const platform = cloudflarePlatform(e, PROBE);
+  return {
+    platform,
+    call: (id: string, method: string, args: Json) => platform.atoms.call(id, method, args),
     async advance(ms: number) {
       g.ocNow! += ms;
-      for (const id of await listDurableObjectIds(ns)) await runDurableObjectAlarm(ns.get(id));
+      // reset() leaves earlier tests' ids listed with empty storage: a DO that was never created by
+      // name here has no name stored and no timers, and refuses to start. Skip exactly those.
+      for (const id of await listDurableObjectIds(e.PROBE))
+        await runDurableObjectAlarm(e.PROBE.get(id)).catch((x: Error) => {
+          if (!x.message.includes("must be created with idFromName")) throw x;
+        });
     },
-  }),
-  { test, expect },
-);
+  };
+};
+
+parity("do", world, { test, expect });
+platformParity("do", world, { test, expect });

@@ -3,13 +3,16 @@
 // workerd, so it's typechecked with Workers types (tsconfig.workers.json), not by the root tsc.
 import { env } from "cloudflare:workers";
 import { runtime } from "@kavishkagaya/connectd/runtime";
-import { cloudflare, d1Index } from "@kavishkagaya/connectd/runtime/cloudflare";
+import { cloudflare, cloudflarePlatform } from "@kavishkagaya/connectd/runtime/cloudflare";
 import config from "connectd:config";
-import { type Env, options } from "@kavishkagaya/connectd";
+import { options } from "@kavishkagaya/connectd";
 
-// Module scope: `options` resolves the config against the Worker's vars and secrets (definitions are
-// needed up front); keys are imported lazily on the first request, since Workers can't do crypto here.
-const cf = cloudflare(runtime(options(config, env as unknown as Env, d1Index("INDEX"))), { binding: "CONNECTION" });
+// The platform: connections' atoms in the CONNECTION Durable Objects, the management db in D1 (INDEX),
+// configuration from the Worker's vars and secrets. Module scope: `options` resolves the config against
+// the platform's env (definitions are needed up front); keys are imported lazily on the first request,
+// since Workers can't do crypto here.
+const PLATFORM = { binding: "CONNECTION", db: "INDEX" };
+const cf = cloudflare(runtime(options(config, cloudflarePlatform(env as Record<string, unknown>, PLATFORM).env)), PLATFORM);
 
 export class Connection extends cf.ConnectionDO {}
 export default { fetch: cf.fetch };

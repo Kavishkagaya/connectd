@@ -1,4 +1,4 @@
-import type { Driver, Json } from "./driver.ts";
+import type { Atom, Json, Platform } from "./platform.ts";
 import { type Backoff, backoff } from "./schedule.ts";
 import { type Cell, loop, type Value } from "./cell.ts";
 import { mutex } from "./sync.ts";
@@ -104,7 +104,8 @@ type New<M> = { msg: M } | { copy: Delivery<M> };
 const QUEUED = 20;
 const utf8 = new TextEncoder();
 
-export function queue<M extends Json>(d: Driver, instance: string, name: string, base: string, timerName: string, o: QueueOptions<M>) {
+export function queue<M extends Json>(d: Atom, p: Platform, name: string, base: string, timerName: string, o: QueueOptions<M>) {
+  const instance = d.name;
   const max = o.max ?? 1000;
   const keep = o.keep ?? 20;
   const keepBody = o.keepBodyBytes ?? 64 * 1024;
@@ -175,7 +176,7 @@ export function queue<M extends Json>(d: Driver, instance: string, name: string,
     try {
       return await o.deliver(e);
     } catch (err) {
-      console.error("queue deliver threw", instance, name, e.id, err);
+      p.log("error", "kernel.queue.deliver_threw", { atom: instance, queue: name, id: e.id, error: err instanceof Error ? err.message : String(err) });
       return err instanceof Error ? err.message : String(err);
     }
   }

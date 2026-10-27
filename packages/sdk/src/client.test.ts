@@ -43,7 +43,7 @@ test("session: a browser token for one connection, from an allowlisted origin", 
   const t = await setup();
   const s = await t.oc.connection("keyed", "k1").session({ origin: "https://app.test", ttlMs: 60_000 });
   expect(s.expiresAt).toBe(T0 + 60_000);
-  const info = await t.rt.fetch(new Request("https://oc.test/session", { headers: { origin: "https://app.test", authorization: `Bearer ${s.token}` } }), t.w.call);
+  const info = await t.rt.fetch(new Request("https://oc.test/session", { headers: { origin: "https://app.test", authorization: `Bearer ${s.token}` } }), t.w.platform);
   expect(await info.json()).toMatchObject({ definition: "keyed", id: "k1", flow: "form", fields: ["key"] });
   expect(await rejects(t.oc.connection("keyed", "k1").session({ origin: "https://evil.test" }))).toMatchObject({ code: "forbidden", status: 403 });
 });
@@ -55,7 +55,7 @@ test("errors are ConnectdError with the runtime's code and status", async () => 
   expect(await rejects(t.oc.connection("keyed", "k").connect({ wrong: "x" }))).toMatchObject({ code: "bad_request", status: 400 });
   expect(await rejects(t.oc.connection("keyed", "k").call("proxy.prepare"))).toMatchObject({ code: "not_found", status: 404 });
 
-  const wrongKey = connectd({ url: "https://oc.test", apiKey: "nope", fetch: (i, init) => t.rt.fetch(new Request(i, init), t.w.call) });
+  const wrongKey = connectd({ url: "https://oc.test", apiKey: "nope", fetch: (i, init) => t.rt.fetch(new Request(i, init), t.w.platform) });
   expect(await rejects(wrongKey.connection("keyed", "k").status())).toMatchObject({ code: "unauthorized", status: 401 });
 
   // Something in front of the runtime answering HTML.
@@ -148,7 +148,7 @@ test("paths can't climb out of the proxy or the connection: raw, %2e%2e and %2E%
   await t.authorize("u1");
   await t.authorize("u2");
   const sent: string[] = [];
-  const oc = connectd({ url: "https://oc.test", apiKey: "secret", fetch: (i, init) => (sent.push(i), t.rt.fetch(new Request(i, init), t.w.call)) });
+  const oc = connectd({ url: "https://oc.test", apiKey: "secret", fetch: (i, init) => (sent.push(i), t.rt.fetch(new Request(i, init), t.w.platform)) });
   const c = oc.connection("example", "u1");
   for (const p of ["../../../connections/example/u2/token", "%2e%2e/%2e%2e/%2e%2e/connections/example/u2/token", "%2E%2e/%2E%2E/u2/x", "a/../../x", "./.."])
     expect(await rejects(c.fetch(p, { method: "POST" }))).toMatchObject({ code: "bad_request", status: 400 });

@@ -1,4 +1,4 @@
-import type { Json, Kernel, Limit, Observed } from "@kavishkagaya/connectd-kernel";
+import { type Json, type Kernel, type Limit, message, type Observed } from "@kavishkagaya/connectd-kernel";
 import type { StandardSchemaV1 } from "./action.ts";
 import { type Credential, lifecycle, NotActive, type OAuth2 } from "./lifecycle.ts";
 import { OAuthError, type TokenResponse } from "./oauth.ts";
@@ -223,7 +223,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
     if (d?.attempt === attempt && !d.claimed) await devicePoll.set(pollAt, attempt);
   }
   /** Tokens nobody will use (the attempt was replaced): revoke them at the provider, best effort. */
-  const discard = (cred: Credential) => def.auth.revoke?.(ctx, cred).catch((e) => console.error("device flow: revoking a stale credential failed", k.instance, e));
+  const discard = (cred: Credential) => def.auth.revoke?.(ctx, cred).catch((e) => k.log("warn", "connection.device.stale_revoke_failed", { atom: k.instance, error: message(e) }));
   // ponytail: an expired or denied device attempt leaves the connection pending (no reason recorded); connect() again starts over.
   const devicePoll = k.timer<string>("device", {
     async handle(attempt): Promise<void> {
@@ -240,10 +240,10 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
         if (e instanceof OAuthError && e.code === "slow_down") return schedule(attempt, d.device.intervalMs + 5000);
         // A network failure or a provider 5xx: try again at the next interval, until the code expires.
         if (!(e instanceof OAuthError) || e.status >= 500) {
-          console.error("device poll failed, retrying", k.instance, e);
+          k.log("warn", "connection.device.poll_failed", { atom: k.instance, error: message(e) });
           return schedule(attempt, d.device.intervalMs);
         }
-        console.error("device flow ended", k.instance, e);
+        k.log("warn", "connection.device.ended", { atom: k.instance, error: message(e) });
         if (await live(attempt)) await deviceCell.delete();
         return;
       }
@@ -258,7 +258,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
         await discard(cred);
         return;
       }
-      await finish(cred).catch((e) => console.error("device flow: credential rejected", k.instance, e));
+      await finish(cred).catch((e) => k.log("warn", "connection.device.credential_rejected", { atom: k.instance, error: message(e) }));
     },
   });
   /** A new connect or a revoke: the device attempt in progress (if any) stops. */
@@ -349,7 +349,7 @@ export function bind<C, M extends Json>(def: Definition<C, M>, k: Kernel, opts: 
     async revoke(reason?: string) {
       await endDevice();
       const s = await conn.read();
-      if (s?.credential && revoke) await revoke(ctx, s.credential).catch((e) => console.error("provider revoke failed", k.instance, e));
+      if (s?.credential && revoke) await revoke(ctx, s.credential).catch((e) => k.log("warn", "connection.revoke.provider_failed", { atom: k.instance, error: message(e) }));
       return conn.revoke(reason);
     },
   };
