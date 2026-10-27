@@ -19,7 +19,7 @@ import type { ConnectionEvent, LifecycleEvent, WebhookData } from "@kavishkagaya
 // biome-ignore lint/suspicious/noEmptyInterface: augmented by the generated registry.
 export interface Registry {}
 
-/** One connection: its `connection.ts` default export and its actions by name (`actions/<name>.ts`). */
+/** One connection: its `connection.ts` default export and its actions by name (the default export of `actions.ts`). */
 export type Entry<C, A = {}> = { connection: C; actions: A };
 
 type ProjectOf<Cfg> = Cfg extends (...a: never[]) => infer P ? P : Cfg;

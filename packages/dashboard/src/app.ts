@@ -448,7 +448,7 @@ export function start(win: Win) {
     const o = await overview();
     const all = o.definitions.flatMap((d) => d.actions.map((a) => ({ def: d.id, a })));
     const parts: Child[] = [h("h2", {}, "Actions")];
-    if (!all.length) return h("section", {}, ...parts, h("p", {}, "No actions in this deployment. Add one as src/oc/<connection>/actions/<name>.ts."));
+    if (!all.length) return h("section", {}, ...parts, h("p", {}, "No actions in this deployment. Add them in src/oc/<connection>/actions.ts."));
     parts.push(table(["Connection", "Action", "Trigger", "Input"], all.map(({ def, a }) => [def, h("code", {}, a.id), trigger(a), a.input ? (a.schema ? "schema" : "yes") : "none"])));
     parts.push(h("h3", {}, "Recent failures"));
     if (!o.index) return h("section", {}, ...parts, h("p", {}, "Needs a connection index (directory) to look across connections."));

@@ -17,7 +17,7 @@ export type RuntimeOptions = {
   /** Bundled definitions by id (self-host): `connection(...)` builders or plain definitions. Managed loads user code differently (#34). */
   definitions: Record<string, AnyDefinition | AnyConnection>;
   settings: () => Promise<Settings>;
-  /** What the app does with connections (#54): `action({ ... })`s by connection id, then by name (a connection folder's `actions/<name>.ts`). */
+  /** What the app does with connections (#54): `action({ ... })`s by connection id, then by name (a connection folder's `actions.ts`). */
   actions?: Record<string, Record<string, AnyAction>>;
   extensions?: Extension[];
 };

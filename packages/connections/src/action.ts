@@ -3,17 +3,20 @@ import type { Api, Connection } from "./builder.ts";
 import type { Credential, State } from "./lifecycle.ts";
 
 /**
- * Actions (#54): what an app does with a connection, one file each, in the connection's folder
- * (like Nango functions). The file name is the action's name, the folder its connection:
+ * Actions (#54, #83): what an app does with a connection (like Nango functions). A connection's
+ * folder has one `actions.ts` whose default export maps each action's name to it; the key is the
+ * name, the folder its connection:
  *
- *   // src/oc/github/actions/starRepo.ts
- *   export default action({
- *     input: z.object({ repo: z.string() }),
- *     run: async (conn, { repo }) => ({ status: (await conn.api.fetch(`/user/starred/${repo}`, { method: "PUT" })).status }),
+ *   // src/oc/github/actions.ts
+ *   export default actions({
+ *     starRepo: action({
+ *       input: z.object({ repo: z.string() }),
+ *       run: async (conn, { repo }) => ({ status: (await conn.api.fetch(`/user/starred/${repo}`, { method: "PUT" })).status }),
+ *     }),
+ *     syncIssues: action({ every: HOUR, run: async (conn) => { ... } }),
  *   });
  *
- *   // src/oc/github/actions/syncIssues.ts
- *   export default action({ every: HOUR, run: async (conn) => { ... } });
+ * An action can live in its own file and be imported into the map; the file's name means nothing.
  *
  * Each runs inside its connection's instance, so `conn.api` is that one user's, already
  * authenticated. The app calls one with `oc.connection("github", id).actions.starRepo(input)`;
@@ -143,4 +146,26 @@ export function action(spec: { input?: StandardSchemaV1; every?: number; on?: St
   if (spec.every !== undefined && !(Number.isFinite(spec.every) && spec.every >= 1000)) throw new Error("action: every takes at least 1000 ms");
   const { run, ...rest } = spec;
   return { [ACTION]: { ...rest, run: async (conn, input) => ((await run(conn, input)) ?? null) as Json } };
+}
+
+/** Why `map` can't be a connection's actions (`<where>: <name> ...`), or null: each key a valid name, each value an `action()`. */
+export function badActions(map: unknown): string | null {
+  if (typeof map !== "object" || map === null || Array.isArray(map)) return "the default export must be actions({ name: action({ ... }) })";
+  for (const [name, a] of Object.entries(map)) {
+    const bad = badActionName(name);
+    if (bad) return `${name}: an action's name is ${bad}`;
+    if (!isAction(a)) return `${name}: must be an action({ ... })`;
+  }
+  return null;
+}
+
+/**
+ * A connection's actions by name: the default export of its folder's `actions.ts`. The key is the
+ * action's name (`oc.connection("github", id).actions.starRepo(...)`); checked here, so a bad name
+ * or a value that isn't an `action()` fails when the file loads.
+ */
+export function actions<M extends Record<string, AnyAction>>(map: M): M {
+  const bad = badActions(map);
+  if (bad) throw new Error(`actions: ${bad}`);
+  return map;
 }

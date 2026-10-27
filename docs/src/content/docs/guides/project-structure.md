@@ -16,9 +16,7 @@ my-app/
 │   ├── oc/                       connection folders (the config's `dir`)
 │   │   ├── github/
 │   │   │   ├── connection.ts     the connection (default export) — runs in connectd
-│   │   │   ├── actions/
-│   │   │   │   ├── profile.ts    one action per file — runs in connectd
-│   │   │   │   └── syncIssues.ts
+│   │   │   ├── actions.ts        its actions, keyed by name — runs in connectd
 │   │   │   └── events.ts         your handlers — runs in your app
 │   │   └── slack/
 │   │       └── connection.ts
@@ -38,7 +36,7 @@ my-app/
 flowchart LR
   subgraph cd["connectd (Worker / dev server)"]
     C["connection.ts"]
-    A["actions/*.ts"]
+    A["actions.ts"]
     CFG["oc.config.ts"]
   end
   subgraph app["your app"]
@@ -48,7 +46,7 @@ flowchart LR
   end
 ```
 
-`connection.ts`, `actions/` and `oc.config.ts` are bundled into connectd. `events.ts` is **never** part of connectd. It runs in your app through `.connectd/app.ts`, so it can import your database and your code.
+`connection.ts`, `actions.ts` (and whatever it imports) and `oc.config.ts` are bundled into connectd. `events.ts` is **never** part of connectd. It runs in your app through `.connectd/app.ts`, so it can import your database and your code.
 
 ## oc.config.ts
 
@@ -72,7 +70,7 @@ Every option is described in the [config reference](/reference/config/).
 
 - The **folder name is the connection id**: letters, digits, `_` and `-`, up to 64 characters. It appears in URLs and in `oc.connection("<id>", …)`.
 - `connection.ts` must `export default` a `connection()` builder.
-- `actions/<name>.ts` must `export default` an `action({ … })`. The file name is the action's name.
+- `actions.ts` must `export default` an `actions({ name: action({ … }) })` map. The key is the action's name; an action can live in its own file and be imported. See [actions](/guides/actions/).
 - `events.ts` should `export default listen("<id>")…`.
 - Test files (`*.test.ts`, `*.spec.ts`) and `.d.ts` files are skipped.
 
