@@ -45,15 +45,18 @@ npx connectd add github    # copies the GitHub provider into src/oc/github/
 npx connectd dev           # the runtime on :8787, dashboard at /dashboard
 ```
 
-A connection is a folder. The provider is one file:
+A connection is a folder. The provider is one file (`connectd add github` writes a fuller version of this one):
 
 ```ts
 // src/oc/github/connection.ts
 import { connection } from "@kavishkagaya/connectd/connections";
 
 export default connection()
-  .auth((f) => f.oauth2(endpoints).scopes("repo"))
-  .api({ baseUrl: "https://api.github.com" })
+  .config((env) => ({ clientId: env("GITHUB_CLIENT_ID"), clientSecret: env("GITHUB_CLIENT_SECRET") }))
+  .auth((f) =>
+    f.oauth2({ authorizeUrl: "https://github.com/login/oauth/authorize", tokenUrl: "https://github.com/login/oauth/access_token" }).scopes("repo"),
+  )
+  .api({ baseUrl: "https://api.github.com", headers: { "user-agent": "my-app" } }) // GitHub rejects requests without one
   .identity(({ api }) => api.get("/user"));
 ```
 
@@ -67,7 +70,7 @@ const { state } = await gh.status();                    // "active", "reauth_req
 const repos = await (await gh.fetch("/user/repos")).json(); // token added by the proxy
 ```
 
-Actions run next to the token and are typed end to end:
+Actions run next to the token and are typed end to end. Input takes any [Standard Schema](https://standardschema.dev) library; this one uses zod (`npm i zod`):
 
 ```ts
 // src/oc/github/actions.ts: one object, keyed by the action's name
