@@ -1,7 +1,6 @@
 import { createRequire } from "node:module";
 import { existsSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { badActionName } from "@kavishkagaya/connectd-connections";
 import type { Config, Env } from "./project.ts";
 import { workdir } from "./workdir.ts";
 
@@ -9,8 +8,11 @@ import { workdir } from "./workdir.ts";
  * Connection folders (#54). Under the config's `dir`, one folder per connection, named by its id:
  *
  *   github/connection.ts          the connection (default export), required
- *   github/actions/<name>.ts      one action each (default export), named after the file
+ *   github/actions.ts             its actions (#83): export default actions({ name: action(...) }), keyed by name
  *   github/events.ts              the app's handlers (#54, app side): never part of the Worker
+ *
+ * An `actions/` folder next to `actions.ts` is the actions' own files, imported by it; without an
+ * `actions.ts` it's the 0.2 layout (one action per file, named by the file) and refused.
  *
  * Three generated files in `.connectd/`, rebuilt by dev, deploy and `types`, never edited:
  *
@@ -28,7 +30,7 @@ const SKIP = /\.(test|spec|d)\.(ts|js|mjs)$/;
 // The id ends up in URLs, instance keys and stored names.
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 
-export type Found = { id: string; connection: string; actions: { name: string; file: string }[]; events: string | null };
+export type Found = { id: string; connection: string; actions: string | null; events: string | null };
 
 const isDir = (p: string) => existsSync(p) && statSync(p).isDirectory();
 
@@ -50,11 +52,11 @@ export function oldLayout(configPath: string): string | null {
   const base = dirname(configPath);
   const old = ["connections", "actions"].filter((d) => isDir(join(base, d)));
   return old.length
-    ? `${old.map((d) => `${d}/`).join(" and ")} next to ${basename(configPath)} aren't read any more: move each connection to <dir>/<id>/connection.ts (default export) and its actions to <dir>/<id>/actions/<name>.ts`
+    ? `${old.map((d) => `${d}/`).join(" and ")} next to ${basename(configPath)} aren't read any more: move each connection to <dir>/<id>/connection.ts (default export) and its actions to <dir>/<id>/actions.ts (export default actions({ ... }))`
     : null;
 }
 
-/** Every connection folder under `dir`, sorted (stable output). Folders and action files starting with `.` or `_` are left out. */
+/** Every connection folder under `dir`, sorted (stable output). Folders starting with `.` or `_` are left out. */
 export function foldersIn(dir: string | null): Found[] {
   if (!dir) return [];
   const out: Found[] = [];
@@ -68,23 +70,17 @@ export function foldersIn(dir: string | null): Found[] {
     if (files.length > 1) throw new Error(`${shown}: one connection file only (found ${files.map((f) => basename(f)).join(", ")})`);
     const connection = files[0];
     if (!connection) throw new Error(`${shown}: no connection.ts (export default the connection, e.g. a provider)`);
-    const actions: Found["actions"] = [];
+    const acts = EXTS.map((x) => join(at, `actions${x}`)).filter(existsSync);
+    if (acts.length > 1) throw new Error(`${shown}: one actions file only (found ${acts.map((f) => basename(f)).join(", ")})`);
     const adir = join(at, "actions");
-    if (isDir(adir)) {
-      for (const f of readdirSync(adir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-        const ext = EXTS.find((x) => f.name.endsWith(x));
-        // `_` files are helpers the actions share, like `_` folders.
-        if (!f.isFile() || !ext || SKIP.test(f.name) || /^[._]/.test(f.name)) continue;
-        const name = f.name.slice(0, -ext.length);
-        const bad = badActionName(name);
-        if (bad) throw new Error(`${join(shown, "actions", f.name)}: the file name is the action's name, and it's ${bad}`);
-        if (actions.some((a) => a.name === name)) throw new Error(`${join(shown, "actions")}: two files for action ${name}`);
-        actions.push({ name, file: join(adir, f.name) });
-      }
-    }
+    if (!acts.length && isDir(adir) && readdirSync(adir).some((f) => EXTS.some((x) => f.endsWith(x)) && !SKIP.test(f) && !/^[._]/.test(f)))
+      throw new Error(
+        `${join(shown, "actions")}/: actions aren't named by their file any more. Add ${join(shown, "actions.ts")}: ` +
+          'export default actions({ name: action({ ... }) }), importing each file\'s action under the name you want (import { action, actions } from "@kavishkagaya/connectd/connections")',
+      );
     const ev = EXTS.map((x) => join(at, `events${x}`)).filter(existsSync);
     if (ev.length > 1) throw new Error(`${shown}: one events file only (found ${ev.map((f) => basename(f)).join(", ")})`);
-    out.push({ id: e.name, connection, actions, events: ev[0] ?? null });
+    out.push({ id: e.name, connection, actions: acts[0] ?? null, events: ev[0] ?? null });
   }
   return out;
 }
@@ -104,10 +100,9 @@ export function writeDiscovered(dir: string, configPath: string, found: Found[])
   const imports = (type: boolean) =>
     found.flatMap((f, i) => [
       `import ${type ? "type " : ""}c${i} from ${spec(work, f.connection)};`,
-      ...f.actions.map((a, j) => `import ${type ? "type " : ""}a${i}_${j} from ${spec(work, a.file)};`),
+      ...(f.actions ? [`import ${type ? "type " : ""}a${i} from ${spec(work, f.actions)};`] : []),
     ]);
-  const actions = (f: Found, i: number, type: boolean) =>
-    f.actions.length ? `{ ${f.actions.map((a, j) => `${JSON.stringify(a.name)}: ${type ? "typeof " : ""}a${i}_${j}`).join(", ")} }` : "{}";
+  const actions = (f: Found, i: number, type: boolean) => (f.actions ? `${type ? "typeof " : ""}a${i}` : "{}");
 
   const registry = join(work, "registry.d.ts");
   writeFileSync(

@@ -27,16 +27,16 @@ function project(files: Record<string, string>) {
 }
 const load = (dir: string) => loadProject(dir, join(dir, "oc.config.ts"), join(dir, ".connectd", "build"), 1, {});
 
-test("connection folders: the folder names the connection, actions/<name>.ts its actions; entry and registry written", async () => {
+test("connection folders: the folder names the connection, actions.ts maps its actions by name; entry and registry written", async () => {
   const dir = project({
     "oc.config.ts": CONFIG(),
     "src/oc/tracker/connection.ts": KEYED,
-    "src/oc/tracker/actions/open.ts": `import { action } from "@kavishkagaya/connectd-connections";
+    // The key is the name: the file the action lives in means nothing (here \`opener.ts\` holds \`open\`).
+    "src/oc/tracker/actions.ts": `import { action, actions } from "@kavishkagaya/connectd-connections";
+import open from "./actions/opener.ts";
+export default actions({ open, close: action({ run: () => null }) });`,
+    "src/oc/tracker/actions/opener.ts": `import { action } from "@kavishkagaya/connectd-connections";
 export default action({ run: () => ({ ok: true }) });`,
-    "src/oc/tracker/actions/close.ts": `import { action } from "@kavishkagaya/connectd-connections";
-export default action({ run: () => null });`,
-    "src/oc/tracker/actions/open.test.ts": "throw new Error('tests are not imported');",
-    "src/oc/tracker/actions/_shared.ts": "export const helper = 1;",
     "src/oc/tracker/events.ts": "throw new Error('the app side: never in the Worker');",
     // A connection with its own id (a provider's) runs as the folder's.
     "src/oc/gh/connection.ts": `import { connection } from "@kavishkagaya/connectd-connections";
@@ -44,9 +44,9 @@ export default connection("github").config().auth((f) => f.apiKey("token"));`,
     "src/oc/_shared/util.ts": "throw new Error('not a connection folder');",
   });
   const r = await load(dir);
-  expect(r.found.map((f) => [f.id, f.actions.map((a) => a.name)])).toEqual([
-    ["gh", []],
-    ["tracker", ["close", "open"]],
+  expect(r.found.map((f) => [f.id, f.actions && f.actions.slice(dir.length)])).toEqual([
+    ["gh", null],
+    ["tracker", "/src/oc/tracker/actions.ts"],
   ]);
   expect(r.entry).toBe(join(dir, ".connectd", "entry.ts"));
   const p = resolve(r.config, {});
@@ -57,7 +57,9 @@ export default connection("github").config().auth((f) => f.apiKey("token"));`,
   const reg = readFileSync(join(dir, ".connectd", "registry.d.ts"), "utf8");
   expect(reg).toContain('import type config from "../oc.config.ts";');
   expect(reg).toContain('import type c1 from "../src/oc/tracker/connection.ts";');
-  expect(reg).toContain('"tracker": Entry<typeof c1, { "close": typeof a1_0, "open": typeof a1_1 }>;');
+  expect(reg).toContain('import type a1 from "../src/oc/tracker/actions.ts";');
+  expect(reg).toContain('"tracker": Entry<typeof c1, typeof a1>;');
+  expect(reg).toContain('"gh": Entry<typeof c0, {}>;');
   expect(reg).not.toContain("events");
   expect(readFileSync(r.entry, "utf8")).not.toContain("events");
   // The app's side: the folders with an events.ts, by id, imported without an extension.
@@ -77,9 +79,18 @@ test("no folders: the config runs as is; a named dir must exist", async () => {
 });
 
 test("refused: a folder without connection.ts, a bad folder or action name, a non-connection export, an id listed twice", async () => {
-  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/empty/actions/x.ts": "" }))).rejects.toThrow("no connection.ts");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/empty/actions.ts": "" }))).rejects.toThrow("no connection.ts");
   await expect(load(project({ "oc.config.ts": CONFIG(), "oc/a.b/connection.ts": KEYED }))).rejects.toThrow("letters, digits");
-  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions/toString.ts": "" }))).rejects.toThrow("reserved");
+  // actions() checks its keys and values when the file loads; a plain object is checked by withFolders.
+  const helper = `import { action, actions } from "@kavishkagaya/connectd-connections";`;
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions.ts": `${helper} export default actions({ toString: action({ run: () => null }) });` }))).rejects.toThrow("toString: an action's name is reserved");
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions.ts": `${helper} export default actions({ "a.b": action({ run: () => null }) });` }))).rejects.toThrow("letters, digits");
+  const plain = project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions.ts": "export default { run: 1 };" });
+  await expect(load(plain).then((r) => resolve(r.config, {}))).rejects.toThrow("t/actions.ts: run: must be an action({ ... })");
+  const none = project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions.ts": "export const x = 1;" });
+  // No default export: the bundler stops first, naming the file.
+  await expect(load(none)).rejects.toThrow(/No matching export in .*oc\/t\/actions\.ts.* for import "default"/);
+  await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions.ts": "", "oc/t/actions.js": "" }))).rejects.toThrow("one actions file only");
   const notConn = project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": "export default 42;" });
   await expect(load(notConn).then((r) => resolve(r.config, {}))).rejects.toThrow("oc/t/connection.ts: the default export must be a connection");
   const twice = project({ "oc.config.ts": CONFIG(), "oc/listed/connection.ts": KEYED });
@@ -88,6 +99,14 @@ test("refused: a folder without connection.ts, a bad folder or action name, a no
   await expect(load(project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/connection.js": "export default 1;" }))).rejects.toThrow("one connection file only");
   const shadow = project({ "oc.config.ts": CONFIG(", actions: { t: {} }"), "oc/t/connection.ts": KEYED });
   await expect(load(shadow).then((r) => resolve(r.config, {}))).rejects.toThrow("actions for t are in the config");
+});
+
+test("upgrading from 0.2: action files named by file, without an actions.ts, fail loudly; helpers and tests in actions/ don't", async () => {
+  const old = project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions/open.ts": "export default 1;" });
+  await expect(load(old)).rejects.toThrow("actions/: actions aren't named by their file any more. Add");
+  // Only `_` helpers and tests: nothing to move.
+  const helpers = project({ "oc.config.ts": CONFIG(), "oc/t/connection.ts": KEYED, "oc/t/actions/_shared.ts": "export const x = 1;", "oc/t/actions/x.test.ts": "" });
+  expect((await load(helpers)).found[0]?.actions).toBeNull();
 });
 
 test("upgrading from the old layout fails loudly: connections/ and actions/ folders, connectd.config.ts", async () => {

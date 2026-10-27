@@ -1,6 +1,6 @@
 # examples/basic
 
-A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`connection.ts`, `actions/`, and `events.ts` for your app).
+A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`connection.ts`, `actions.ts`, and `events.ts` for your app).
 
 ## Dev
 

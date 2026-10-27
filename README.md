@@ -63,16 +63,18 @@ const repos = await (await gh.fetch("/user/repos")).json(); // token added by th
 Actions run next to the token and are typed end to end:
 
 ```ts
-// src/oc/github/actions/starRepo.ts
-import { action } from "@kavishkagaya/connectd/connections";
+// src/oc/github/actions.ts: one object, keyed by the action's name
+import { action, actions } from "@kavishkagaya/connectd/connections";
 import { z } from "zod";
 
-export default action({
-  input: z.object({ repo: z.string() }),
-  run: async ({ api }, { repo }) => {
-    const res = await api.fetch(`/user/starred/${repo}`, { method: "PUT" });
-    return { starred: res.status === 204 };
-  },
+export default actions({
+  starRepo: action({
+    input: z.object({ repo: z.string() }),
+    run: async ({ api }, { repo }) => {
+      const res = await api.fetch(`/user/starred/${repo}`, { method: "PUT" });
+      return { starred: res.status === 204 };
+    },
+  }),
 });
 
 // your app

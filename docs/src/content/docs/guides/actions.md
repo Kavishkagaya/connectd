@@ -5,18 +5,20 @@ sidebar:
   order: 6
 ---
 
-An **action** is a function that runs *inside* the connection's instance, next to its token, with an authenticated API client. One file per action, in the connection's folder:
+An **action** is a function that runs *inside* the connection's instance, next to its token, with an authenticated API client. A connection's actions live in one file in its folder, `actions.ts`, as an object keyed by name:
 
-```ts title="src/oc/github/actions/starRepo.ts"
-import { action } from "@kavishkagaya/connectd/connections";
+```ts title="src/oc/github/actions.ts"
+import { action, actions } from "@kavishkagaya/connectd/connections";
 import { z } from "zod";
 
-export default action({
-  input: z.object({ repo: z.string() }),
-  run: async ({ api }, { repo }) => {
-    const res = await api.fetch(`/user/starred/${repo}`, { method: "PUT" });
-    return { starred: res.status === 204 };
-  },
+export default actions({
+  starRepo: action({
+    input: z.object({ repo: z.string() }),
+    run: async ({ api }, { repo }) => {
+      const res = await api.fetch(`/user/starred/${repo}`, { method: "PUT" });
+      return { starred: res.status === 204 };
+    },
+  }),
 });
 ```
 
@@ -25,7 +27,23 @@ const r = await oc.connection("github", userId).actions.starRepo({ repo: "octoca
 // r: { starred: boolean }, typed from the action
 ```
 
-The file name is the action's name (`starRepo`), and the folder is its connection.
+The key is the action's name (`starRepo`), and the folder is its connection. Renaming an action is a code change you can see and search for, and your editor's rename works on it. Input takes any [Standard Schema](https://standardschema.dev) library; these examples use zod (`npm i zod`).
+
+Names are letters, digits, `_` and `-`. `then`, `toJSON`, `status`, `connection`, `webhook` and built-in object names are reserved. `actions()` checks the names and that each value is an `action()` when the file loads.
+
+### Many actions: one file each
+
+Keep `actions.ts` as the list and put each action in its own file. Only the key names it, so the file can be called anything:
+
+```ts title="src/oc/github/actions.ts"
+import { actions } from "@kavishkagaya/connectd/connections";
+import starRepo from "./actions/star";
+import syncIssues from "./actions/sync-issues";
+
+export default actions({ starRepo, syncIssues });
+```
+
+An `actions/` folder next to `actions.ts` is only read through these imports. Without an `actions.ts`, an `actions/` folder with action files is the 0.2 layout (each file named its action), and `connectd dev` stops with a message saying how to move it.
 
 ## Why actions instead of `fetch`?
 
@@ -59,12 +77,12 @@ An action with `input` can't also have `every` or `on`: a scheduled run has no c
 
 ### Called by your app
 
-```ts
-export default action({
+```ts title="in actions({ … })"
+createIssue: action({
   input: z.object({ title: z.string(), body: z.string().optional() }),
   run: async ({ api }, { title, body }) =>
     (await api.fetch("/repos/me/notes/issues", { method: "POST", body: JSON.stringify({ title, body }) })).json(),
-});
+}),
 ```
 
 - Input that fails the schema → `ConnectdError` with `code: "bad_request"` and `issues`, before any code runs.
@@ -73,18 +91,16 @@ export default action({
 
 ### On a schedule
 
-```ts title="src/oc/github/actions/syncIssues.ts"
-const HOUR = 3_600_000;
-
-export default action({
-  every: HOUR,
+```ts title="in actions({ … })"
+syncIssues: action({
+  every: 3_600_000, // an hour
   run: async ({ api, store }) => {
     const since = (await store.get<string>("since")) ?? new Date(0).toISOString();
     const issues = await api.get<{ updated_at: string }[]>(`/issues?since=${since}&filter=all`);
     if (issues.length) await store.set("since", issues[0]!.updated_at);
     return { count: issues.length };
   },
-});
+}),
 ```
 
 ```mermaid
@@ -100,14 +116,14 @@ flowchart LR
 
 ### When the connection changes state
 
-```ts title="src/oc/github/actions/welcome.ts"
-export default action({
+```ts title="in actions({ … })"
+welcome: action({
   on: "active",
   run: async ({ api, identity }) => {
     const repos = await api.get<unknown[]>("/user/repos?per_page=100");
     return { login: identity?.login, repos: repos.length };
   },
-});
+}),
 ```
 
 `on: "active"` runs on the first login and again after each re-auth from `reauth_required`. A login while already active isn't an *entry*, so it doesn't count. Connections already in the state when you deploy the action count as entering it the first time they're seen.
@@ -141,7 +157,7 @@ export default connection()
   .events({ synced: z.object({ count: z.number() }) });
 ```
 
-```ts title="actions/syncIssues.ts"
+```ts title="actions.ts, in syncIssues"
 run: async ({ api, emit }) => {
   const issues = await api.get<unknown[]>("/issues");
   await emit("synced", { count: issues.length });   // checked against the schema now

@@ -207,8 +207,12 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
       const dir = o.dir ?? process.cwd();
       try {
         const config = findConfig(dir, typeof a.flags.config === "string" ? a.flags.config : undefined);
-        const { found } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), { ...process.env });
-        log(`wrote .connectd/registry.d.ts and app.ts (${found.length ? found.map((f) => `${f.id}${f.actions.length ? ` (${f.actions.map((a) => a.name).join(", ")})` : ""}`).join(", ") : "no connection folders"})`);
+        const env = { ...process.env };
+        const { found, config: loaded } = await loadProject(dir, config, join(workdir(dir), "build"), Date.now(), env);
+        // The names are the keys of each folder's actions.ts; building the config also checks them.
+        const p = typeof loaded === "function" ? loaded(env) : loaded;
+        const names = (id: string) => Object.keys(p.actions?.[id] ?? {});
+        log(`wrote .connectd/registry.d.ts and app.ts (${found.length ? found.map((f) => `${f.id}${names(f.id).length ? ` (${names(f.id).join(", ")})` : ""}`).join(", ") : "no connection folders"})`);
         const note = sdkNote(dir);
         if (note) log(note);
         return 0;

@@ -1,4 +1,4 @@
-import { type AnyAction, type AnyConnection, definitionOf, envConfig, isAction, isConnection, withId } from "@kavishkagaya/connectd-connections";
+import { type AnyAction, type AnyConnection, badActions, definitionOf, envConfig, isConnection, withId } from "@kavishkagaya/connectd-connections";
 import { dashboard } from "@kavishkagaya/connectd-dashboard";
 import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
 import { ENV } from "./keys.ts";
@@ -20,8 +20,8 @@ import {
  * (#31) build the runtime from. No Node or Bun APIs here, so a Worker can import it. Connections and
  * their actions live in folders under `dir`, one per connection, named by its id (#54):
  *
- *   src/oc/github/connection.ts        export default github   (or connection().config().auth(...))
- *   src/oc/github/actions/starRepo.ts  export default action({ input, run })
+ *   src/oc/github/connection.ts   export default github   (or connection().config().auth(...))
+ *   src/oc/github/actions.ts      export default actions({ starRepo: action({ input, run }) })
  *
  * Each connection reads its own env names (`.config((env) => ...)`; the providers' GITHUB_CLIENT_ID and so on).
  *
@@ -78,7 +78,7 @@ export { ENV, generateKeys } from "./keys.ts";
 export type { Adapter, DeployContext, Deployed, Target } from "./target.ts";
 
 /** One connection folder, as the generated entry passes it: the folder's name and its files' default exports. */
-export type Folder = { id: string; file: string; connection: unknown; actions: Record<string, unknown> };
+export type Folder = { id: string; file: string; connection: unknown; actions: unknown };
 
 /**
  * The config plus its connection folders (the generated entry calls this): each folder's
@@ -94,10 +94,11 @@ export function withFolders(config: Config, folders: Folder[]): Config {
       if (!isConnection(c) && !(typeof c === "object" && c !== null && "auth" in c)) throw new Error(`${f.file}: the default export must be a connection (connection().config().auth(...), or a provider)`);
       if (definitions.some((d) => d.id === f.id)) throw new Error(`two connections with id ${f.id}: the config lists one and ${f.file} is another`);
       definitions.push(isConnection(c) ? withId(c, f.id) : { ...(c as AnyDefinition), id: f.id });
-      for (const [name, a] of Object.entries(f.actions)) if (!isAction(a)) throw new Error(`${f.id}/actions/${name}: the default export must be an action({ ... })`);
+      const bad = badActions(f.actions);
+      if (bad) throw new Error(`${f.id}/actions.ts: ${bad}`);
       // Typed from the folder only: config-listed actions for it would run untyped (and could shadow one).
-      if (Object.hasOwn(actions, f.id)) throw new Error(`actions for ${f.id} are in the config: put them in its folder's actions/`);
-      if (Object.keys(f.actions).length) actions[f.id] = f.actions as Record<string, AnyAction>;
+      if (Object.hasOwn(actions, f.id)) throw new Error(`actions for ${f.id} are in the config: put them in its folder's actions.ts`);
+      if (Object.keys(f.actions as object).length) actions[f.id] = f.actions as Record<string, AnyAction>;
     }
     return { ...p, definitions, ...(Object.keys(actions).length ? { actions } : {}) };
   };

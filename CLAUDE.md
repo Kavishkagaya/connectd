@@ -35,7 +35,7 @@ packages/connections/
   src/oauth.ts        OAuth protocol atoms (PKCE, authorize URL, code exchange, refresh, device flow, DCR, revoke), OAuthError
   src/define.ts       defineConnection, Definition (incl. webhooks: verify/parse/register), hmacHex/safeEqual, bind (a definition on one instance's kernel)
   src/builder.ts      connection(id?).config<C>().auth(f => …).api(…).limit().observe().identity().external().webhooks() (#54): compiles to a Definition, read with definitionOf; `.config((env) => C)` (env("NAME"), env.optional; envConfig in define.ts); withId (a folder's name as the id)
-  src/action.ts       action({ input?, every?, on?, run(conn, input) }) (#54): one per file in a connection folder (name from the file), Standard Schema types, ActionCtx (api, store, token)
+  src/action.ts       action({ input?, every?, on?, run(conn, input) }) (#54) and actions({ name: action }) (#83): a connection folder's actions.ts maps names to actions (badActions checks keys and values), Standard Schema types, ActionCtx (api, store, token)
   src/flows.ts        the flows `.auth()` hands its callback (#56): oauth2, oidc (discovery, id_token checked, claims as identity), clientCredentials, jwtBearer, device, apiKey, flow
   src/jwt.ts          RS256 signing (PKCS#8 and PKCS#1 keys), id_token verification (RS256, ES256)
   src/auth.ts         auth steps: oauth2 (oauth2Steps: the standard steps the builder's overrides call as `next`), apiKey
@@ -87,7 +87,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bu
   src/env.ts          dotenv parsing; dev's env (.env < process env; .dev.vars refused)
   src/init.ts         `connectd init`: dev's keys + CONNECTD_URL + APP_URL into .env (keys from an old .connectd/dev.vars moved), .gitignore, oc.config.ts, <src>/lib/oc.ts, the Next.js route; never overwrites
   src/load.ts         findConfig, importConfig (esbuild bundle to .mjs + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
-  src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions/<name>.ts + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
+  src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions.ts (export default actions({ name: action() }), #83; an actions/ folder without it is refused as the 0.2 layout) + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
   src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
   src/deploy.ts       `connectd deploy`, what every target shares: the environment (--env <name>, default production: .env.<name> or --env-file, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
   src/dev.ts          `connectd dev`: memory platform on a real clock behind node:http, keys from .env (init's; never made here), port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save (watcher skips build output, hidden dirs, generated types)
@@ -106,7 +106,7 @@ examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` ch
 
 scripts/pack.ts       `bun run pack`: the two published packages built to JavaScript (tsc in the Node, Workers and DOM type environments), each carrying its private workspace dependencies (imports rewritten to relative paths), npm-packed into .pack/
 
-examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers copied in by `connectd add`, one custom, github/actions/profile.ts)
+examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers copied in by `connectd add`, one custom, github/actions.ts)
 ```
 
 Published: `@kavishkagaya/connectd` and `@kavishkagaya/connectd-cloudflare` only; kernel, connections, runtime, sdk, dashboard and connect are private workspace packages (`connect` is unpublished for now). Code outside the core (generated files, the Cloudflare target, docs) imports the core's subpaths: `@kavishkagaya/connectd` (`defineConfig`, project helpers, target types), `/sdk`, `/sdk/node`, `/connections`, `/connections/testing`, `/runtime`, `/runtime/cloudflare`, `/runtime/signature`, `/kernel`, `/kernel/memory`, `/kernel/do`, `/keys`, `/workdir`, bin `connectd`. Inside the workspace, packages import each other by their own names (`@kavishkagaya/connectd-kernel`, `-connections`, `-runtime`, `-sdk`, `-dashboard`); Connection types (`State`, `Credential`, `NotActive`, OAuth) come from connections. Cloudflare target: `@kavishkagaya/connectd-cloudflare`, `/adapter`.
