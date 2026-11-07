@@ -25,7 +25,7 @@ The config is bundled **into the deployed Worker**, so keep it free of Node APIs
 | --- | --- | --- |
 | `dir` | `string` | The connection folders' parent, relative to the config. Default `src/oc`, else `oc`. |
 | `target` | `Target` | Where `connectd deploy` goes: `cloudflare({ name?, url?, environments? })`. `dev` ignores it. |
-| `events` | `{ url }` | Where events are POSTed, signed with `CONNECTD_EVENTS_SECRET`. Without it, no events, and webhooks are refused with `503`. |
+| `events` | `{ url }` | Where events are POSTed, signed with the deployment's events secrets (your app's `CONNECTD_EVENTS_SECRET`). Without it, no events, and webhooks are refused with `503`. |
 | `sessions` | `{ origins: string[] }` | Exact origins (`https://app.example.com`) allowed to run the connect UI and be returned to. Needed for `oc.routes`. |
 | `dashboard` | `boolean` | The dashboard at `/dashboard`. Default `true`. |
 | `extensions` | `Extension[]` | Your [extensions](/extending/extensions/), added after the built-in ones |

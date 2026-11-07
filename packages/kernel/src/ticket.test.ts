@@ -13,7 +13,9 @@ test("ticket: the data comes back once, for the instance and ticket that issued 
   const { get, opts } = await setup();
   const a = await get("conn:github:a");
   const t = await a.login.issue({ verifier: "v1" });
-  expect(t).not.toContain("v1"); // only a reference travels
+  // Only a reference travels: not the data, in any encoding (a bare "v1" could turn up in random base64).
+  expect(t).not.toContain(btoa(JSON.stringify({ verifier: "v1" })).slice(0, 12));
+  expect(atob(t.split(".")[0]!.replace(/-/g, "+").replace(/_/g, "/"))).not.toContain("verifier");
   expect(await routeTicket(t, opts.stateKey)).toMatchObject({ instance: "conn:github:a", name: "login" });
   expect(await a.session.redeem(t)).toBeNull(); // another ticket's
   expect(await (await get("conn:github:b")).login.redeem(t)).toBeNull(); // another instance's

@@ -7,7 +7,7 @@ sidebar:
 
 The SDK wraps all of this. You need the raw API only from a language without an SDK, or for debugging with `curl`.
 
-Routes are keyed by their first path segment. All of them need `Authorization: Bearer <CONNECTD_API_KEY>` **except** the ones marked public.
+Routes are keyed by their first path segment. All of them need `Authorization: Bearer <CONNECTD_API_KEY>` (an API key from [`connectd keys`](/reference/cli/#connectd-keys)) **except** the public ones and `/admin`.
 
 ## Connections
 
@@ -36,6 +36,18 @@ curl -H "Authorization: Bearer $CONNECTD_API_KEY" "$CONNECTD_URL/connections/git
 
 The request and response bodies stream through. Your `authorization` and `host` headers aren't forwarded. The provider's response comes back as-is, and only connectd's own refusals carry `connectd-error`.
 
+## Admin
+
+The deployment's keys, for the CLI and the dashboard. Never an API key: a CLI request (`Authorization: Admin <token>`, signed with the deployment's admin key, valid 60 seconds, used once) or a dashboard session.
+
+| Method | Path | |
+| --- | --- | --- |
+| `GET` | `/admin/info` | `{ version, url, keys: { api, events }, accounts, events }` |
+| `GET` | `/admin/keys` | Every key, never its value: `{ id, kind, name, prefix, status, createdAt, rolledAt, revokedAt, lastUsedAt, previousUntil }[]` |
+| `POST` | `/admin/keys` | `{ name, kind?: "api" \| "events" }` → `{ key, info }`. `key` is the secret, shown once. |
+| `POST` | `/admin/keys/:id/roll` | `{ graceMs? }` (up to 7 days) → `{ key, info }`. The old secret works until the grace period ends. |
+| `POST` | `/admin/keys/:id/revoke` | → `info` |
+
 ## Public routes
 
 | Method | Path | Called by |
@@ -48,7 +60,7 @@ The request and response bodies stream through. Your `authorization` and `host` 
 | `POST` | `/session/authorize` | The browser: `{ mode, nonce }` → `{ ticket }` (single use, 60 s) |
 | `GET` | `/session/authorize?ticket=` | Popup or page navigation: sets the binding cookie, then redirects to the provider |
 | `POST` | `/session/complete` | The browser: `{ completion }` → activates |
-| `GET` | `/dashboard` | The dashboard page. Its `/dashboard/api/*` calls need the API key. |
+| `GET` | `/dashboard` | The dashboard page. Its `/dashboard/api/*` calls need a session (`/dashboard/api/auth/*` signs in: a CLI link, a passkey or a password). |
 
 ## Errors
 
@@ -61,7 +73,7 @@ Every error the runtime answers is JSON, with a `connectd-error: <code>` header:
 | Code | Status | Meaning |
 | --- | --- | --- |
 | `bad_request` | 400 | Bad input. Action input failures include `issues`. |
-| `unauthorized` | 401 | Missing or wrong API key, or a bad webhook signature |
+| `unauthorized` | 401 | Missing, wrong, rolled-past or revoked API key; a bad admin token or session; or a bad webhook signature |
 | `forbidden` | 403 | Not allowed from here (origin, user, session scope) |
 | `not_found` | 404 | No such route, definition, connection or method |
 | `method_not_allowed` | 405 | |

@@ -1,7 +1,7 @@
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 import { generate } from "./src/generate.ts";
-import { generateKeys } from "@kavishkagaya/connectd/keys";
+import { deploymentKeys, newRootKey } from "@kavishkagaya/connectd/keys";
 
 // What `connectd deploy` would upload for test/fixture, run in workerd from its own wrangler.json:
 // the generated entry, the DO class and migration, the D1 binding and the copied migrations.
@@ -13,8 +13,8 @@ export default defineConfig({
     cloudflareTest(async () => ({
       wrangler: { configPath: g.wrangler },
       miniflare: {
-        // The secrets `deploy` pushes, plus a provider secret from an env file.
-        bindings: { ...generateKeys(), CONNECTD_API_KEY: "test-key", EXAMPLE_CLIENT_ID: "cid", ENVD_CLIENT_ID: "envd-cid", MIGRATIONS: await readD1Migrations(g.migrations) },
+        // The secrets `deploy` pushes (derived from a root key), plus a provider secret from an env file.
+        bindings: { ...(await deploymentKeys(newRootKey(), "production")), EXAMPLE_CLIENT_ID: "cid", ENVD_CLIENT_ID: "envd-cid", MIGRATIONS: await readD1Migrations(g.migrations) },
         // The proxy's upstream.
         outboundService: (req: Request) => Response.json({ url: req.url }),
       },

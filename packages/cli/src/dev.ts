@@ -3,11 +3,15 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { once } from "node:events";
 import type { AddressInfo } from "node:net";
 import { dirname, join, resolve as resolvePath } from "node:path";
-import type { Handler, Json, Program } from "@kavishkagaya/connectd-kernel";
+import type { Handler, Json, Platform, Program } from "@kavishkagaya/connectd-kernel";
 import { memory, type Snapshot } from "@kavishkagaya/connectd-kernel/memory";
-import { type Runtime, runtime } from "@kavishkagaya/connectd-runtime";
-import { loadEnv, workdir } from "./env.ts";
-import { ENV, type Env, generateKeys, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
+import { MIGRATIONS_DIR, resetConnections, type SyncSqlite, sqliteDb } from "@kavishkagaya/connectd-kernel/sqlite";
+import { apiKey, createKey, eventSecrets, type Runtime, runtime, type Settings } from "@kavishkagaya/connectd-runtime";
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { writeEnv } from "./admin.ts";
+import { loadEnv, parseEnv, workdir } from "./env.ts";
+import { DEV_ENV, deploymentKeys, ENV, type Env, options, type Resolved, unconfigured, unconfiguredText } from "./project.ts";
 import { findConfig, loadProject } from "./load.ts";
 import { tunnel } from "./tunnel.ts";
 import { sdkNote } from "./discover.ts";
@@ -31,7 +35,7 @@ export type DevOptions = {
   url?: string;
   /** Start a cloudflared quick tunnel; `bin` replaces `cloudflared` (tests). */
   tunnel?: boolean | { bin: string };
-  /** Start from empty state (drops `.connectd/state.json`). */
+  /** Start from empty state (drops `.connectd/state.json`; keys and accounts in `.connectd/dev.db` stay). */
   reset?: boolean;
   /** Default true. */
   watch?: boolean;
@@ -162,19 +166,23 @@ export async function dev(o: DevOptions) {
   const build = join(work, "build");
   rmSync(build, { recursive: true, force: true });
   if (o.reset) rmSync(statePath, { force: true });
-  // The keys are .env's (connectd init wrote them): dev never makes its own.
+  // dev's keys derive from the project's root key (#86), which init wrote into .env.
   const first = loadEnv(dir, o.env);
-  const missing = Object.keys(generateKeys()).filter((k) => (k.startsWith(ENV.key) ? !Object.keys(first).some((n) => /^CONNECTD_KEY_V\d+$/.test(n) && first[n]) : !first[k]));
-  if (missing.length) {
-    const old = existsSync(join(work, "dev.vars")) ? ": it moves the keys from .connectd/dev.vars into .env" : "";
-    throw new Error(`no ${missing.map((k) => (k.startsWith(ENV.key) ? `${ENV.key}1` : k)).join(", ")} in .env: run \`connectd init\` first${old}`);
-  }
+  const root = first[ENV.root];
+  if (!root) throw new Error(`no ${ENV.root} in .env: run \`connectd init\` first (or copy your project's root key there)`);
+  const derived = await deploymentKeys(root, DEV_ENV);
   let snapshot: Snapshot | undefined;
   try {
     snapshot = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, "utf8")) as Snapshot) : undefined;
   } catch {
     throw new Error(`${statePath} is unreadable; --reset starts empty`);
   }
+
+  // Keys and accounts live in SQLite, so they outlive restarts and --reset. The connection index
+  // is rebuilt from the snapshot below, as before.
+  const sqlite = await openSqlite(join(work, "dev.db"));
+  const db = sqliteDb(sqlite, migrations());
+  resetConnections(sqlite);
 
   const hot = swappable();
   let rt: Runtime | undefined;
@@ -209,6 +217,7 @@ export async function dev(o: DevOptions) {
 
   let n = 0;
   let loaded: Loaded | undefined;
+  let devKey = "";
   /** What the last good load read: its files' directories, and the connection folders' parent (new folders). */
   let watched: { folders: string | null; dirs: Set<string> } | undefined;
   /** Build, import and validate; swap only if all of it worked. */
@@ -219,7 +228,7 @@ export async function dev(o: DevOptions) {
     const publicUrl = (o.url ?? tun?.url ?? fresh[ENV.url] ?? local).replace(/\/+$/, "");
     if (!/^https?:\/\/[^/]+/.test(publicUrl)) throw new Error(`public URL ${publicUrl} is not an http(s) URL`);
     const before = env;
-    env = { ...fresh, [ENV.url]: publicUrl };
+    env = { ...fresh, ...derived, [ENV.url]: publicUrl };
     let opts: ReturnType<typeof options>;
     try {
       // From the env the platform reads, as deployed; options() keeps only what the project reads, so a connection that works here works there.
@@ -232,13 +241,38 @@ export async function dev(o: DevOptions) {
     const next = runtime(opts);
     rt = next;
     hot.swap(next.program);
-    w ??= memory(hot.program, { clock: Date.now, env: read, ...(snapshot ? { snapshot } : {}) });
+    w ??= memory(hot.program, { clock: Date.now, env: read, db, ...(snapshot ? { snapshot } : {}) });
     if (!indexed) {
       indexed = true;
       // The index isn't in the snapshot: rebuild it from each connection (the #26 repair path).
       for (const id of Object.keys(snapshot ?? {})) if (id.startsWith("conn:")) await w.call(id, "index.sync", null);
     }
-    return (loaded = { project: opts.project, unconfigured: unconfigured(opts.project), publicUrl });
+    loaded = { project: opts.project, unconfigured: unconfigured(opts.project), publicUrl };
+    await provision(w.platform, await opts.settings(), !!opts.project.events);
+    return loaded;
+  }
+
+  /**
+   * The app's dev credentials in .env (the file: the app reads them there): an API key (and an events
+   * secret when events are on) that this dev's database knows. Made and written there when missing or
+   * stale (a deleted dev.db).
+   */
+  async function provision(p: Platform, s: Settings, events: boolean) {
+    const file = join(dir, ".env");
+    const have = existsSync(file) ? parseEnv(readFileSync(file, "utf8")) : {};
+    const current = have[ENV.apiKey];
+    const ok = !!current && !!(await apiKey(p, new Request(local, { headers: { authorization: `Bearer ${current}` } })));
+    if (ok) devKey = current;
+    else {
+      const k = await createKey(p, s.keys, "api", "dev");
+      log(`${writeEnv(dir, ENV.apiKey, k.key) === "added" ? "wrote" : "replaced"} ${ENV.apiKey} in .env: a new dev API key (${k.info.prefix})`);
+      devKey = k.key;
+    }
+    const secret = have[ENV.events];
+    if (events && !(secret && (await eventSecrets(p, s.keys)).includes(secret))) {
+      const k = await createKey(p, s.keys, "events", "dev");
+      log(`${writeEnv(dir, ENV.events, k.key) === "added" ? "wrote" : "replaced"} ${ENV.events} in .env: a new dev events secret`);
+    }
   }
 
   async function reload() {
@@ -314,7 +348,11 @@ export async function dev(o: DevOptions) {
   const info = {
     url: local,
     port: server.port,
-    apiKey: first[ENV.apiKey] as string,
+    /** The app's dev API key (CONNECTD_API_KEY in .env). */
+    get apiKey() {
+      return devKey;
+    },
+    db,
     statePath,
     loaded: () => loaded,
     reload,
@@ -329,6 +367,7 @@ export async function dev(o: DevOptions) {
         await server.stop();
         await w?.stop();
         save();
+        (sqlite as { close?(): void }).close?.();
         tun?.stop();
       })()),
   };
@@ -344,20 +383,42 @@ export function banner(d: Pick<Dev, "url" | "apiKey" | "statePath" | "loaded">) 
   const l = d.loaded();
   const rows: [string, string][] = [
     ["URL", d.url],
-    ["API key", `${d.apiKey}   (CONNECTD_API_KEY in .env)`],
+    ["API key", `${d.apiKey.slice(0, 16)}…   (CONNECTD_API_KEY in .env; \`connectd keys\` manages them)`],
   ];
   if (l) {
     const pub = l.publicUrl;
     rows.push(["public URL", pub === d.url ? `${pub}   (https-only providers like Slack need --tunnel or --url)` : pub]);
     rows.push(["callback URL", `${pub}/callback   (register this redirect URI with each OAuth provider)`]);
     rows.push(["webhooks", `${pub}/webhooks/:def[/:id]`]);
-    rows.push(["events", l.project.events ? `${l.project.events.url}   (verify with ${ENV.events} from .env)` : "off (set events: { url } in the config)"]);
+    rows.push(["events", l.project.events ? `${l.project.events.url}   (signed: verify with ${ENV.events} from .env)` : "off (set events: { url } in the config)"]);
     rows.push(["sessions", l.project.sessions ? l.project.sessions.origins.join(", ") || "no origins" : "off (set sessions: { origins } in the config)"]);
-    rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (sign in with the API key)`]);
+    rows.push(["dashboard", l.project.dashboard === false ? "off (dashboard: false in the config)" : `${d.url}/dashboard   (\`connectd dashboard\` opens it signed in)`]);
     rows.push(["definitions", l.project.definitions.map((x) => x.id).join(", ") || "none"]);
     if (l.unconfigured.length) rows.push(["no config", `${unconfiguredText(l.project).join(", ")}   (answer not_configured until .env has them)`]);
     if (l.project.envNames.length) rows.push(["env", `${l.project.envNames.join(", ")}   (from .env; nothing else reaches the runtime)`]);
   }
-  rows.push(["state", `${d.statePath}   (--reset to start empty)`]);
+  rows.push(["state", `${d.statePath}   (--reset to start empty; keys and accounts stay in dev.db)`]);
   return `\nconnectd dev\n${rows.map(([k, v]) => `  ${k.padEnd(14)}${v}`).join("\n")}\n`;
+}
+
+/** The kernel's migrations (the same files D1 gets). */
+const migrations = () => {
+  const dir = fileURLToPath(MIGRATIONS_DIR);
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".sql"))
+    .map((name) => ({ name, sql: readFileSync(join(dir, name), "utf8") }));
+};
+
+/** A SQLite file: `bun:sqlite` under Bun, `node:sqlite` under Node (22.5+). */
+async function openSqlite(path: string): Promise<SyncSqlite> {
+  if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
+    const { Database } = await import("bun:sqlite");
+    return new Database(path, { create: true }) as unknown as SyncSqlite;
+  }
+  try {
+    const { DatabaseSync } = (await import("node:sqlite")) as unknown as { DatabaseSync: new (p: string) => SyncSqlite };
+    return new DatabaseSync(path);
+  } catch {
+    throw new Error("connectd dev keeps its keys in SQLite: it needs Bun, or Node 22.5 or later (node:sqlite)");
+  }
 }

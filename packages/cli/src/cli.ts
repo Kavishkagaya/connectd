@@ -8,18 +8,22 @@ import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
 import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
 import { sdkNote } from "./discover.ts";
-import { ENV, generateKeys } from "./keys.ts";
+import { admin, deployment, duration, envLine, findKey, loginUrl, type Made, writeEnv } from "./admin.ts";
+import { DEV_ENV, ENV } from "./keys.ts";
+import type { KeyInfo } from "@kavishkagaya/connectd-runtime";
+import { spawn } from "node:child_process";
 
 export const HELP = `connectd <command> [flags]
 
 Commands
-  init      set up dev in your app: keys, CONNECTD_URL and APP_URL in .env, oc.config.ts, lib/oc.ts, the route
-  dev       run the runtime locally: in memory, real clock, state kept in .connectd/, reloads on save
+  init      set up dev in your app: the root key, CONNECTD_URL and APP_URL in .env, oc.config.ts, lib/oc.ts, the route
+  dev       run the runtime locally: real clock, state and keys kept in .connectd/, reloads on save
   deploy    deploy to your Cloudflare account (through wrangler)
+  keys      a deployment's API keys and events secrets: list, create, roll, revoke
+  dashboard open a deployment's dashboard, signed in
   types     write .connectd/registry.d.ts (the typed client's registry; dev and deploy write it too)
   add       copy a provider into the project: connectd add github (no name: the catalog; --custom: your own)
   diff      what changed upstream in a copied provider: connectd diff github
-  keys      print a new CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET (for CI secrets and your app's host)
   help      this text
 
 connectd init
@@ -27,14 +31,16 @@ connectd init
   --app-url <url>  your app's origin (default APP_URL from .env, else http://localhost:3000)
   --target <t>     where it deploys: ${Object.keys(TARGETS).join(", ")} or none (default: asked in a terminal); installs the target's packages
   --skip-install   don't install the target's packages
-  Writes only what's missing; keys an older connectd dev kept in .connectd/dev.vars move to .env.
+  Writes only what's missing. The root key (CONNECTD_ROOT_KEY) is the project's for good: every
+  environment's keys derive from it. Keep a copy in your password manager; CI needs it as a secret.
 
 connectd dev
   --port <n>       port (default CONNECTD_URL's in .env, else ${PORT}; 0 picks a free one)
   --config <file>  config file (default ${CONFIG_FILES[0]})
   --tunnel         expose it on a public https URL with a cloudflared quick tunnel (Slack needs https)
   --url <url>      public URL of a tunnel you run yourself (callback and webhook URLs use it)
-  --reset          start from empty state
+  --reset          start from empty state (keys and dashboard accounts stay)
+  Writes the app's dev CONNECTD_API_KEY (and CONNECTD_EVENTS_SECRET) into .env when missing.
 
 connectd add <provider>
   --id <id>        the folder (the connection's id; default the provider's name)
@@ -49,17 +55,28 @@ connectd add --custom <id>
 
 connectd deploy
   --env <name>     the environment (default production): reads .env.<name>, deploys its own Worker and
-                   database (<name>-staging), generates its own keys; your provider credentials per env
+                   database (<name>-staging) with its own keys (derived from the root key); your provider credentials per env
   --env-file <f>   the env file instead (default .env.<env>; in CI, CI=true, the shell's); only names the project reads are pushed
   --name <name>    Worker name (default: the target's name, cloudflare({ name }), else the directory's name)
   --url <url>      public https origin on a custom domain (default: the workers.dev URL)
-  --rotate <list>  comma-separated: key (adds CONNECTD_KEY_V<n+1>), api-key, events, state, sessions
-  --new-keys       generate fresh runtime keys although the index database exists without its Worker
+  --rotate key     add an encryption key version (CONNECTD_KEY_V<n+1>); old ones stay to open older data
   --dry-run        write .connectd/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
   --config <file>  config file (default ${CONFIG_FILES[0]})
   Needs wrangler (npm i -D wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID).
-  In CI, CONNECTD_API_KEY comes from a CI secret (connectd keys); deploy never prints one there.
-  Managed deploys (--managed) wait for the managed service (#34).
+  The first deploy of an environment makes the app's API key (and events secret) and prints them once.
+  In CI, set CONNECTD_ROOT_KEY as a secret. Managed deploys (--managed) wait for the managed service (#34).
+
+connectd keys [ls | create <name> | roll <id|name> | revoke <id|name>]
+  --env <name>     the deployment (default dev: CONNECTD_URL in .env); a deployed one by its last deploy's URL
+  --url <url>      its URL instead (works outside the project, with CONNECTD_ROOT_KEY in the shell)
+  --events         create: an events signing secret (CONNECTD_EVENTS_SECRET) instead of an API key
+  --grace <time>   roll: how long the old secret keeps working (0, 30m, 24h, 7d; default 0)
+  A new secret is shown once. In dev, create and roll also write it into .env.
+
+connectd dashboard
+  --env <name>, --url <url>   which deployment (as for keys)
+  --print          print the sign-in link instead of opening a browser
+  The link signs in once, within 5 minutes; the dashboard then offers to make an account (passkey or password).
 `;
 
 const SPEC = {
@@ -74,7 +91,9 @@ const SPEC = {
   name: "string",
   rotate: "string",
   "dry-run": "boolean",
-  "new-keys": "boolean",
+  events: "boolean",
+  grace: "string",
+  print: "boolean",
   managed: "boolean",
   id: "string",
   force: "boolean",
@@ -157,7 +176,6 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           ...(environment ? { environment } : {}),
           rotate: (str("rotate") ?? "").split(",").map((r) => r.trim()),
           dryRun: !!a.flags["dry-run"],
-          newKeys: !!a.flags["new-keys"],
           log,
         });
         return 0;
@@ -191,17 +209,67 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
       }
     }
     case "keys": {
-      // The two values that are yours: the same in CI secrets (or .env.production) and in your app's host.
-      const k = generateKeys();
-      log(
-        [
-          `${ENV.apiKey}=${k[ENV.apiKey]}`,
-          `${ENV.events}=${k[ENV.events]}`,
-          "",
-          "Put both in your CI secrets (or .env.production) and in your app's environment. New each run; nothing is stored.",
-        ].join("\n"),
-      );
-      return 0;
+      const dir = o.dir ?? process.cwd();
+      const str = (k: string) => (typeof a.flags[k] === "string" ? (a.flags[k] as string) : undefined);
+      const [sub = "ls", which, ...extra] = a.rest;
+      try {
+        const d = deployment(dir, { ...(str("env") ? { environment: str("env") } : {}), ...(str("url") ? { url: str("url") } : {}) });
+        const dev = d.environment === DEV_ENV;
+        const show = (m: Made, verb: string) => {
+          log(`${verb} ${m.info.kind === "events" ? "events secret" : "API key"} ${m.info.name} (${m.info.prefix}) in ${d.environment}. The secret, shown once:\n\n  ${envLine(m)}\n`);
+          // Dev's are the app's own .env lines; a deployed one goes in the app host's environment.
+          if (dev) log(`${writeEnv(dir, m.info.kind === "events" ? ENV.events : ENV.apiKey, m.key) === "added" ? "added to" : "replaced in"} .env`);
+        };
+        if (sub === "ls" && !which) {
+          const all = await admin<KeyInfo[]>(d, "GET", "/admin/keys");
+          if (!all.length) return log(`no keys in ${d.environment}: connectd keys create <name>${dev ? "" : ` --env ${d.environment}`}`), 0;
+          const t = (ms: number | null) => (ms ? new Date(ms).toISOString().slice(0, 16).replace("T", " ") : "—");
+          log(
+            [
+              `${d.environment} (${d.url})`,
+              `  ${"ID".padEnd(14)}${"KIND".padEnd(8)}${"NAME".padEnd(18)}${"STATUS".padEnd(10)}${"CREATED".padEnd(18)}LAST USED`,
+              ...all.map((k) => `  ${k.id.padEnd(14)}${k.kind.padEnd(8)}${k.name.slice(0, 17).padEnd(18)}${k.status.padEnd(10)}${t(k.createdAt).padEnd(18)}${k.kind === "api" ? t(k.lastUsedAt) : ""}`),
+            ].join("\n"),
+          );
+          return 0;
+        }
+        if (!which || extra.length) return log(`connectd keys ${sub} <${sub === "create" ? "name" : "id or name"}>`), 2;
+        if (sub === "create") {
+          show(await admin<Made>(d, "POST", "/admin/keys", { name: which, kind: a.flags.events ? "events" : "api" }), "made");
+          return 0;
+        }
+        if (sub === "roll") {
+          const k = await findKey(d, which);
+          const graceMs = duration(str("grace") ?? "0");
+          show(await admin<Made>(d, "POST", `/admin/keys/${k.id}/roll`, { graceMs }), "rolled");
+          log(graceMs ? `the old secret works until ${new Date(Date.now() + graceMs).toISOString()}` : "the old secret stopped working");
+          return 0;
+        }
+        if (sub === "revoke") {
+          const k = await findKey(d, which);
+          await admin(d, "POST", `/admin/keys/${k.id}/revoke`, {});
+          log(`revoked ${k.kind === "events" ? "events secret" : "API key"} ${k.name} (${k.prefix}) in ${d.environment}${k.kind === "api" ? ": calls with it fail within 30 seconds" : ""}`);
+          return 0;
+        }
+        return log(`connectd keys takes ls, create, roll or revoke`), 2;
+      } catch (e) {
+        log((e as Error).message);
+        return 1;
+      }
+    }
+    case "dashboard": {
+      const dir = o.dir ?? process.cwd();
+      const str = (k: string) => (typeof a.flags[k] === "string" ? (a.flags[k] as string) : undefined);
+      try {
+        const d = deployment(dir, { ...(str("env") ? { environment: str("env") } : {}), ...(str("url") ? { url: str("url") } : {}) });
+        const url = await loginUrl(d);
+        if (a.flags.print || !open(url)) log(`sign in to ${d.environment}'s dashboard (works once, within 5 minutes):\n\n  ${url}\n`);
+        else log(`opened ${d.url}/dashboard (${d.environment}), signed in`);
+        return 0;
+      } catch (e) {
+        log((e as Error).message);
+        return 1;
+      }
     }
     case "types": {
       const dir = o.dir ?? process.cwd();
@@ -223,5 +291,18 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
     }
     default:
       return log(`unknown command ${a.command}\n\n${HELP}`), 2;
+  }
+}
+
+/** Open `url` in the browser; false where there's no desktop to open it on (SSH, CI). */
+function open(url: string): boolean {
+  if (process.env.CI || process.env.SSH_CONNECTION || process.env.NODE_ENV === "test") return false;
+  const [cmd, args] = process.platform === "darwin" ? ["open", [url]] : process.platform === "win32" ? ["cmd", ["/c", "start", "", url]] : ["xdg-open", [url]];
+  if (process.platform === "linux" && !process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
+  try {
+    spawn(cmd as string, args as string[], { stdio: "ignore", detached: true }).on("error", () => {}).unref();
+    return true;
+  } catch {
+    return false;
   }
 }

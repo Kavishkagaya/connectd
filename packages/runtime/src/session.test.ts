@@ -4,6 +4,7 @@ import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys, type Json, sign } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { proxy, runtime, type Settings, sessions } from "./index.ts";
+import { BEARER, seed } from "./testkit.ts";
 
 const TOKEN = "https://example.test/token";
 const APP = "https://app.test";
@@ -27,7 +28,7 @@ async function setup(o: { sessions?: boolean } = {}) {
   const settings: Settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null },
     ...(o.sessions === false ? {} : { sessions: { key: await importHmacKey(key(5)), origins: [APP, "http://localhost:5173"] } }),
@@ -35,12 +36,13 @@ async function setup(o: { sessions?: boolean } = {}) {
   let w: ReturnType<typeof memory> | undefined;
   const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [sessions(), proxy()] });
   w = memory(rt.program, { fetch: p.fetch, now: T0 });
+  await seed(w.platform, settings);
   const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(`https://oc.test${path}`, init), w!.platform);
   const json = async (res: Response) => ({ status: res.status, body: (await res.json()) as any, headers: res.headers });
 
   /** The app's backend: `POST /connections/:def/:id/session` with the API key. */
   const issue = async (def: string, id: string, args: Json = { origin: APP }) =>
-    json(await send(`/connections/${def}/${id}/session`, { method: "POST", headers: { authorization: "Bearer secret" }, body: JSON.stringify(args) }));
+    json(await send(`/connections/${def}/${id}/session`, { method: "POST", headers: { authorization: BEARER }, body: JSON.stringify(args) }));
   const token = async (def = "example", id = "c1", args?: Json) => (await issue(def, id, args)).body.token as string;
 
   /** The browser, from the app's page. */
@@ -68,7 +70,7 @@ async function setup(o: { sessions?: boolean } = {}) {
     return send(`/callback?code=${b.code}&state=${encodeURIComponent(b.state)}${extra}`, cookie ? { headers: { cookie } } : {});
   };
   const cookieOf = (res: Response) => (res.headers.get("set-cookie") ?? "").split(";")[0] as string;
-  const status = async (def: string, id: string) => (await json(await send(`/connections/${def}/${id}`, { headers: { authorization: "Bearer secret" } }))).body;
+  const status = async (def: string, id: string) => (await json(await send(`/connections/${def}/${id}`, { headers: { authorization: BEARER } }))).body;
   return { p, w, settings, send, json, issue, token, browser, ticket, go, authorize, message, confirm, back, cookieOf, status };
 }
 
@@ -96,8 +98,8 @@ test("issuing: scoped token with an expiry; origin and returnUrl must be allowli
 
   // The API key is required, and a revoked connection gets no session.
   expect((await t.send("/connections/example/c1/session", { method: "POST", body: JSON.stringify({ origin: APP }) })).status).toBe(401);
-  await t.send("/connections/keyed/k1/connect", { method: "POST", headers: { authorization: "Bearer secret" }, body: JSON.stringify({ key: "k", region: "eu" }) });
-  await t.send("/connections/keyed/k1/revoke", { method: "POST", headers: { authorization: "Bearer secret" } });
+  await t.send("/connections/keyed/k1/connect", { method: "POST", headers: { authorization: BEARER }, body: JSON.stringify({ key: "k", region: "eu" }) });
+  await t.send("/connections/keyed/k1/revoke", { method: "POST", headers: { authorization: BEARER } });
   expect((await t.issue("keyed", "k1")).body.error).toMatchObject({ code: "not_active", state: "revoked" });
 
   const off = await setup({ sessions: false });
@@ -164,7 +166,7 @@ test("a session token is not an API key: no token(), no proxy, no admin routes, 
     expect((await t.send(path, { method, headers: { origin: APP, authorization: `Bearer ${tk}` } })).status).toBe(401);
   // Only the session routes reach the internal methods.
   for (const m of ["session.ticket", "session.authorize", "session.complete"]) {
-    const internal = await t.send(`/connections/example/c1/${m}`, { method: "POST", headers: { authorization: "Bearer secret" }, body: "{}" });
+    const internal = await t.send(`/connections/example/c1/${m}`, { method: "POST", headers: { authorization: BEARER }, body: "{}" });
     expect(internal.status).toBe(404);
   }
 });
@@ -269,7 +271,7 @@ test("redirect: back to the bound return URL, the outcome in its fragment; provi
   expect(denied.headers.get("location")).toBe(`${APP}/done?x=1#connectd=error&definition=example&id=c1&code=access_denied`);
 
   // Errors before the provider (a revoked connection) end the same way.
-  await t.send("/connections/example/c1/revoke", { method: "POST", headers: { authorization: "Bearer secret" } });
+  await t.send("/connections/example/c1/revoke", { method: "POST", headers: { authorization: BEARER } });
   const revoked = await t.authorize(tk, { mode: "redirect", nonce: "" });
   expect(revoked.headers.get("location")).toBe(`${APP}/done?x=1#connectd=error&definition=example&id=c1&code=not_active`);
 });
@@ -279,7 +281,7 @@ test("a completion is refused once the connection was revoked meanwhile, before 
   const tk = await t.token("example", "c1", { returnUrl: `${APP}/done` });
   const res = await t.authorize(tk, { mode: "redirect", nonce: "" });
   const done = await t.back(res.headers.get("location")!, t.cookieOf(res));
-  await t.send("/connections/example/c1/revoke", { method: "POST", headers: { authorization: "Bearer secret" } });
+  await t.send("/connections/example/c1/revoke", { method: "POST", headers: { authorization: BEARER } });
   const calls = t.p.s.requests.length;
   const completion = new URLSearchParams(new URL(done.headers.get("location")!).hash.slice(1)).get("completion")!;
   expect((await t.confirm(tk, completion)).body.error).toMatchObject({ code: "not_active", state: "revoked" });
@@ -353,7 +355,7 @@ test("the popup page escapes what it shows and posts", async () => {
 
 test("a callback without a session still answers JSON and activates", async () => {
   const t = await setup();
-  const c = await t.json(await t.send("/connections/example/c1/connect", { method: "POST", headers: { authorization: "Bearer secret" } }));
+  const c = await t.json(await t.send("/connections/example/c1/connect", { method: "POST", headers: { authorization: BEARER } }));
   const done = await t.json(await t.back(c.body.url, null));
   expect(done).toMatchObject({ status: 200, body: { state: "active", metadata: null } });
 });

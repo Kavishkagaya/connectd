@@ -4,6 +4,7 @@ import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { type Extension, runtime } from "./index.ts";
+import { BEARER, seed } from "./testkit.ts";
 
 const H = 3_600_000;
 const TOKEN = "https://example.test/token";
@@ -32,13 +33,14 @@ async function setup(extensions: Extension[] = []) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null },
   };
   const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions });
   const w = memory(rt.program, { fetch: p.fetch });
-  const req = async (method: string, path: string, body?: Json, auth = "Bearer secret") => {
+  await seed(w.platform, settings);
+  const req = async (method: string, path: string, body?: Json, auth: string = BEARER) => {
     const res = await rt.fetch(
       new Request(`https://oc.test${path}`, { method, headers: { authorization: auth }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
       w.platform,
@@ -140,14 +142,15 @@ test("device flow over HTTP: connect returns the code to show, the runtime polls
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { tv: { clientId: "cid" } },
   };
   const rt = runtime({ definitions: { tv }, settings: async () => settings });
   const w = memory(rt.program, { fetch });
+  await seed(w.platform, settings);
   const req = async (method: string, path: string) =>
-    (await rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" } }), w.platform)).json() as Promise<any>;
+    (await rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: BEARER } }), w.platform)).json() as Promise<any>;
 
   expect(await req("POST", "/connections/tv/t1/connect")).toEqual({
     url: "https://dev.test/activate",

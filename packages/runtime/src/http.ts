@@ -1,4 +1,5 @@
-import { base64url, type Json, type Management, type Platform, routeTicket } from "@kavishkagaya/connectd-kernel";
+import { type Json, type Management, type Platform, routeTicket } from "@kavishkagaya/connectd-kernel";
+import { apiKey, session } from "./access.ts";
 import type { ActionSpec } from "@kavishkagaya/connectd-connections";
 import { listing } from "./directory.ts";
 import { type AnyDefinition, COOKIES, Fail, type Fault, fault, instanceOf, type Reply, type Settings, type Target } from "./host.ts";
@@ -88,17 +89,15 @@ export const routes: Record<string, Route> = {
   },
 };
 
-const digest = async (s: string) => base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s))));
-
 /**
- * The request carries `Authorization: Bearer <key>`. Compares digests, not the strings, so the
- * comparison leaks nothing about the key. For public routes with an API-key part (the dashboard's `/api`).
+ * May this request use the non-public routes: an API key from the management database, or a
+ * dashboard session (#86)? For public routes with an authenticated part (the dashboard's `/api`).
  */
-export async function authorized(req: Request, key: string) {
-  return key !== "" && (await digest(req.headers.get("authorization") ?? "")) === (await digest(`Bearer ${key}`));
+export async function authorized(req: Request, api: Pick<Api, "platform" | "settings">) {
+  return !!(await apiKey(api.platform, req)) || !!(await session(api.platform, api.settings.admin, req));
 }
 
-/** The front door's fetch: route by first path segment, check the API key unless the route is public. */
+/** The front door's fetch: route by first path segment, check the caller unless the route is public. */
 export function http(o: {
   routes: Record<string, Route>;
   definitions: Record<string, AnyDefinition>;
@@ -114,7 +113,6 @@ export function http(o: {
       const [name = "", ...path] = new URL(req.url).pathname.split("/").filter(Boolean).map(decodeURIComponent);
       const route = Object.hasOwn(o.routes, name) ? o.routes[name] : undefined;
       if (!route) throw new Fail("not_found", 404, "no such route");
-      if (!route.public && !(await authorized(req, settings.apiKey))) throw new Fail("unauthorized", 401, "missing or wrong API key");
       const api: Api = {
         settings,
         platform,
@@ -124,6 +122,7 @@ export function http(o: {
         internal: o.internal ?? new Set(),
         ...(o.index ? { index: platform.db.connections } : {}),
       };
+      if (!route.public && !(await authorized(req, api))) throw new Fail("unauthorized", 401, "missing or wrong API key");
       return await route.fetch(req, api, path);
     } catch (e) {
       return reply({ error: fault(e, "front door", platform.log) });

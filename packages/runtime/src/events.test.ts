@@ -4,6 +4,7 @@ import { type Atom, importHmacKey, importKeys, type Json, type Program } from "@
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { BODY_KEPT, type ConnectionEvent, directory, emit, events, type EventsStatus, type Extension, KEPT, proxy, runtime } from "./index.ts";
 import { sign, verify } from "./signature.ts";
+import { BEARER, seed } from "./testkit.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 const SECRET = `whsec_${key(7)}`;
@@ -50,14 +51,15 @@ async function setup(opts: { configured?: boolean } = {}) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { keyed: null },
-    ...(opts.configured === false ? {} : { events: { url: URL_, secret: SECRET } }),
+    ...(opts.configured === false ? {} : { events: { url: URL_ } }),
   };
   const rt = runtime({ definitions: { keyed }, settings: async () => settings, extensions: [events(), hook] });
   const c = checked(rt.program);
   const w = memory(c.wrapped, { fetch, now: 1_700_000_000_000 });
+  await seed(w.platform, settings, SECRET);
   const call = (m: string, a: Json = null) => w.call("conn:keyed:k1", m, a);
   const delivered = () => got.filter((g) => g.status < 300);
   const bodies = () => delivered().map((g) => JSON.parse(g.body) as ConnectionEvent);
@@ -239,16 +241,17 @@ test("alongside proxy() and directory(): proxied calls send nothing, state chang
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { keyed: null },
-    events: { url: URL_, secret: SECRET },
+    events: { url: URL_ },
   };
   const rt = runtime({ definitions: { keyed: proxied }, settings: async () => settings, extensions: [directory(), proxy(), events()] });
   const c = checked(rt.program);
   const w = memory(c.wrapped, { fetch });
+  await seed(w.platform, settings, SECRET);
   const send = (method: string, path: string, body?: Json) =>
-    rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.platform);
+    rt.fetch(new Request(`https://oc.test${path}`, { method, headers: { authorization: BEARER }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.platform);
 
   expect((await send("POST", "/connections/keyed/k1/connect", { key: "sk" })).status).toBe(200);
   await w.advance(0);

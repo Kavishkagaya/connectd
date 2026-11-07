@@ -42,20 +42,22 @@ Register the callback with the provider: `https://<your-worker>.workers.dev/call
 
 Deploy then:
 
-1. Resolves the project against `.env.production`, and refuses dev values (anything identical to `.env`) and generated dev keys.
-2. Generates this environment's runtime keys on its first deploy. They live only in the Worker's secrets.
+1. Resolves the project against `.env.production`, and refuses dev values (anything identical to `.env`).
+2. Derives this environment's runtime keys from the project's root key (`CONNECTD_ROOT_KEY`, which `connectd init` put in `.env`). The same values on every deploy, from any machine; the root key itself is never sent.
 3. Creates the D1 database if needed and applies migrations.
 4. Deploys the Worker with its secrets, through a temporary `0600` file that's removed right after.
-5. Prints **your app's env** for this environment:
+5. On the first deploy, makes your app's API key (and events secret, when events are on) in the deployment's database, and prints **your app's env** for this environment:
 
 ```text
 your app's env for production:
   CONNECTD_URL=https://my-app.you.workers.dev
-  CONNECTD_API_KEY=oc_…             (shown once)
-  CONNECTD_EVENTS_SECRET=whsec_…    (shown once, when events are on)
+  CONNECTD_API_KEY=ock_…            (new: shown once. `connectd keys` rolls or revokes it)
+  CONNECTD_EVENTS_SECRET=whsec_…    (new: shown once)
+
+dashboard: `connectd dashboard --env production` opens it signed in
 ```
 
-Put those three in your app's host (Vercel, Fly, wherever your app runs).
+Put those three in your app's host (Vercel, Fly, wherever your app runs). Later deploys leave the keys as they are; another service gets its own with `connectd keys create worker --env production`.
 
 ## The target
 
@@ -85,7 +87,7 @@ npx connectd deploy --env staging    # staging:    .env.staging    → Worker my
 ```mermaid
 flowchart TB
   subgraph dev["dev (connectd dev)"]
-    E1[".env"] --> M["memory platform<br/>.connectd/state.json"]
+    E1[".env"] --> M["memory platform<br/>.connectd/state.json + dev.db"]
   end
   subgraph stg["staging"]
     E2[".env.staging"] --> W2["my-app-staging + D1"]
@@ -99,13 +101,7 @@ flowchart TB
 
 ## Deploying from CI
 
-In CI (`CI=true`), deploy reads the **shell environment** (your CI secrets), not a file. It **never generates or prints** the API key or events secret there. Make them once:
-
-```sh
-npx connectd keys   # prints a fresh CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET
-```
-
-Store them in your CI secrets *and* in your app's host:
+In CI (`CI=true`), deploy reads the **shell environment** (your CI secrets), not a file. The project's root key is one of them. Deploy once by hand first (it prints your app's keys), or make them later with `connectd keys create app --env production`.
 
 ```yaml title=".github/workflows/connectd.yml"
 name: connectd
@@ -124,23 +120,33 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CONNECTD_API_KEY: ${{ secrets.CONNECTD_API_KEY }}
-          CONNECTD_EVENTS_SECRET: ${{ secrets.CONNECTD_EVENTS_SECRET }}
+          CONNECTD_ROOT_KEY: ${{ secrets.CONNECTD_ROOT_KEY }}
           GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
           GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
 ```
 
 - `--url` (or `cloudflare({ url })`) is needed because CI doesn't have `.connectd/deploy/state.json` from an earlier deploy.
 - GitHub secret names can't start with `GITHUB_`, hence the `OAUTH_` prefix. The env names your connection reads stay `GITHUB_CLIENT_ID`.
-- Runtime keys (encryption, state, sessions, webhooks) stay in the Worker from the first deploy. CI doesn't need them.
+- `CONNECTD_ROOT_KEY` is the only connectd secret CI needs: the runtime's keys derive from it.
 
-## Rotating keys
+## Keys and the dashboard
+
+Your app's keys live in the deployment's database. Manage them from the CLI or the dashboard, with no redeploy:
+
+```sh
+npx connectd keys --env production                         # list
+npx connectd keys create worker --env production           # another service's key, shown once
+npx connectd keys roll app --env production --grace 24h    # a new secret; the old one works for a day
+npx connectd keys revoke worker --env production
+npx connectd dashboard --env production                    # the dashboard, signed in
+```
+
+The dashboard's first sign-in is that CLI link; it then asks you to make an account (a passkey or a password), so you can sign in from anywhere afterwards and invite teammates. With `--url` and `CONNECTD_ROOT_KEY` in the shell, these commands work outside the project too.
+
+The runtime's own keys only rotate for encryption:
 
 ```sh
 npx connectd deploy --rotate key            # adds CONNECTD_KEY_V<n+1>; old credentials re-seal on read
-npx connectd deploy --rotate api-key        # new CONNECTD_API_KEY (update your app)
-npx connectd deploy --rotate events         # new CONNECTD_EVENTS_SECRET (update your app)
-npx connectd deploy --rotate state,sessions # new signing keys (in-flight logins must restart)
 ```
 
 ## Without deploying: the plan

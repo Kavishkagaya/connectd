@@ -5,7 +5,10 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { join } from "node:path";
 import { main } from "./cli.ts";
 import { type CloudflareDeployed, generate, NO_WRANGLER } from "@kavishkagaya/connectd-cloudflare/adapter";
+import { importHmacKey } from "@kavishkagaya/connectd-kernel";
+import { readToken } from "@kavishkagaya/connectd-runtime";
 import { deploy, type DeployOptions } from "./deploy.ts";
+import { deploymentKeys, newRootKey } from "./keys.ts";
 import { loadProject } from "./load.ts";
 
 const TMP = join(import.meta.dir, "..", ".tmp-deploy");
@@ -63,6 +66,32 @@ export default (env) => ({
 });
 `;
 
+const ROOT = newRootKey();
+
+/**
+ * The deployed Worker's `/admin`, as the first deploy calls it: requests checked against the admin
+ * key the fake wrangler was given, keys counted per Worker.
+ */
+function fakeAdmin(account: () => { workers: Record<string, { secrets: Record<string, string>; vars: Record<string, string> }> }) {
+  const keys: Record<string, { api: number; events: number }> = {};
+  const calls: string[] = [];
+  const fetch = (async (input: string, init?: RequestInit) => {
+    const u = new URL(input);
+    const [name, w] = Object.entries(account().workers).find(([, w]) => w.vars?.CONNECTD_PUBLIC_URL === u.origin) ?? [];
+    if (!w || !name) throw new TypeError("fetch failed");
+    calls.push(`${init?.method ?? "GET"} ${u.pathname}`);
+    const tok = /^Admin (\S+)$/.exec(new Headers(init?.headers).get("authorization") ?? "")?.[1] ?? "";
+    if (!(await readToken(await importHmacKey(w.secrets.CONNECTD_ADMIN_KEY!), "admin", tok, Date.now(), 60_000))) return Response.json({ error: { code: "unauthorized", message: "no" } }, { status: 401 });
+    const k = (keys[name] ??= { api: 0, events: 0 });
+    if (u.pathname === "/admin/info") return Response.json({ keys: k });
+    const b = JSON.parse(init?.body as string) as { kind: "api" | "events"; name: string };
+    k[b.kind]++;
+    const id = `${b.kind}${k[b.kind]}`.padEnd(12, "0");
+    return Response.json({ key: b.kind === "api" ? `ock_${id}_secret${k.api}` : `whsec_${btoa(`events${k.events}`.padEnd(32, "x"))}`, info: { id, kind: b.kind, name: b.name, prefix: `ock_${id}` } }, { status: 201 });
+  }) as typeof globalThis.fetch;
+  return { fetch, calls, keys };
+}
+
 function setup(o: { events?: boolean; vars?: string; target?: string } = {}) {
   const dir = mkdtempSync(join(TMP, "my app-"));
   writeFileSync(join(dir, "oc.config.ts"), CONFIG(o.events, o.target));
@@ -70,7 +99,7 @@ function setup(o: { events?: boolean; vars?: string; target?: string } = {}) {
   const bin = join(dir, "wrangler-fake");
   writeFileSync(bin, FAKE);
   chmodSync(bin, 0o755);
-  const env = { ...process.env, FAKE_LOG: join(dir, "calls.jsonl"), FAKE_ACCOUNT: join(dir, "account.json") } as Record<string, string>;
+  const env = { ...process.env, CONNECTD_ROOT_KEY: ROOT, FAKE_LOG: join(dir, "calls.jsonl"), FAKE_ACCOUNT: join(dir, "account.json") } as Record<string, string>;
   const lines: string[] = [];
   let n = 0;
   const run = (x: Partial<DeployOptions> = {}) =>
@@ -80,6 +109,7 @@ function setup(o: { events?: boolean; vars?: string; target?: string } = {}) {
       envFile: ".prod.vars",
       wrangler: bin,
       env,
+      fetch: admin.fetch,
       log: (l) => void lines.push(l),
       ...x,
     });
@@ -91,7 +121,8 @@ function setup(o: { events?: boolean; vars?: string; target?: string } = {}) {
           .map((l) => JSON.parse(l) as { argv: string[]; secrets: { body: string; mode: number } | null })
       : [];
   const account = () => JSON.parse(readFileSync(env.FAKE_ACCOUNT!, "utf8")) as { dbs: { name: string }[]; workers: Record<string, { secrets: Record<string, string>; vars: Record<string, string>; history: Record<string, string>[] }> };
-  return { dir, run, calls, account, lines, env, reset: () => rmSync(env.FAKE_LOG!, { force: true }) };
+  const admin = fakeAdmin(account);
+  return { dir, run, calls, account, admin, lines, env, reset: () => rmSync(env.FAKE_LOG!, { force: true }) };
 }
 
 const cmd = (c: { argv: string[] }) => c.argv.filter((a) => !a.includes("/")).join(" ");
@@ -117,22 +148,31 @@ test("first deploy: D1 created, migrations, deploy with the secrets, again for t
   expect(r.url).toBe(`https://${name}.acct.workers.dev`);
   const w = s.account().workers[name]!;
   expect(w.vars).toEqual({ CONNECTD_PUBLIC_URL: r.url as string });
-  expect(Object.keys(w.secrets).sort()).toEqual(
-    ["GH_ID", "GH_SECRET", "CONNECTD_API_KEY", "CONNECTD_KEY_V1", "CONNECTD_SESSIONS_KEY", "CONNECTD_STATE_KEY", "CONNECTD_WEBHOOKS_KEY"].sort(),
-  );
+  const derived = await deploymentKeys(ROOT, "production");
+  expect(Object.keys(w.secrets).sort()).toEqual(["GH_ID", "GH_SECRET", ...Object.keys(derived)].sort());
+  expect(Object.keys(derived).sort()).toEqual(["CONNECTD_ADMIN_KEY", "CONNECTD_KEY_V1", "CONNECTD_SESSIONS_KEY", "CONNECTD_STATE_KEY", "CONNECTD_WEBHOOKS_KEY"]);
+  for (const [k, v] of Object.entries(derived)) expect(w.secrets[k]).toBe(v);
   expect(w.secrets.GH_SECRET).toBe("prod-secret");
-  // Secrets never in argv; generated files and output hold none of them, except the API key printed once.
-  const values = Object.values(w.secrets);
+  // Never the root key, nor anything for the app: its API key is in the deployment's database, made through /admin.
+  expect(Object.values(w.secrets)).not.toContain(ROOT);
+  expect(s.admin.calls).toEqual(["GET /admin/info", "POST /admin/keys"]);
+  const made = r.keys![0]!;
+  expect(made.key).toStartWith("ock_");
+  // Secrets never in argv; generated files and output hold none of them, the new API key printed once.
+  const values = [...Object.values(w.secrets), ROOT];
   for (const c of s.calls()) for (const v of values) expect(c.argv.join(" ")).not.toContain(v);
   const files = [r.generated.entry, r.generated.wrangler, join(s.dir, ".connectd", "deploy", "state.json")].map((f) => readFileSync(f, "utf8")).join("\n");
   const out = s.lines.join("\n");
-  for (const [k, v] of Object.entries(w.secrets)) {
+  for (const v of values) {
     expect(files).not.toContain(v);
-    if (k === "CONNECTD_API_KEY") expect(out.split(v).length - 1).toBe(1);
-    else expect(out).not.toContain(v);
+    expect(out).not.toContain(v);
   }
-  expect(r.apiKey).toBe(w.secrets.CONNECTD_API_KEY!);
+  expect(out.split(made.key).length - 1).toBe(1);
+  expect(out).toContain(`CONNECTD_API_KEY=${made.key}   (new: shown once`);
+  expect(out).toContain("connectd dashboard --env production");
   expect(out).toContain(`${r.url}/dashboard`);
+  // Where it went, for connectd keys and connectd dashboard later.
+  expect(JSON.parse(readFileSync(join(s.dir, ".connectd", "environments.json"), "utf8"))).toEqual({ production: { url: r.url } });
 
   const cfg = JSON.parse(readFileSync(r.generated.wrangler, "utf8"));
   expect(cfg).toMatchObject({
@@ -146,7 +186,7 @@ test("first deploy: D1 created, migrations, deploy with the secrets, again for t
   expect(existsSync(join(r.generated.migrations, "0001_index.sql"))).toBe(true);
 });
 
-test("re-deploy: no new keys, one deploy, same database; --rotate key adds V2; --rotate api-key prints a new one", async () => {
+test("re-deploy: the same derived keys again, no new app key; --rotate key adds V2", async () => {
   const s = setup();
   const first = await s.run();
   const before = { ...s.account().workers[first.name]!.secrets };
@@ -158,25 +198,22 @@ test("re-deploy: no new keys, one deploy, same database; --rotate key adds V2; -
     `d1 migrations apply ${first.name}-index --remote --config`,
     "deploy --config --secrets-file",
   ]);
-  expect(again.pushed).toEqual(["GH_ID", "GH_SECRET"]);
-  expect(again.apiKey).toBeUndefined();
+  // Every deploy sends them all: derived, so the same values.
+  expect(again.pushed?.sort()).toEqual(Object.keys(before).sort());
   expect(s.account().workers[first.name]!.secrets).toEqual(before);
   expect(s.account().dbs.length).toBe(1);
-
-  // An empty env file and nothing missing: no secrets sent at all.
-  s.reset();
-  writeFileSync(join(s.dir, ".empty"), "");
-  await s.run({ envFile: ".empty" });
-  expect(s.calls().some((c) => c.secrets)).toBe(false);
+  expect(again.keys).toEqual([]);
+  expect(s.lines.join("\n")).toContain("CONNECTD_API_KEY=the one you stored (1 live");
 
   const rot = await s.run({ rotate: ["key"] });
-  expect(rot.pushed).toEqual(["GH_ID", "GH_SECRET", "CONNECTD_KEY_V2"]);
-  expect(s.account().workers[first.name]!.secrets.CONNECTD_KEY_V1).toBe(before.CONNECTD_KEY_V1!);
-  const rot2 = await s.run({ rotate: ["key", "state"] });
-  expect(rot2.pushed).toEqual(["GH_ID", "GH_SECRET", "CONNECTD_KEY_V3", "CONNECTD_STATE_KEY"]);
-  const api = await s.run({ rotate: ["api-key"] });
-  expect(api.apiKey).toBeDefined();
-  expect(api.apiKey).not.toBe(first.apiKey);
+  expect(rot.pushed).toContain("CONNECTD_KEY_V2");
+  const after = s.account().workers[first.name]!.secrets;
+  expect(after.CONNECTD_KEY_V1).toBe(before.CONNECTD_KEY_V1!);
+  expect(after.CONNECTD_KEY_V2).not.toBe(before.CONNECTD_KEY_V1!);
+  // Kept from then on, without the flag.
+  expect((await s.run()).pushed).toContain("CONNECTD_KEY_V2");
+  await expect(s.run({ rotate: ["api-key"] })).rejects.toThrow("connectd keys roll");
+  await expect(s.run({ rotate: ["state"] })).rejects.toThrow("--rotate takes key");
 });
 
 test("custom domain: --url sets the var and a custom-domain route, deployed once", async () => {
@@ -193,34 +230,29 @@ test("custom domain: --url sets the var and a custom-domain route, deployed once
   await expect(s.run({ url: "http://example.com" })).rejects.toThrow(/https/);
 });
 
-test("refused before anything changes: dev keys, generated keys in the env file, bad rotations", async () => {
+test("refused before anything changes: derived keys or the app's keys in the env file, no root key, bad rotations", async () => {
   const s = setup({ events: true });
-
   for (const [vars, err] of [
-    ["CONNECTD_STATE_KEY=x\n", /generated by deploy/],
-    ["CONNECTD_KEY_V1=x\n", /generated by deploy/],
+    ["CONNECTD_STATE_KEY=x\n", /derived from CONNECTD_ROOT_KEY/],
+    ["CONNECTD_KEY_V1=x\n", /derived from CONNECTD_ROOT_KEY/],
+    ["CONNECTD_ADMIN_KEY=x\n", /derived from CONNECTD_ROOT_KEY/],
+    ["CONNECTD_API_KEY=mine\n", /your app's/],
+    ["CONNECTD_EVENTS_SECRET=whsec_x\n", /your app's/],
     ["CONNECTD_PUBLIC_URL=https://x.test\n", /comes from --url/],
   ] as const) {
     writeFileSync(join(s.dir, ".prod.vars"), vars);
     await expect(s.run()).rejects.toThrow(err);
   }
-  mkdirSync(join(s.dir, ".connectd"), { recursive: true });
-  writeFileSync(join(s.dir, ".connectd", "dev.vars"), "CONNECTD_API_KEY=oc_dev\n");
-  await expect(s.run({ envFile: ".connectd/dev.vars" })).rejects.toThrow(/dev keys/);
-  writeFileSync(join(s.dir, ".prod.vars"), "CONNECTD_API_KEY=oc_dev\n");
-  await expect(s.run()).rejects.toThrow(/is the dev value/);
-  writeFileSync(join(s.dir, ".prod.vars"), "CONNECTD_API_KEY=mine\n");
-  await expect(s.run({ rotate: ["api-key"] })).rejects.toThrow(/change it there/);
-  await expect(s.run({ rotate: ["webhooks"] })).rejects.toThrow(/break every registered webhook/);
+  writeFileSync(join(s.dir, ".prod.vars"), "GH_ID=prod-id\n");
+  await expect(s.run({ env: { ...s.env, CONNECTD_ROOT_KEY: "" } })).rejects.toThrow("no CONNECTD_ROOT_KEY");
+  await expect(s.run({ env: { ...s.env, CONNECTD_ROOT_KEY: "not-a-root-key" } })).rejects.toThrow("isn't a connectd root key");
   await expect(s.run({ rotate: ["nope"] })).rejects.toThrow(/--rotate takes/);
   await expect(s.run({ envFile: "missing.vars" })).rejects.toThrow(/no env file/);
-
-  // With the secret in the env file it goes through, and the given API key is used (never printed).
-  writeFileSync(join(s.dir, ".prod.vars"), `CONNECTD_API_KEY=mine\nCONNECTD_EVENTS_SECRET=whsec_${btoa("x".repeat(32))}\n`);
-  const r = await s.run();
-  expect(r.apiKey).toBeUndefined();
-  expect(s.account().workers[r.name]!.secrets.CONNECTD_API_KEY).toBe("mine");
-  expect(s.lines.join("\n")).not.toContain("whsec_");
+  expect(s.calls()).toEqual([]);
+  // The root key from dev's .env (one per project) when the shell has none.
+  writeFileSync(join(s.dir, ".env"), `CONNECTD_ROOT_KEY=${ROOT}\n`);
+  const r = await s.run({ env: { ...s.env, CONNECTD_ROOT_KEY: "" } });
+  expect(s.account().workers[r.name]!.secrets.CONNECTD_ADMIN_KEY).toBe((await deploymentKeys(ROOT, "production")).CONNECTD_ADMIN_KEY!);
 });
 
 test("wrangler failures: missing binary explained, a failing step stops the deploy", async () => {
@@ -230,10 +262,17 @@ test("wrangler failures: missing binary explained, a failing step stops the depl
   await expect(s.run()).rejects.toThrow(/wrangler d1 migrations apply failed \(1\):[\s\S]*boom/);
   expect(s.calls().some((c) => c.argv[0] === "deploy")).toBe(false);
   delete s.env.FAKE_FAIL;
-
-  // A failing deploy that generated an API key says how to get a visible one.
   s.env.FAKE_FAIL = "deploy --config";
-  await expect(s.run({ newKeys: true })).rejects.toThrow(/--rotate api-key/);
+  await expect(s.run()).rejects.toThrow(/wrangler deploy --config/);
+  // Nothing deployed, so no app key was made.
+  expect(s.admin.calls).toEqual([]);
+});
+
+test("a deployment that can't be reached after deploying: the deploy stands, the app's key is made later", async () => {
+  const s = setup();
+  const r = await s.run({ fetch: (async () => Response.json({ error: { code: "x", message: "nope" } }, { status: 401 })) as unknown as typeof fetch });
+  expect(r.url).toBeDefined();
+  expect(s.lines.join("\n")).toContain("connectd keys create app --env production");
 });
 
 test("--dry-run: writes the entry, wrangler config and migrations, prints the plan, calls nothing", async () => {
@@ -265,20 +304,21 @@ test("cli: deploy flags, --managed deferred", async () => {
   expect(generate({ dir: s.dir, config: join(s.dir, "oc.config.ts"), name: "x" }).wrangler).toEndWith("wrangler.json");
 });
 
-test("existing Worker without state.json (CI): refused until --url, its vars never dropped", async () => {
+test("existing Worker without state.json (CI): refused until --url, its vars never dropped, the same keys from the root key", async () => {
   const s = setup();
   const first = await s.run();
+  const before = { ...s.account().workers[first.name]!.secrets };
   rmSync(join(s.dir, ".connectd", "deploy", "state.json"));
   s.reset();
   await expect(s.run()).rejects.toThrow(/exists, but its public URL isn't known here/);
   expect(s.calls().map(cmd)).toEqual([`secret list --name ${first.name} --format json`]);
-  const again = await s.run({ url: first.url! });
-  expect(again.pushed).toEqual(["GH_ID", "GH_SECRET"]);
+  await s.run({ url: first.url! });
+  expect(s.account().workers[first.name]!.secrets).toEqual(before);
   // Every version after the new Worker's first pass carried the public URL.
   expect(s.account().workers[first.name]!.history).toEqual([{}, { CONNECTD_PUBLIC_URL: first.url! }, { CONNECTD_PUBLIC_URL: first.url! }]);
 });
 
-test("new-Worker detection: only Cloudflare's 10007; an index without its Worker needs --new-keys", async () => {
+test("new-Worker detection: only Cloudflare's 10007; an index without its Worker gets the same keys back", async () => {
   const s = setup();
   s.env.FAKE_FAIL = "secret list";
   s.env.FAKE_ERROR = "✘ [ERROR] A request to the Cloudflare API failed: route not found";
@@ -286,16 +326,16 @@ test("new-Worker detection: only Cloudflare's 10007; an index without its Worker
   expect(s.calls().length).toBe(1);
   delete s.env.FAKE_FAIL;
 
-  // The database is there, the Worker isn't: fresh keys would orphan whatever was sealed before.
   const first = await s.run();
+  const before = { ...s.account().workers[first.name]!.secrets };
   const account = s.account();
   delete account.workers[first.name];
   writeFileSync(s.env.FAKE_ACCOUNT!, JSON.stringify(account));
   s.reset();
-  await expect(s.run()).rejects.toThrow(/exists but Worker .* doesn't[\s\S]*--new-keys/);
-  expect(s.calls().some((c) => c.argv[0] === "deploy")).toBe(false);
-  const again = await s.run({ newKeys: true });
-  expect(again.pushed).toContain("CONNECTD_KEY_V1");
+  await s.run();
+  expect(s.lines.join("\n")).toContain("exists without Worker");
+  // Derived from the root key: what was sealed before still opens.
+  expect(s.account().workers[first.name]!.secrets).toEqual(before);
 });
 
 test("generated entry: the runtime the project resolves", async () => {
@@ -337,29 +377,27 @@ test("one env: .env.production by default, only the names the project reads are 
 
   // Manual deploy: the app's env lines, the new API key once.
   expect(out).toContain(`CONNECTD_URL=${r.url}`);
-  expect(out).toContain(`CONNECTD_API_KEY=${r.apiKey}   (shown once`);
+  expect(out).toContain(`CONNECTD_API_KEY=${r.keys![0]!.key}   (new: shown once`);
 
   // No file outside CI: refused (a local shell holds dev's .env too).
   const t = setup({ vars: "" });
   await expect(t.run({ envFile: undefined })).rejects.toThrow("no .env.production");
-  // CI: the shell's environment (CI secrets), still only the names read; the API key must come from it.
+  // CI: the shell's environment (CI secrets), still only the names read; the root key is a CI secret.
   const shell = { ...t.env, CI: "true", GH_ID: "shell-id", GH_SECRET: "shell-secret", DATABASE_URL: "postgres://prod" };
-  await expect(t.run({ envFile: undefined, env: shell })).rejects.toThrow("CI: set CONNECTD_API_KEY");
-  const r2 = await t.run({ envFile: undefined, env: { ...shell, CONNECTD_API_KEY: "oc_from_ci" } });
+  await expect(t.run({ envFile: undefined, env: { ...shell, CONNECTD_ROOT_KEY: "" } })).rejects.toThrow("in CI, set it as a secret");
+  const r2 = await t.run({ envFile: undefined, env: shell });
   const w2 = t.account().workers[r2.name]!;
   expect(w2.secrets.GH_ID).toBe("shell-id");
-  expect(w2.secrets.CONNECTD_API_KEY).toBe("oc_from_ci");
-  expect(r2.apiKey).toBeUndefined();
   expect(Object.keys(w2.secrets)).not.toContain("DATABASE_URL");
   expect(Object.keys(w2.secrets)).not.toContain("PATH");
   expect(Object.keys(w2.secrets)).not.toContain("CI");
   expect(t.lines.join("\n")).toContain("from the shell environment");
-  expect(t.lines.join("\n")).not.toContain("oc_from_ci");
+  expect(Object.keys(w2.secrets)).not.toContain("CONNECTD_ROOT_KEY");
 
   // Dev's values never go out: .env as the file, or a value equal to .env's.
   writeFileSync(join(t.dir, ".env"), "GH_ID=dev-id\n");
   await expect(t.run({ envFile: ".env" })).rejects.toThrow(".env is dev's");
-  await expect(t.run({ envFile: undefined, env: { ...shell, GH_ID: "dev-id", CONNECTD_API_KEY: "oc_from_ci" } })).rejects.toThrow("GH_ID in the shell environment is the dev value from .env");
+  await expect(t.run({ envFile: undefined, env: { ...shell, GH_ID: "dev-id" } })).rejects.toThrow("GH_ID in the shell environment is the dev value from .env");
 });
 
 test("parseEnv: a double-quoted value may span lines (a PEM key)", () => {
@@ -381,7 +419,7 @@ test("targets: deploy needs one; the options give the name and URL, flags win; d
   await expect(old.run()).rejects.toThrow("the config's deploy: { name, url } is gone");
 });
 
-test("--env: its own env file, Worker, database, state and keys; the events secret generated once per environment", async () => {
+test("--env: its own env file, Worker, database, state and keys; the app's key and events secret made once per environment", async () => {
   const s = setup({ events: true });
   writeFileSync(join(s.dir, ".env.staging"), "GH_ID=staging-id\nGH_SECRET=staging-secret\n");
   const prod = await s.run();
@@ -391,23 +429,22 @@ test("--env: its own env file, Worker, database, state and keys; the events secr
   const [p, st] = [s.account().workers[prod.name]!.secrets, s.account().workers[staging.name]!.secrets];
   expect(st.GH_ID).toBe("staging-id");
   expect(p.GH_ID).toBe("prod-id");
-  // Each environment's keys are its own, and the app's two are printed once with the environment named.
-  for (const k of ["CONNECTD_KEY_V1", "CONNECTD_STATE_KEY", "CONNECTD_API_KEY", "CONNECTD_EVENTS_SECRET"]) expect(st[k]).not.toBe(p[k]);
-  expect(staging.eventsSecret).toBe(st.CONNECTD_EVENTS_SECRET!);
-  expect(staging.eventsSecret).toStartWith("whsec_");
+  // Each environment's keys are its own, derived under its name.
+  for (const k of ["CONNECTD_KEY_V1", "CONNECTD_STATE_KEY", "CONNECTD_ADMIN_KEY"]) expect(st[k]).not.toBe(p[k]);
+  expect(st.CONNECTD_ADMIN_KEY).toBe((await deploymentKeys(ROOT, "staging")).CONNECTD_ADMIN_KEY!);
+  expect(staging.keys!.map((k) => k.info.kind)).toEqual(["api", "events"]);
+  const secret = staging.keys![1]!.key;
+  expect(secret).toStartWith("whsec_");
   expect(s.lines.join("\n")).toContain(`your app's env for staging`);
-  expect(s.lines.join("\n")).toContain(`CONNECTD_EVENTS_SECRET=${staging.eventsSecret}   (shown once`);
+  expect(s.lines.join("\n")).toContain(`CONNECTD_EVENTS_SECRET=${secret}   (new: shown once`);
   expect(existsSync(join(s.dir, ".connectd", "deploy", "state.staging.json"))).toBe(true);
-  // Again: nothing regenerated; --rotate events makes a new one, shown once.
+  expect(Object.keys(JSON.parse(readFileSync(join(s.dir, ".connectd", "environments.json"), "utf8"))).sort()).toEqual(["production", "staging"]);
+  // Again: nothing made; --rotate events points at connectd keys roll.
   const again = await s.run({ envFile: undefined, environment: "staging" });
   expect(again.name).toBe(staging.name);
-  expect(again.eventsSecret).toBeUndefined();
-  expect(again.apiKey).toBeUndefined();
-  const rot = await s.run({ envFile: undefined, environment: "staging", rotate: ["events"] });
-  expect(rot.eventsSecret).not.toBe(staging.eventsSecret);
-  // A set secret is the env file's to change; dev's names and bad names are refused; no file, no deploy.
-  writeFileSync(join(s.dir, ".env.staging"), `GH_ID=staging-id\nCONNECTD_EVENTS_SECRET=whsec_${btoa("s".repeat(32))}\n`);
-  await expect(s.run({ envFile: undefined, environment: "staging", rotate: ["events"] })).rejects.toThrow(/change it there/);
+  expect(again.keys).toEqual([]);
+  await expect(s.run({ envFile: undefined, environment: "staging", rotate: ["events"] })).rejects.toThrow("connectd keys roll");
+  // Dev's names and bad names are refused; no file, no deploy.
   await expect(s.run({ envFile: undefined, environment: "development" })).rejects.toThrow(/is dev's/);
   await expect(s.run({ envFile: undefined, environment: "Staging!" })).rejects.toThrow(/lowercase/);
   await expect(s.run({ envFile: undefined, environment: "preview" })).rejects.toThrow(/no \.env\.preview/);

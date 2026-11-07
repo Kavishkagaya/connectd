@@ -3,17 +3,21 @@ import { hmacHex } from "@kavishkagaya/connectd-connections";
 import { env } from "cloudflare:workers";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { cloudflarePlatform } from "@kavishkagaya/connectd-kernel/do";
-import worker, { OPTS } from "./worker.ts";
+import { ADMIN_TTL_MS, token } from "../src/access.ts";
+import worker, { adminKey, OPTS, seed, TEST_KEY } from "./worker.ts";
 
 const e = env as unknown as { INDEX: D1Database; MIGRATIONS: D1Migration[] };
-beforeEach(() => applyD1Migrations(e.INDEX, e.MIGRATIONS));
+beforeEach(async () => {
+  await applyD1Migrations(e.INDEX, e.MIGRATIONS);
+  await seed(cloudflarePlatform(env as unknown as Record<string, unknown>, OPTS));
+});
 const index = () => cloudflarePlatform(env as unknown as Record<string, unknown>, OPTS).db.connections;
 afterEach(() => reset()); // wipe DO storage, D1 and instances between tests
 
 const req = async (method: string, path: string, body?: unknown) => {
   const r = new Request(`https://oc.test${path}`, {
     method,
-    headers: { authorization: "Bearer secret" },
+    headers: { authorization: `Bearer ${TEST_KEY}` },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   const res = await worker.fetch(r, env as unknown as Record<string, unknown>);
@@ -103,4 +107,25 @@ test("cloudflare: webhooks per connection and app-level (D1 lookup, fan-out to e
     );
   };
   expect([await outbox("k1"), await outbox("k2"), await outbox("k3")]).toEqual([3, 2, 1]);
+});
+
+test("cloudflare: keys in D1 through /admin: make one, call with it, roll, revoke", async () => {
+  const admin = async (path: string, body?: unknown) => {
+    const r = new Request(`https://oc.test${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { authorization: `Admin ${await token(await adminKey(), "admin", OPTS.now(), ADMIN_TTL_MS)}` },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    const res = await worker.fetch(r, env as unknown as Record<string, unknown>);
+    return { status: res.status, body: (await res.json()) as any };
+  };
+  const as = async (k: string) => (await worker.fetch(new Request("https://oc.test/connections/keyed/x", { headers: { authorization: `Bearer ${k}` } }), env as unknown as Record<string, unknown>)).status;
+  const made = await admin("/admin/keys", { name: "web" });
+  expect(made.status).toBe(201);
+  expect(await as(made.body.key)).toBe(404);
+  const rolled = await admin(`/admin/keys/${made.body.info.id}/roll`, {});
+  expect(await as(rolled.body.key)).toBe(404);
+  expect((await admin(`/admin/keys/${made.body.info.id}/revoke`, {})).body.status).toBe("revoked");
+  expect(await as(rolled.body.key)).toBe(401);
+  expect((await admin("/admin/keys")).body.map((k: { name: string }) => k.name).sort()).toEqual(["test", "web"]);
 });

@@ -3,6 +3,7 @@ import { apiKey, defineConnection } from "@kavishkagaya/connectd-connections";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory, memoryDb } from "@kavishkagaya/connectd-kernel/memory";
 import { directory, type Extension, type Index, runtime } from "./index.ts";
+import { BEARER, seed } from "./testkit.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 
@@ -25,13 +26,14 @@ async function setup(index: Index = memoryIndex(), extra: Extension[] = []) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { keyed: null, plain: null },
   };
   const rt = runtime({ definitions: { keyed, plain }, settings: async () => settings, extensions: [directory(), ...extra] });
-  const w = memory(rt.program, { db: { connections: index } });
-  const req = async (method: string, path: string, body?: Json, auth = "Bearer secret") => {
+  const w = memory(rt.program, { db: { ...memoryDb(), connections: index } });
+  await seed(w.platform, settings);
+  const req = async (method: string, path: string, body?: Json, auth: string = BEARER) => {
     const res = await rt.fetch(
       new Request(`https://oc.test${path}`, { method, headers: { authorization: auth }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }),
       w.platform,

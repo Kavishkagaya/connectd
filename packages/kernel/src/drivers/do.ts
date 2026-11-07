@@ -1,20 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import {
-  after,
-  allPages,
-  type Atom,
-  type ConnectionRow,
-  type Handler,
-  type Json,
-  LIMITS,
-  type Management,
-  PAGE,
-  page,
-  type Platform,
-  type Program,
-  Unavailable,
-  within,
-} from "../platform.ts";
+import { type Atom, type Handler, type Json, LIMITS, type Management, type Platform, type Program, Unavailable, within } from "../platform.ts";
+import { sqlDb } from "./sql.ts";
 
 export { LIMITS };
 
@@ -242,67 +228,11 @@ export function durableObject(program: Program, opts: CloudflareOptions): Progra
   };
 }
 
-type D1Row = { def: string; id: string; state: string; reason: string | null; external: string; created_at: number; updated_at: number; version: number };
-
-/** The management database on D1 (schema: `migrations/`). `db` is read on each use, from the env the platform was built with. */
+/** The management database on D1 (schema: `migrations/`), through the shared SQL. `db` is read on each use, from the env the platform was built with. */
 function d1(db: () => D1Database): Management {
-  const list: Management["connections"]["list"] = async (q) => {
-    // Only the clauses asked for, so SQLite picks the matching index (external lookups start from connection_external).
-    const where: string[] = [];
-    const args: (string | number)[] = [];
-    const and = (sql: string, ...a: (string | number)[]) => (where.push(sql), args.push(...a));
-    if (q.def) and("c.def = ?", q.def);
-    if (q.state) and("c.state = ?", q.state);
-    if (q.external) and("(c.def, c.id) IN (SELECT def, id FROM connection_external WHERE key = ? AND value = ?)", q.external.key, q.external.value);
-    // ponytail: substring search scans; add FTS5 over id + external values when lists get big.
-    if (q.q)
-      and(
-        "(instr(lower(c.id), lower(?)) > 0 OR EXISTS (SELECT 1 FROM connection_external x WHERE x.def = c.def AND x.id = c.id AND instr(lower(x.value), lower(?)) > 0))",
-        q.q,
-        q.q,
-      );
-    if (q.cursor) and("(c.def, c.id) > (?, ?)", ...after(q.cursor));
-    const { results } = await db()
-      .prepare(`SELECT * FROM connections c ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY c.def, c.id LIMIT ?`)
-      .bind(...args, (q.limit ?? PAGE) + 1)
-      .all<D1Row>();
-    const rows: ConnectionRow[] = results.map((r) => ({
-      def: r.def,
-      id: r.id,
-      state: r.state,
-      reason: r.reason,
-      external: JSON.parse(r.external) as Record<string, string>,
-      createdAt: r.created_at,
-      updatedAt: r.updated_at,
-      version: r.version,
-    }));
-    return page(rows, q);
-  };
-  return {
-    connections: {
-      async upsert(r) {
-        const conn = "(SELECT version FROM connections WHERE def = ?1 AND id = ?2) = ?3";
-        // One batch is one transaction. The external pairs follow the row only if this write won.
-        await db().batch([
-          db()
-            .prepare(
-              `INSERT INTO connections (def, id, state, reason, external, created_at, updated_at, version) VALUES (?1, ?2, ?4, ?5, ?6, ?7, ?7, ?3)
-               ON CONFLICT (def, id) DO UPDATE SET state = excluded.state, reason = excluded.reason, external = excluded.external,
-                 updated_at = excluded.updated_at, version = excluded.version
-               WHERE excluded.version >= connections.version`,
-            )
-            .bind(r.def, r.id, r.version, r.state, r.reason, JSON.stringify(r.external), r.updatedAt),
-          db().prepare(`DELETE FROM connection_external WHERE def = ?1 AND id = ?2 AND ${conn}`).bind(r.def, r.id, r.version),
-          db()
-            .prepare(
-              `INSERT OR IGNORE INTO connection_external (def, key, value, id)
-               SELECT c.def, j.key, j.value, c.id FROM connections c, json_each(c.external) j WHERE c.def = ?1 AND c.id = ?2 AND c.version = ?3`,
-            )
-            .bind(r.def, r.id, r.version),
-        ]);
-      },
-      list,
-      byExternal: (def, key, value) => allPages(list, { def, external: { key, value } }),
-    },
-  };
+  return sqlDb({
+    all: async <T,>(sql: string, args: (string | number | null)[]) => (await db().prepare(sql).bind(...args).all<T>()).results,
+    run: async (sql, args) => ({ changes: (await db().prepare(sql).bind(...args).run()).meta.changes ?? 0 }),
+    batch: async (statements) => void (await db().batch(statements.map((s) => db().prepare(s.sql).bind(...s.args)))),
+  });
 }

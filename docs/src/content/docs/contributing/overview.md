@@ -30,7 +30,7 @@ Try it end to end with the examples:
 
 ```sh
 cd examples/basic
-bunx connectd init   # once: dev's keys into .env
+bunx connectd init   # once: the root key into .env
 bun run dev          # connectd dev on :8787
 ```
 

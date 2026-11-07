@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve as resolvePath } from "node:path";
 import type { DeployContext, Deployed, Env } from "@kavishkagaya/connectd";
-import { ENV, generateKeys } from "@kavishkagaya/connectd/keys";
+import { ENV } from "@kavishkagaya/connectd/keys";
 import { workdir } from "@kavishkagaya/connectd/workdir";
 import { type Generated, generate, publicUrl, workerName } from "./generate.ts";
 import type { CloudflareOptions } from "./index.ts";
@@ -16,10 +16,6 @@ import type { CloudflareOptions } from "./index.ts";
  * and nowhere else.
  */
 
-/** Keys only the Worker holds: generated here, never read from a file, never printed. */
-const GENERATED = [ENV.state, ENV.sessions, ENV.webhooks] as const;
-/** The generated key each `--rotate` name replaces. */
-const ROTATES: Record<string, string> = { [ENV.state]: "state", [ENV.sessions]: "sessions" };
 /** The JSON array in a wrangler command's stdout (anything printed before it is skipped). */
 const json = <T>(out: string) => JSON.parse(out.slice(Math.max(0, out.search(/^\s*\[/m)))) as T;
 
@@ -68,8 +64,8 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
   const bin = o.bin ?? env.CONNECTD_WRANGLER ?? (existsSync(join(o.dir, "node_modules", ".bin", "wrangler")) ? join(o.dir, "node_modules", ".bin", "wrangler") : "wrangler");
   const w = (args: string[]) => wrangler(bin, args, o.dir, env, log);
 
-  // What the Worker already has: secrets are never rotated or regenerated unless asked.
-  // Only Cloudflare's own "no such Worker" counts as new: anything else misread here would put fresh keys over live ones.
+  // What the Worker already has: how many encryption key versions it holds.
+  // Only Cloudflare's own "no such Worker" counts as new.
   const list = await w(["secret", "list", "--name", name, "--format", "json"]).catch((e: Error) => {
     if (NEW_WORKER.test(e.message)) return null;
     throw e;
@@ -80,28 +76,19 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
     );
   const have = new Set(list === null ? [] : json<{ name: string }[]>(list).map((s) => s.name));
 
-  const fresh = generateKeys();
-  const push: Record<string, string> = { ...secrets };
+  // The deployment's keys derive from the root key (#86): the same values every time, so they're all
+  // sent on every deploy. Encryption keys keep every version up to the highest; --rotate key adds one.
+  // ponytail: the version count is read from the Worker's secret names; a deleted Worker forgets it
+  // (V1 comes back): pass --rotate key once per lost version to restore them.
   const versions = [...have].flatMap((k) => (k.startsWith(ENV.key) ? [Number(k.slice(ENV.key.length))] : [])).filter(Number.isInteger);
-  if (!versions.length) push[`${ENV.key}1`] = fresh[`${ENV.key}1`] as string;
-  else if (rotate.includes("key")) push[`${ENV.key}${Math.max(...versions) + 1}`] = fresh[`${ENV.key}1`] as string;
-  for (const k of GENERATED) if (!have.has(k) || rotate.includes(ROTATES[k] ?? "")) push[k] = fresh[k] as string;
-  // Never in CI: there the key comes from a CI secret (the CLI checked it's in `secrets`).
-  const newApiKey = !o.ci && !secrets[ENV.apiKey] && (!have.has(ENV.apiKey) || rotate.includes("api-key")) ? (fresh[ENV.apiKey] as string) : undefined;
-  if (newApiKey) push[ENV.apiKey] = newApiKey;
-  // The events secret, likewise: generated once per environment unless the env file sets it (CI always does).
-  const newEventsSecret = project.events && !o.ci && !secrets[ENV.events] && (!have.has(ENV.events) || rotate.includes("events")) ? (fresh[ENV.events] as string) : undefined;
-  if (newEventsSecret) push[ENV.events] = newEventsSecret;
+  const top = Math.max(1, ...versions) + (rotate.includes("key") && versions.length ? 1 : 0);
+  const push: Record<string, string> = { ...secrets, ...(await o.keys(top)) };
 
   // The index database: found by name, so a deploy from another machine finds the same one.
   const find = async () => json<{ uuid: string; name: string }[]>(await w(["d1", "list", "--json"])).find((d) => d.name === db)?.uuid;
   let databaseId = await find();
-  // A database without its Worker: the Worker was deleted (its keys with it), or an earlier deploy
-  // stopped in between. Either way fresh keys can't open anything sealed before; say so first.
-  if (databaseId && list === null && !o.newKeys)
-    throw new Error(
-      `D1 database ${db} exists but Worker ${name} doesn't. Fresh keys can't open credentials sealed under the old ones. If an earlier deploy stopped before creating the Worker, or you mean to start over, re-run with --new-keys; to keep old connections, restore the Worker's secrets first.`,
-    );
+  // A database without its Worker (deleted, or an earlier deploy stopped in between): the derived keys come back with it.
+  if (databaseId && list === null) log(`  D1 database ${db} exists without Worker ${name}: deploying it again with the same derived keys`);
   if (!databaseId) {
     await w(["d1", "create", db]);
     databaseId = await find();
@@ -131,12 +118,6 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
       args.push("--secrets-file", join(tmp, "secrets.json"));
     }
     out = await wrangler(bin, args, o.dir, env, log, (p) => (child = p));
-  } catch (e) {
-    const hint = newApiKey
-      ? `\nThe new API key was not shown. If the deploy went through anyway (wrangler secret list --name ${name} shows ${ENV.apiKey}), re-run with --rotate api-key to get one you can see.`
-      : "";
-    const hint2 = newEventsSecret ? `\nThe new events secret was not shown either: if the deploy went through, --rotate events makes one you can see.` : "";
-    throw new Error(`${(e as Error).message}${hint}${hint2}`);
   } finally {
     process.off("SIGINT", abort);
     process.off("SIGTERM", abort);
@@ -160,11 +141,11 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
       `  URL           ${url}`,
       `  callback URL  ${url}/callback   (register this redirect URI with each OAuth provider)`,
       `  webhooks      ${url}/webhooks/:def[/:id]`,
-      ...(project.dashboard === false ? [] : [`  dashboard     ${url}/dashboard   (sign in with the API key)`]),
-      `  secrets set   ${Object.keys(push).sort().join(", ") || "none (all present)"}`,
+      ...(project.dashboard === false ? [] : [`  dashboard     ${url}/dashboard`]),
+      `  secrets set   ${Object.keys(push).sort().join(", ")}`,
     ].join("\n"),
   );
-  return { name, url, dryRun: false as const, generated: g, pushed: Object.keys(push), apiKey: newApiKey, eventsSecret: newEventsSecret };
+  return { name, url, dryRun: false as const, generated: g, pushed: Object.keys(push) };
 }
 
 /** Run wrangler; resolves to its stdout, rejects with stdout + stderr on a non-zero exit. Output is echoed except listings (it never holds a secret: those only go in through a file). */

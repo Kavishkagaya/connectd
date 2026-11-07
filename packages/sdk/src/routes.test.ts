@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { connectd } from "./client.ts";
 import { listen } from "./listen.ts";
-import { SECRET, setup } from "./testing.ts";
+import { SECRET, setup, TEST_KEY } from "./testing.ts";
 
 const APP = "https://app.test";
 
@@ -12,7 +12,7 @@ async function wired() {
   const fetch = (input: string, init: RequestInit) => t.rt.fetch(new Request(input, init), t.w.platform);
   const app = connectd({
     url: "https://oc.test",
-    apiKey: "secret",
+    apiKey: TEST_KEY,
     fetch,
     user: (req) => req.headers.get("x-user"),
     events: { secret: SECRET, now: t.w.now },
@@ -120,9 +120,9 @@ test("app route, refused: return paths off the origin (tabs and newlines too), c
 test("app route: user ids are strings without ':' (numbers are fine)", async () => {
   const t = await setup();
   const fetch = (input: string, init: RequestInit) => t.rt.fetch(new Request(input, init), t.w.platform);
-  const colon = connectd({ url: "https://oc.test", apiKey: "secret", fetch, user: () => "org:1" });
+  const colon = connectd({ url: "https://oc.test", apiKey: TEST_KEY, fetch, user: () => "org:1" });
   await expect(colon.routes.GET(new Request(`${APP}/api/connectd/connect/example`))).rejects.toThrow("user ids can't contain");
-  const numeric = connectd({ url: "https://oc.test", apiKey: "secret", fetch, user: () => 42 });
+  const numeric = connectd({ url: "https://oc.test", apiKey: TEST_KEY, fetch, user: () => 42 });
   const r = await numeric.routes.GET(new Request(`${APP}/api/connectd/connect/example`));
   expect(r.status).toBe(303);
   void (() => {

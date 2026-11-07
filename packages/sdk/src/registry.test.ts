@@ -2,7 +2,9 @@ import { expect, test } from "bun:test";
 import { type ActionCtx, action, connection, type Definition, hmacHex, type StandardSchemaV1, safeEqual } from "@kavishkagaya/connectd-connections";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { events as eventsExt, runtime, webhooks } from "@kavishkagaya/connectd-runtime";
+import { events as eventsExt, importKey, runtime, webhooks } from "@kavishkagaya/connectd-runtime";
+
+const TEST_KEY = "ock_000000000000_secret";
 import { type Client, type Connection, ConnectdError, connectd } from "./client.ts";
 import type { Entry, RegistryOf } from "./registry.ts";
 
@@ -43,14 +45,15 @@ test("typed client: ids, actions (input and output), identity and subscriptions 
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { tracker: null },
     webhooks: { url: "https://oc.test/webhooks", key: await importHmacKey(key(5)) },
   };
   const rt = runtime({ definitions: { tracker }, actions: { tracker: { open, me } }, settings: async () => settings, extensions: [webhooks()] });
   const w = memory(rt.program, { fetch: upstream });
-  const oc = connectd<R>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.platform) });
+  await importKey(w.platform, settings.keys, "api", "test", TEST_KEY);
+  const oc = connectd<R>({ url: "https://oc.test", apiKey: TEST_KEY, fetch: (input, init) => rt.fetch(new Request(input, init), w.platform) });
 
   const t = oc.connection("tracker", "u1");
   // @ts-expect-error not a connection of this project
@@ -163,15 +166,17 @@ test("typed events: webhook.<topic> from the declared topics, <action>.completed
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { board: null },
     webhooks: { url: "https://oc.test/webhooks", key: await importHmacKey(key(5)) },
-    events: { url: "https://app.test/events", secret },
+    events: { url: "https://app.test/events" },
   };
   const rt = runtime({ definitions: { board }, actions: { board: { sync, nightly, bad, unknown, broken } }, settings: async () => settings, extensions: [eventsExt(), webhooks()] });
   const w = memory(rt.program, { fetch: upstream });
-  const oc = connectd<B>({ url: "https://oc.test", apiKey: "secret", fetch: (input, init) => rt.fetch(new Request(input, init), w.platform) });
+  await importKey(w.platform, settings.keys, "api", "test", TEST_KEY);
+  await importKey(w.platform, settings.keys, "events", "test", secret);
+  const oc = connectd<B>({ url: "https://oc.test", apiKey: TEST_KEY, fetch: (input, init) => rt.fetch(new Request(input, init), w.platform) });
   const ev = oc.events({ secret, now: w.now });
   deliver = (req) => ev.handle(req);
 

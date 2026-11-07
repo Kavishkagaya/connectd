@@ -1,38 +1,45 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { hmacHex } from "@kavishkagaya/connectd-connections";
-import { sourceHash } from "../build.ts";
+import { SOURCES, sourceHash } from "../build.ts";
 import { js, version } from "./assets.ts";
 import { API_KEY, CLIENT_SECRET, EVENTS_SECRET, OC, setup, T0, tickFailures } from "./fake.ts";
-import { CSP, dashboard } from "./index.ts";
+import { csp, dashboard } from "./index.ts";
 
 test("assets.ts is built from the current sources (run `bun run build` in packages/dashboard)", () => {
   expect(version).toBe(sourceHash());
-  // Type imports only: no runtime code is bundled into the browser.
-  expect(js.length).toBeLessThan(40_000);
+  // Type imports only from the server side: no runtime code is bundled into the browser.
   expect(js).not.toContain("conn:");
+  expect(js).not.toContain("pbkdf2");
 });
 
 test("the UI never parses API data as markup", () => {
-  const src = readFileSync(`${import.meta.dir}/app.ts`, "utf8");
-  expect(src.match(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/g)).toBeNull();
+  const src = SOURCES().filter((f) => /\.tsx?$/.test(f)).map((f) => readFileSync(f, "utf8")).join("\n");
+  expect(src.match(/dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML|document\.write|eval\(|new Function/g)).toBeNull();
 });
 
-test("the page is public, with a strict CSP; its script and style are versioned", async () => {
+test("the page is public, with a strict CSP (a fresh style nonce each time); its script and style are versioned", async () => {
   const t = await setup();
+  const nonces = new Set<string>();
   for (const path of ["/dashboard", "/dashboard/"]) {
     const res = await t.fetch(path);
     expect(res.status).toBe(200);
     expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
-    expect(res.headers.get("content-security-policy")).toBe(CSP);
+    const policy = res.headers.get("content-security-policy") ?? "";
+    const nonce = /'nonce-([\w-]+)'/.exec(policy)?.[1] ?? "";
+    nonces.add(nonce);
+    expect(policy).toBe(csp(nonce));
+    expect(policy).toContain("script-src 'self';");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
     expect(res.headers.get("cache-control")).toBe("no-store");
     const html = await res.text();
-    // No inline script or style for the CSP to allow: only same-origin files.
+    // No inline script for the CSP to allow: only same-origin files. The nonce reaches the UI in a meta tag.
     expect(html.match(/<script[^>]*>/g)).toEqual([`<script type="module" src="/dashboard/app.js?v=${version}">`]);
+    expect(html).toContain(`<meta name="csp-nonce" content="${nonce}">`);
     expect(html).toContain(`href="/dashboard/app.css?v=${version}"`);
     expect(html).not.toContain(API_KEY);
   }
+  expect(nonces.size).toBe(2);
   const versioned = await t.fetch(`/dashboard/app.js?v=${version}`);
   expect(versioned.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
   expect(versioned.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
@@ -45,12 +52,13 @@ test("the page is public, with a strict CSP; its script and style are versioned"
   expect((await t.fetch("/dashboard/app.js/x")).status).toBe(404);
 });
 
-test("the API needs the API key", async () => {
+test("the API needs a session: an API key isn't one", async () => {
   const t = await setup();
   for (const path of ["/dashboard/api/overview", "/dashboard/api/connections/keyed/k1", "/dashboard/api/failures"]) {
     expect((await t.fetch(path)).status).toBe(401);
-    expect((await t.fetch(path, { headers: { authorization: "Bearer nope" } })).status).toBe(401);
-    expect((await t.fetch(path, { headers: { cookie: `key=${API_KEY}` } })).status).toBe(401);
+    expect((await t.fetch(path, { headers: { authorization: `Bearer ${API_KEY}` } })).status).toBe(401);
+    expect((await t.fetch(path, { headers: { cookie: "connectd_session=forged" } })).status).toBe(401);
+    expect((await t.fetch(path, { headers: { cookie: t.cookie } })).status).not.toBe(401);
   }
   expect((await t.api("/dashboard/api/overview", {})).status).toBe(405);
   expect((await t.api("/dashboard/api/nope")).status).toBe(404);

@@ -3,7 +3,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFi
 import { dirname, join, relative } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { parseEnv } from "./env.ts";
-import { generateKeys } from "./keys.ts";
+import { ENV, newRootKey } from "./keys.ts";
 import { CONFIG_FILES, loadProject } from "./load.ts";
 import { workdir } from "./workdir.ts";
 
@@ -11,20 +11,21 @@ import { workdir } from "./workdir.ts";
 const PORT = 8787;
 
 /**
- * `connectd init` (#54): sets up dev, the one explicit step that makes its keys. In the app's
+ * `connectd init` (#54): sets up dev, the one explicit step that makes the root key. In the app's
  * directory it writes, never overwriting what's there:
  *
- *   .env               the runtime's generated keys, CONNECTD_URL (where dev runs) and APP_URL (the
- *                      app's origin): the one file the app and connectd share
- *   .gitignore         `.env`, since it holds the keys now
+ *   .env               the project's root key (CONNECTD_ROOT_KEY, #86: every environment's keys
+ *                      derive from it), CONNECTD_URL (where dev runs) and APP_URL (the app's origin):
+ *                      the one file the app and connectd share. `connectd dev` adds the app's dev
+ *                      API key (and events secret) itself.
+ *   .gitignore         `.env`, since it holds the root key now
  *   oc.config.ts       sessions.origins and events.url from env.APP_URL; connections in <src>/oc/;
  *                      the deploy target (`--target`, asked in a terminal), its packages installed
  *   <src>/lib/oc.ts    the client: connectd({ user, listeners })
  *   app/api/connectd/[...path]/route.ts   oc.routes, for a Next.js app (App Router)
  *
- * Keys a `connectd dev` from before kept in .connectd/dev.vars are moved over, so sealed
- * credentials stay readable. `dev` only reads .env; each deployed environment gets its own keys from
- * `deploy`.
+ * The root key is made once and never changes: a teammate copies it into their .env, CI holds it as
+ * a secret. init never overwrites one.
  */
 
 /**
@@ -56,25 +57,6 @@ export type InitOptions = {
   run?: (cmd: string, args: string[], cwd: string) => number;
   log?: (line: string) => void;
 };
-
-const VERSIONED = /^CONNECTD_KEY_V\d+$/;
-
-/**
- * The generated keys this project lacks (a name set to "" counts as missing). First every one an
- * older dev kept in .connectd/dev.vars (it ran with dev.vars under .env, so that's the set it sealed
- * with, every key version included), then fresh ones; no V1 when any key version is set.
- */
-function keysFor(dir: string, have: Record<string, string>): { keys: Record<string, string>; moved: number } {
-  const legacy = join(workdir(dir), "dev.vars");
-  const old = existsSync(legacy) ? parseEnv(readFileSync(legacy, "utf8")) : {};
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(old)) if (v && !have[k] && k.startsWith("CONNECTD_")) out[k] = v;
-  const moved = Object.keys(out).length;
-  const set = (k: string) => !!(have[k] || out[k]);
-  const versions = [...Object.keys(have), ...Object.keys(out)].some((k) => VERSIONED.test(k) && set(k));
-  for (const [k, v] of Object.entries(generateKeys())) if (!set(k) && !(VERSIONED.test(k) && versions)) out[k] = v;
-  return { keys: out, moved };
-}
 
 /** Whether git ignores `file` (parent .gitignores and negations included); outside a repo, the directory's own .gitignore. */
 function ignored(dir: string, file: string): boolean {
@@ -166,31 +148,35 @@ export async function init(o: InitOptions): Promise<void> {
     origin = new URL(appUrl).origin;
   } catch {}
   if (origin !== appUrl || !/^https?:/.test(appUrl)) throw new Error(`${from} must be an origin like http://localhost:3000 (${appUrl})`);
-  const { keys, moved } = keysFor(dir, have);
-  // Ignore rules don't apply to a tracked file: keys written there would go out with the next commit.
-  if (Object.keys(keys).length && spawnSync("git", ["ls-files", "--error-unmatch", ".env"], { cwd: dir }).status === 0)
-    throw new Error("`.env` is tracked by git, so the keys would be committed: `git rm --cached .env`, commit, then connectd init again");
+  const root = have[ENV.root] ? null : newRootKey();
+  // Ignore rules don't apply to a tracked file: a key written there would go out with the next commit.
+  if (root && spawnSync("git", ["ls-files", "--error-unmatch", ".env"], { cwd: dir }).status === 0)
+    throw new Error("`.env` is tracked by git, so the root key would be committed: `git rm --cached .env`, commit, then connectd init again");
   const lines = [
     ...(have.APP_URL ? [] : ["# Your app's origin: oc.config.ts builds sessions.origins and events.url from it.", `APP_URL=${appUrl}`]),
     ...(have.CONNECTD_URL ? [] : ["# Where `connectd dev` runs: the app's client calls it.", `CONNECTD_URL=http://localhost:${port}`]),
-    ...(Object.keys(keys).length
-      ? ["# connectd's dev keys (connectd init): local only, never commit. Deployed environments get their own.", ...Object.entries(keys).map(([k, v]) => `${k}=${v}`)]
+    ...(root
+      ? [
+          "# The project's root key (connectd init): every environment's keys derive from it, and it never",
+          "# changes. Never commit it; keep a copy in your password manager, give CI the same one as a secret.",
+          `${ENV.root}=${root}`,
+        ]
       : []),
   ];
   if (lines.length) {
     if (before) appendFileSync(envFile, `${before.endsWith("\n") ? "" : "\n"}\n${lines.join("\n")}\n`);
     else writeFileSync(envFile, `${lines.join("\n")}\n`, { mode: 0o600 });
-    // It holds keys now: owner only, even if others could read it before.
-    if (Object.keys(keys).length)
+    // It holds the root key now: owner only, even if others could read it before.
+    if (root)
       try {
         chmodSync(envFile, 0o600);
       } catch {
-        log("  couldn't make .env owner only (chmod 600 .env): it holds keys now");
+        log("  couldn't make .env owner only (chmod 600 .env): it holds the root key now");
       }
     wrote.push(".env");
   } else kept.push(".env");
 
-  // .env holds the keys now: never committed.
+  // .env holds the root key now: never committed.
   if (!ignored(dir, ".env")) {
     const gi = join(dir, ".gitignore");
     const ignores = existsSync(gi) ? readFileSync(gi, "utf8") : "";
@@ -260,7 +246,7 @@ ${target ? `  target: ${TARGETS[target].call(name)},\n` : ""}  events: { url: \`
     `import { connectd } from "@kavishkagaya/connectd/sdk";
 import { listeners } from "${spec(client, join(workdir(dir), "app.ts"))}";
 
-// CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET come from .env (connectd init wrote them);
+// CONNECTD_URL, CONNECTD_API_KEY and CONNECTD_EVENTS_SECRET come from .env (connectd dev writes the keys);
 // in production, from your host's environment.
 export const oc = connectd({
   // The signed-in user's id, from your auth (a session cookie, a header); null when nobody is signed in.
@@ -294,7 +280,7 @@ export const oc = connectd({
   const done = [
     wrote.length ? `wrote ${wrote.join(", ")}` : "nothing to write: already set up",
     kept.length ? `  kept ${kept.join(", ")} (already there)` : "",
-    moved ? "  the keys from .connectd/dev.vars are in .env now (dev doesn't read it any more; deploy still refuses its values)" : "",
+    root ? `  ${ENV.root} is in .env: keep a copy in your password manager (it can't be recovered); CI needs it as a secret` : "",
     o.appUrl !== undefined && have.APP_URL && have.APP_URL !== appUrl ? `  --app-url ignored: .env already has APP_URL=${have.APP_URL}` : "",
     o.port !== undefined && have.CONNECTD_URL ? `  --port ignored: .env already has CONNECTD_URL=${have.CONNECTD_URL}` : "",
     installFailed ? `  the install failed: run ${installFailed} yourself` : "",

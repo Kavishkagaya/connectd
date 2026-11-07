@@ -13,17 +13,17 @@ account, and a call through the connection (the user's repositories).
 bun install                 # at the repo root
 cd examples/nextjs
 cp .env.example .env        # fill GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET
-bunx connectd init          # once: dev's keys and CONNECTD_URL into .env
+bunx connectd init          # once: the root key and CONNECTD_URL into .env
 bun run dev:connectd        # connectd dev on :8787
 bun run dev                 # next dev on :3000
 ```
 
 The app reads `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` from `.env`, where
-`connectd init` wrote them with the runtime's other dev keys. A new app gets the rest from it too:
+`connectd init` and `connectd dev` wrote them. A new app gets the rest from it too:
 `oc.config.ts`, `src/lib/oc.ts` and the route.
 
 3. Open http://localhost:3000, sign in with any name, click **Connect GitHub**, and approve.
-   The dashboard is at http://localhost:8787/dashboard (sign in with the API key).
+   `bunx connectd dashboard` opens the dashboard at http://localhost:8787/dashboard, signed in.
 
 `APP_URL` in `.env` is the app's origin; `oc.config.ts` builds `sessions.origins` and `events.url`
 from it, so it's written once.

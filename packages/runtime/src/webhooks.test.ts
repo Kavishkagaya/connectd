@@ -3,6 +3,7 @@ import { apiKey, defineConnection, hmacHex, type StandardSchemaV1, safeEqual } f
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { type ConnectionEvent, directory, events, MAX_PAYLOAD, runtime, type WebhookEvent, webhooks } from "./index.ts";
+import { BEARER, seed } from "./testkit.ts";
 
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
 const T0 = 1_700_000_000_000;
@@ -102,11 +103,11 @@ async function setup(o: { events?: boolean; down?: string } = {}) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { hooked: { appSecret: "app" }, subbed: { appSecret: "app" }, plain: null },
     webhooks: { url: "https://oc.test/webhooks/", key: await importHmacKey(key(5)) },
-    ...(o.events === false ? {} : { events: { url: "https://app.test/events", secret: `whsec_${key(7)}` } }),
+    ...(o.events === false ? {} : { events: { url: "https://app.test/events" } }),
   };
   let w: ReturnType<typeof memory> | undefined;
   const rt = runtime({
@@ -115,13 +116,14 @@ async function setup(o: { events?: boolean; down?: string } = {}) {
     extensions: [events(), directory(), webhooks()],
   });
   w = memory(rt.program, { fetch: upstream, now: T0 });
+  await seed(w.platform, settings, `whsec_${key(7)}`);
   const send = async (method: string, path: string, body: string, headers: Record<string, string> = {}) => {
     // `down`: that instance's DO throws on receive (a fan-out failure).
     const call = (i: string, m: string, a: Json) => (i === o.down && m === "webhooks.receive" ? Promise.reject(new Error("DO down")) : w!.call(i, m, a));
     const res = await rt.fetch(new Request(`https://oc.test${path}`, { method, headers, body }), { ...w!.platform, atoms: { ...w!.platform.atoms, call } });
     return { status: res.status, body: (await res.json()) as any };
   };
-  const api = (path: string, body: Json = null) => send("POST", path, JSON.stringify(body), { authorization: "Bearer secret" });
+  const api = (path: string, body: Json = null) => send("POST", path, JSON.stringify(body), { authorization: BEARER });
   /** A provider POST signed with `secret`. */
   const hook = async (path: string, payload: Json, secret: string) => {
     const body = JSON.stringify(payload);

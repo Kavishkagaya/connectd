@@ -31,10 +31,10 @@ const rt = runtime({
   settings: async () => ({
     keys: await importKeys({ 1: env.CONNECTD_KEY_V1 }, 1),
     stateKey: await importHmacKey(env.CONNECTD_STATE_KEY),
-    apiKey: env.CONNECTD_API_KEY,
+    admin: await importHmacKey(env.CONNECTD_ADMIN_KEY),
     redirectUri: "https://connect.example.com/callback",
     config: { github: { clientId: env.GITHUB_CLIENT_ID, clientSecret: env.GITHUB_CLIENT_SECRET } },
-    events: { url: "https://app.example.com/api/connectd/events", secret: env.CONNECTD_EVENTS_SECRET },
+    events: { url: "https://app.example.com/api/connectd/events" },
     webhooks: { url: "https://connect.example.com/webhooks", key: await importHmacKey(env.CONNECTD_WEBHOOKS_KEY) },
     sessions: { key: await importHmacKey(env.CONNECTD_SESSIONS_KEY), origins: ["https://app.example.com"] },
   }),
@@ -59,6 +59,8 @@ export default { fetch: cf.fetch };
 }
 ```
 
+The keys are yours to make here: random 32-byte values, base64, or the ones `deploymentKeys(root, environment)` from `@kavishkagaya/connectd/keys` derives (what `connectd deploy` sends), so `connectd keys` and `connectd dashboard --url` work against this Worker too.
+
 Leaving out an extension turns its feature off. Each built-in one is also a no-op until its settings are present (no `events` setting, no deliveries). Using `connectd deploy --dry-run` and reading `.connectd/deploy/` is a quick way to see a working Worker entry and config.
 
 ### Settings
@@ -67,10 +69,10 @@ Leaving out an extension turns its feature off. Each built-in one is also a no-o
 | --- | --- |
 | `keys` | Sealing credentials. `importKeys({ 1: k1, 2: k2 }, 2)`: the second argument is the current version. |
 | `stateKey` | OAuth `state` and tickets |
-| `apiKey` | Bearer auth on non-public routes |
+| `admin` | Signed tokens: CLI requests to `/admin`, dashboard sign-in links, sessions. API keys themselves are in the management database (make the first one through `/admin`, or `connectd keys --url`). |
 | `redirectUri` | `<public URL>/callback`, registered with providers |
 | `config` | Connector config per definition id. `null` for definitions without config (API keys). |
-| `events?` | `{ url, secret }`: event delivery |
+| `events?` | `{ url }`: event delivery, signed with the database's events secrets |
 | `webhooks?` | `{ url, key }`: the ingress URL, and the key per-connection secrets derive from |
 | `sessions?` | `{ key, origins }`: the browser connect UI |
 

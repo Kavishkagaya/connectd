@@ -77,7 +77,7 @@ try {
 | `upstream_error` | 502 | The network failed reaching the provider. |
 | `not_configured` | 503 | The connection's config (its env names) isn't set in this deployment. |
 | `not_found` | 404 | Unknown definition, or the definition has no `.api()`. |
-| `unauthorized` | 401 | Wrong `CONNECTD_API_KEY`. |
+| `unauthorized` | 401 | Wrong, revoked or rolled-past `CONNECTD_API_KEY`. |
 
 ### Retrying rate limits
 

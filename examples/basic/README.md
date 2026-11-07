@@ -6,8 +6,9 @@ A user project: `oc.config.ts`, and one folder per connection in `src/oc/` (`con
 
 ```sh
 cp .env.example .env      # one file for your app and connectd
-bunx connectd init        # once: dev's keys and CONNECTD_URL into .env (the rest is already here)
-bun run dev               # connectd dev; only the names the connections read reach the runtime
+bunx connectd init        # once: the root key and CONNECTD_URL into .env (the rest is already here)
+bun run dev               # connectd dev; writes the app's dev API key into .env; only the names the connections read reach the runtime
+bunx connectd dashboard   # the dashboard, signed in
 ```
 
 A provider can also be copied in as source, yours to edit (`connectd add` lists them):
@@ -50,21 +51,22 @@ export const { GET, POST } = oc.routes;
 cp .env.production.example .env.production
 bun run deploy            # connectd deploy: prints the secrets it sends (names only), then your app's env:
                           #   CONNECTD_URL=https://basic.<you>.workers.dev
-                          #   CONNECTD_API_KEY=oc_...   (shown once)
-                          #   CONNECTD_EVENTS_SECRET=whsec_...   (shown once, when events are on)
+                          #   CONNECTD_API_KEY=ock_...   (new: shown once)
+                          #   CONNECTD_EVENTS_SECRET=whsec_...   (new: shown once, when events are on)
+bunx connectd keys --env production        # the keys, made and rolled without redeploying
+bunx connectd dashboard --env production   # the deployed dashboard, signed in
 ```
 
-Each environment is its own deployment with its own keys: `connectd deploy --env staging` reads
+Each environment is its own deployment with its own keys (derived from the root key in `.env`): `connectd deploy --env staging` reads
 `.env.staging` (that environment's provider credentials, e.g. a GitHub OAuth app with the staging
 callback URL), deploys the `basic-staging` Worker and database, and prints staging's app env.
 `cloudflare({ environments: { staging: { name, url } } })` names its Worker or URL otherwise.
 
 ## Deploy from CI (GitHub Actions)
 
-In CI, deploy reads the shell environment (your CI secrets), and the API key comes from a secret too:
-it never generates or prints one there. Make the two values that are yours once, with
-`bunx connectd keys`, and put them in the repository's secrets and in your app's host, next to
-the provider credentials and a Cloudflare API token.
+In CI, deploy reads the shell environment (your CI secrets). The project's root key is one of them,
+next to the provider credentials and a Cloudflare API token: the deployment's keys derive from it.
+Deploy once by hand to get the app's API key, or make one with `bunx connectd keys create app --env production`.
 
 ```yaml
 # .github/workflows/connectd.yml
@@ -83,8 +85,7 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          CONNECTD_API_KEY: ${{ secrets.CONNECTD_API_KEY }}
-          CONNECTD_EVENTS_SECRET: ${{ secrets.CONNECTD_EVENTS_SECRET }}
+          CONNECTD_ROOT_KEY: ${{ secrets.CONNECTD_ROOT_KEY }}
           GITHUB_CLIENT_ID: ${{ secrets.OAUTH_GITHUB_CLIENT_ID }}
           GITHUB_CLIENT_SECRET: ${{ secrets.OAUTH_GITHUB_CLIENT_SECRET }}
 ```

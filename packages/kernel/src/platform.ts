@@ -121,7 +121,100 @@ export interface Management {
     byExternal(def: string, key: string, value: string): Promise<ConnectionRow[]>;
   };
   // ponytail: no delete; connections are never deleted (revoked is terminal). Add one with a purge/GC.
+
+  /**
+   * The deployment's keys (#86): API keys (the app's Bearer credential: only a digest is stored) and
+   * events signing secrets (sealed, since connectd signs with them). Revoked keys stay, for the record.
+   */
+  keys: {
+    /** Insert. False when the id is taken. */
+    create(row: KeyRow): Promise<boolean>;
+    get(id: string): Promise<KeyRow | null>;
+    /** Every key, revoked ones included, oldest first. ponytail: no pages; a deployment has a handful. */
+    list(): Promise<KeyRow[]>;
+    /** A new value for a live key; the old one stays valid until `previousUntil` (`at` or earlier: not at all). Null when there's no live key `id`. */
+    roll(id: string, value: string, previousUntil: number, at: number): Promise<KeyRow | null>;
+    /** Null when there's no live key `id`. */
+    revoke(id: string, at: number): Promise<KeyRow | null>;
+    /** `lastUsedAt = at`, never backwards. */
+    used(id: string, at: number): Promise<void>;
+  };
+
+  /** Dashboard accounts (#86): who signs in to `/dashboard`, besides a link signed by the CLI. */
+  accounts: {
+    /** Insert. False when the username is taken. */
+    create(row: AccountRow): Promise<boolean>;
+    get(username: string): Promise<AccountRow | null>;
+    /** Oldest first. */
+    list(): Promise<AccountRow[]>;
+    /** Set or clear (null) the password hash. False when there's no such account. */
+    password(username: string, hash: string | null): Promise<boolean>;
+    /** `sessions + 1`: every session issued before stops working. The new count, or null when there's no such account. */
+    signOut(username: string): Promise<number | null>;
+    /** The account and its passkeys. False when there was none. */
+    delete(username: string): Promise<boolean>;
+  };
+
+  /** Dashboard accounts' passkeys (WebAuthn credentials), by credential id. */
+  passkeys: {
+    /** Insert. False when the credential id is taken. */
+    add(row: PasskeyRow): Promise<boolean>;
+    get(id: string): Promise<PasskeyRow | null>;
+    /** One account's, oldest first. */
+    list(username: string): Promise<PasskeyRow[]>;
+    /** After a sign-in: the authenticator's signature counter, and when. */
+    used(id: string, counter: number, at: number): Promise<void>;
+    delete(id: string): Promise<boolean>;
+  };
+
+  /** One-time values (login links, invites, admin requests): each can be claimed once until it expires. */
+  nonces: {
+    /** Record `nonce` until `expiresAt`. False when it's already recorded. Expired ones may be dropped (`now`). */
+    claim(nonce: string, expiresAt: number, now: number): Promise<boolean>;
+  };
 }
+
+/** An API key (the app calls with it) or an events signing secret (connectd signs events with it). */
+export type KeyKind = "api" | "events";
+
+export type KeyRow = {
+  /** Public: shown in lists, part of an API key (`ock_<id>_<secret>`). */
+  id: string;
+  kind: KeyKind;
+  name: string;
+  /** API key: the secret's SHA-256 (base64url). Events secret: the secret, sealed. */
+  value: string;
+  /** The value before the last roll, valid until `previousUntil`. */
+  previous: string | null;
+  previousUntil: number | null;
+  createdAt: number;
+  rolledAt: number | null;
+  revokedAt: number | null;
+  lastUsedAt: number | null;
+};
+
+export type AccountRow = {
+  username: string;
+  /** PBKDF2 hash (`pbkdf2-sha256$<iterations>$<salt>$<hash>`), or null: passkeys only. */
+  password: string | null;
+  /** Session generation: a session cookie names the one it was issued under. */
+  sessions: number;
+  createdAt: number;
+};
+
+export type PasskeyRow = {
+  /** The credential id (base64url). */
+  id: string;
+  username: string;
+  /** SubjectPublicKeyInfo DER, base64url. */
+  publicKey: string;
+  /** COSE algorithm: -7 (ES256) or -257 (RS256). */
+  alg: number;
+  counter: number;
+  name: string;
+  createdAt: number;
+  lastUsedAt: number | null;
+};
 
 export type ConnectionRow = {
   def: string;

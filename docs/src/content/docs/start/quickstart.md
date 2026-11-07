@@ -61,14 +61,14 @@ It asks where connectd runs when you deploy. Pick Cloudflare Workers and it inst
 `init` writes only what's missing and never overwrites:
 
 ```text
-.env                                    keys for dev, CONNECTD_URL, APP_URL
-.gitignore                              adds .env (it holds keys now)
+.env                                    the root key, CONNECTD_URL, APP_URL
+.gitignore                              adds .env (it holds the root key now)
 oc.config.ts                            the project config
 src/lib/oc.ts                           the client
 src/app/api/connectd/[...path]/route.ts one route: connect, return, events
 ```
 
-`.env` is shared: your app reads `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` from it, and `connectd dev` reads the rest.
+`.env` is shared: your app reads `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` from it (`connectd dev` writes the two keys on its first run), and `connectd dev` reads the rest. Keep a copy of `CONNECTD_ROOT_KEY` in your password manager: every environment's keys derive from it.
 
 ## 4. Add GitHub
 

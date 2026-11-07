@@ -1,4 +1,8 @@
 import { expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { migrate, sqliteDb } from "./sqlite.ts";
 import type { Handler, Json, Program } from "../platform.ts";
 import { memory, type MemoryOptions } from "./memory.ts";
 import { PARITY_ENV, parity, platformParity, probe, type World } from "./parity.ts";
@@ -69,4 +73,14 @@ test("memory: a synchronously throwing timer doesn't stop later ones (fake clock
   await Bun.sleep(40);
   expect(fired).toEqual(["after", "again"]);
   await r.stop();
+});
+
+// The same suite with the management database on SQLite (dev's `.connectd/dev.db`), the same SQL as D1.
+const migrations = readdirSync(join(import.meta.dir, "../../migrations")).map((name) => ({ name, sql: readFileSync(join(import.meta.dir, "../../migrations", name), "utf8") }));
+platformParity("memory + sqlite", () => world({ db: sqliteDb(new Database(":memory:"), migrations) }), { test, expect });
+
+test("sqlite: migrations apply once, by name", () => {
+  const db = new Database(":memory:");
+  expect(migrate(db, migrations)).toEqual(["0001_index.sql", "0002_access.sql"]);
+  expect(migrate(db, migrations)).toEqual([]);
 });

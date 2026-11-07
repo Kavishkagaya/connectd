@@ -26,7 +26,7 @@ flowchart TB
 import type { Extension } from "@kavishkagaya/connectd/runtime";
 
 type Extension = {
-  /** Worker routes, keyed by first path segment: { audit: … } serves /audit/*. API key required unless public. */
+  /** Worker routes, keyed by first path segment: { audit: … } serves /audit/*. API key (or a dashboard session) required unless public. */
   routes?: Record<string, { public?: boolean; fetch(req: Request, api: Api, path: string[]): Promise<Response> }>;
   /** Per connection: called once per instance, next to the lifecycle. */
   connection?(h: Hosted): {

@@ -2,7 +2,9 @@ import { apiKey, defineConnection, oauth2 } from "@kavishkagaya/connectd-connect
 import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { runtime, sessions } from "@kavishkagaya/connectd-runtime";
+import { runtime, sessions, importKey } from "@kavishkagaya/connectd-runtime";
+
+const TEST_KEY = "ock_000000000000_secret";
 
 /**
  * Tests only: just enough of a browser window (DOM elements, window.open, location, postMessage,
@@ -164,21 +166,22 @@ export async function setup() {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: `${OC}/callback`,
     config: { example: { clientId: "cid" }, keyed: null },
     sessions: { key: await importHmacKey(key(5)), origins: [APP] },
   };
   const rt = runtime({ definitions: { example, keyed }, settings: async () => settings, extensions: [sessions()] });
   const w = memory(rt.program, { fetch: p.fetch, clock: Date.now });
+  await importKey(w.platform, settings.keys, "api", "test", TEST_KEY);
   const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(`${OC}${path}`, init), w.platform);
 
   /** The app's backend issuing a session. */
   const token = async (def: string, id: string, args: Record<string, unknown> = { origin: APP }) => {
-    const res = await send(`/connections/${def}/${id}/session`, { method: "POST", headers: { authorization: "Bearer secret" }, body: JSON.stringify(args) });
+    const res = await send(`/connections/${def}/${id}/session`, { method: "POST", headers: { authorization: `Bearer ${TEST_KEY}` }, body: JSON.stringify(args) });
     return ((await res.json()) as { token: string }).token;
   };
-  const status = async (def: string, id: string) => ((await (await send(`/connections/${def}/${id}`, { headers: { authorization: "Bearer secret" } })).json()) as { state: string }).state;
+  const status = async (def: string, id: string) => ((await (await send(`/connections/${def}/${id}`, { headers: { authorization: `Bearer ${TEST_KEY}` } })).json()) as { state: string }).state;
 
   // The page's fetch: cross-origin, so the browser adds Origin.
   const requests: { path: string; body: unknown }[] = [];
