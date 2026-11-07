@@ -37,7 +37,6 @@ Environment values are read on first use, so importing the client before the env
 | `actions.<name>(input?)` | the action's output | Typed per action |
 | `connect(args?)` | `{ url, device? }` | Server-side start. `url: null` when it finished inline. |
 | `session({ origin?, returnUrl?, ttlMs? })` | `{ token, expiresAt, flow }` | A browser session token for `@kavishkagaya/connectd-connect` |
-| `link({ next?, ttlMs?, confirm? })` | `{ url, expiresAt }` | A single-use link to the hosted connect page |
 | `token()` | `Credential` | The raw credential, refreshed if due. Prefer `fetch`. |
 | `revoke(reason?)` | status | Unregisters webhooks, revokes at the provider, marks revoked |
 | `webhooks.subscribe(input)` | `Subscription` | For definitions with a `subscription` schema |
@@ -107,26 +106,11 @@ app.post("/connectd/events", toNode(ev.handle));   // mount before express.json(
 
 ## `@kavishkagaya/connectd-connect`
 
-The browser package. Zero dependencies, DOM only.
+The browser package. Headless (it draws nothing), zero dependencies, DOM only.
 
 :::note
 Not published yet.
 :::
-
-### `mount(element, options)`
-
-A prebuilt connect button, or a form for API-key definitions. Returns `unmount`.
-
-| Option | |
-| --- | --- |
-| `url` | The runtime's URL |
-| `token` | A session token, or `() => Promise<string>` (fetched again near expiry) |
-| `mode` | `"popup"` (default) or `"redirect"` |
-| `label` | Button text (default `Connect <definition>`, or `Reconnect` once active) |
-| `onResult(result)` | Called with the outcome |
-| `fallback`, `timeoutMs`, `signal`, `onClosed` | As for `connect()` |
-
-Unstyled, with `oc-*` classes. On a redirect return URL it runs `resume()` first.
 
 ### `connect(options)` → `Result`
 

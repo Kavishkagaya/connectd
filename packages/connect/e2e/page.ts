@@ -1,4 +1,4 @@
-import { connect, mount, resume } from "../src/index.ts";
+import { connect, resume } from "../src/index.ts";
 
 // The app's page in the e2e check: served with `Referrer-Policy: no-referrer` (helmet's default).
 const RT = "http://localhost:8788";
@@ -19,4 +19,11 @@ document.getElementById("lazy")!.onclick = () => connect({ url: RT, token: () =>
 document.getElementById("fresh")!.onclick = () => connect({ url: RT, token: () => get(`def=example&id=f${Date.now()}`) }).then(show("fresh"));
 document.getElementById("coop")!.onclick = () => connect({ url: RT, token: () => get("def=coopy&id=c1&return=1") }).then(show("coop"));
 document.getElementById("redir")!.onclick = () => connect({ url: RT, token: redirToken, mode: "redirect" });
-mount(document.getElementById("ui")!, { url: RT, token: () => get("def=keyed&id=k1"), onResult: show("form") });
+// The app's own API-key form: connectd renders none.
+const form = document.getElementById("ui") as HTMLFormElement;
+form.onsubmit = (e) => {
+  e.preventDefault();
+  const apiKey = (form.elements.namedItem("apiKey") as HTMLInputElement).value;
+  connect({ url: RT, token: () => get("def=keyed&id=k1"), fields: { apiKey } }).then(show("form"));
+};
+document.body.dataset.ready = "1";

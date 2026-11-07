@@ -779,3 +779,12 @@ Replaces the file-name part of #54's folders: an action was named by its file (`
 - Chosen over `.actions({ ... })` on the connection builder (actions typed from the connection itself, no discovery): a separate file keeps `connection.ts` to auth and API, and copied providers (`connectd add`) never carry the app's actions.
 - Breaking for 0.2 projects with actions: ships as 0.3.
 - Tests: `connections/src/action.test.ts` (the map, typed; bad names; non-actions; `badActions`), `cli/src/discover.test.ts` (an action imported from a file under another name, the registry and entry, bad keys from `actions()` and from a plain object, no default export, two actions files, the 0.2 layout refused, helpers-only `actions/` allowed).
+
+## No connect UI of its own — decided
+
+Reverses the hosted connect pages (#54 step 13, `link()`) and the prebuilt `mount()` of #29. Drawing the connect screen is the app's job: a page of ours had our look, our words and our flow, and every option it grew (`hosted`, `next`, `confirm`, single-use links) made the session API more rigid for everyone else.
+
+- **Removed:** the runtime's `GET /connect` page; the session args `hosted`, `next`, `confirm` and their single-use `jti` (the `session.used` cell, `session.unused`); `SessionInfo.next`/`confirm`; the SDK's `link()`; `mount()` in `@kavishkagaya/connectd-connect`. A session's origin is always an app's page in `sessions.origins`; the runtime's own origin is never one.
+- **Kept, the plumbing:** session tokens and `/session/*`, the headless `connect()`/`resume()`, the callback's popup bridge and redirect, `oc.routes` (connect, return, events), the dashboard.
+- **API keys:** the app's own form, then `connection(def, id).connect(fields)` from its server (or `connect({ fields })` from the browser with a session token). `oc.routes`' connect link is for OAuth definitions; for an API-key one it answers `400` saying so.
+- **Users outside the app** (an email, a chat): link to a page of the app that starts `oc.routes`' connect after sign-in.

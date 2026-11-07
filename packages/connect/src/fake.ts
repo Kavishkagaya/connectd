@@ -6,7 +6,7 @@ import { runtime, sessions } from "@kavishkagaya/connectd-runtime";
 
 /**
  * Tests only: just enough of a browser window (DOM elements, window.open, location, postMessage,
- * timers) to drive `connect()` and `mount()`, in front of the real runtime on the memory driver.
+ * timers) to drive `connect()`, in front of the real runtime on the memory driver.
  * The fake plays the browser's part: the page's fetches carry its Origin, a navigation carries
  * nothing (as from a `Referrer-Policy: no-referrer` page), the provider approves, the callback runs
  * with the binding cookie, and the popup page's postMessage is delivered.

@@ -64,7 +64,7 @@ export default connection()
         env: [],
         source: `import { connection } from "@kavishkagaya/connectd/connections";
 
-/** ${id}: an API key the user enters (the connect UI shows a form with these fields). */
+/** ${id}: an API key the user enters (your app's form asks for these fields). */
 export default connection()
   .config()
   .auth((f) => f.apiKey("key"))

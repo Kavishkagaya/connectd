@@ -143,7 +143,7 @@ export default connection()
   });
 ```
 
-The fields are what the connect UI renders as a form. `.identity()` is how you check the key: a throw keeps the connection from going active.
+The fields are what your form asks for (`GET /session` lists them). `.identity()` is how you check the key: a throw keeps the connection from going active.
 
 ## `f.clientCredentials({ tokenUrl })`
 

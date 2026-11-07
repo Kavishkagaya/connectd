@@ -117,7 +117,7 @@ Most features are **extensions**, each with HTTP routes, per-connection hooks, o
 | `proxy()` | `/proxy/:def/:id/*` | Token plus rate permits in one call, then rate observation |
 | `events()` | | The event queue, relaying the record's outbox, signed POSTs |
 | `webhooks()` | `/webhooks/:def[/:id]` (public) | Register, renew and unregister subscriptions |
-| `sessions()` | `/session/*`, `/connect` (public, CORS) | Browser tickets, the callback cookie, confirmation |
+| `sessions()` | `/session/*` (public, CORS) | Browser tickets, the callback cookie, confirmation |
 | `directory(index)` | `GET /connections` | Upserts its row in the index after every change |
 | actions | `/connections/:def/:id/actions/:name` | Runs actions, `every` timers, `on` reactions |
 | `dashboard()` | `/dashboard` | |
