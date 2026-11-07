@@ -125,7 +125,7 @@ Each environment is a separate deployment on your Cloudflare account, with its o
 Five layers, and a layer only uses the one below it:
 
 ```
-L4  DevX         SDK · CLI (init / add / dev / deploy) · dashboard · hosted connect page
+L4  DevX         SDK · CLI (init / add / dev / deploy) · dashboard
 L3  Runtime      proxy · webhook ingress · signed event delivery · connection index
 L2  Connections  connection() builder · lifecycle · OAuth and other auth flows · actions
 L1  Kernel       cell · flight · mutex · timer · queue · ticket · limiter · seal

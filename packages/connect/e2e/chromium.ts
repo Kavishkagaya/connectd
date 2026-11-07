@@ -79,7 +79,7 @@ const appServer = Bun.serve({
       return new Response(r.body, { status: r.status, headers: { "content-type": "application/json" } });
     }
     return new Response(
-      `<!doctype html><button id=popup>popup</button><button id=lazy>lazy</button><button id=coop>coop</button><button id=fresh>fresh</button><button id=redir>redirect</button><div id=ui></div><pre id=out></pre><script type=module src=/page.js></script>`,
+      `<!doctype html><button id=popup>popup</button><button id=lazy>lazy</button><button id=coop>coop</button><button id=fresh>fresh</button><button id=redir>redirect</button><form id=ui><input name=apiKey><button>key</button></form><pre id=out></pre><script type=module src=/page.js></script>`,
       { headers: { "content-type": "text/html", "referrer-policy": "no-referrer" } },
     );
   },
@@ -97,7 +97,7 @@ const check = (name: string, ok: boolean, info?: unknown) => {
 };
 try {
   await page.goto(APP);
-  await page.waitForSelector("#ui button");
+  await page.waitForSelector("body[data-ready]");
   for (const id of ["popup", "lazy"]) {
     const [popup] = await Promise.all([page.waitForEvent("popup"), page.click(`#${id}`)]);
     await popup.waitForSelector("#ok");
@@ -160,7 +160,7 @@ try {
   );
   check("redirect: the outcome is gone from the address bar", page.url() === `${APP}/back?def=example&id=r1`, page.url());
   await page.reload();
-  await page.waitForSelector("#ui button");
+  await page.waitForSelector("body[data-ready]");
   check("redirect: a reload does nothing", (await page.textContent("#out")) === "", await page.textContent("#out"));
   // Login CSRF: the attacker (user x1) mints a ticket outside a browser, forging Origin, and sends the
   // link to a victim logged in to the app as v1. The victim's browser does the provider login; the
@@ -181,7 +181,7 @@ try {
   await victim.goto(`${RT}/session/authorize?ticket=${encodeURIComponent(ticket)}`);
   await victim.click("#ok");
   await victim.waitForURL(/#connectd=authorized&definition=example&id=x1&completion=/);
-  await victim.waitForSelector("#ui button"); // the page script ran (resume() first)
+  await victim.waitForSelector("body[data-ready]"); // the page script ran (resume() first)
   const vout = await victim.textContent("#out");
   // resume() ignores an outcome for another connection than its session's: nothing confirmed, nothing shown.
   check("victim's page doesn't confirm the attacker's flow", vout === "" && (await state("example", "x1")) === "pending", vout);

@@ -27,7 +27,7 @@ type Deps = {
   base: () => string;
   fetch: (input: string, init: RequestInit) => Promise<Response>;
   // Structural, not the client's types: those include `routes` itself.
-  connection: (def: string, id: string) => { session(a: SessionArgs): Promise<{ token: string; flow?: string }>; link(o: { next?: string; confirm?: boolean }): Promise<{ url: string }> };
+  connection: (def: string, id: string) => { session(a: SessionArgs): Promise<{ token: string; flow?: string }> };
   events: () => { handle(req: Request): Promise<Response> };
   user?: User;
   /** The app's public origin, if `req.url` doesn't show it (behind a proxy). */
@@ -150,12 +150,8 @@ export function routes(d: Deps) {
     const to = local(m.url.searchParams.get("return"), origin);
     const back = `${origin}${m.base}/return?return=${encodeURIComponent(to)}`;
     const { token, flow } = await session(m.def, id, { returnUrl: back });
-    // An API-key form: the runtime's hosted page asks for it, then hands it to the return page, which
-    // confirms it for the signed-in user (a forwarded link can't connect someone else's key).
-    if (flow === "form") {
-      const { url } = await d.connection(m.def, id).link({ next: back, confirm: true });
-      return new Response(null, { status: 303, headers: { location: url, "cache-control": "no-store" } });
-    }
+    // An API key: the app's own form collects it, and its server calls connect(fields). connectd renders no form.
+    if (flow === "form") return fail(400, "bad_request", `${m.def} takes an API key: collect it in your own form and call connection("${m.def}", id).connect(fields) from your server`);
     // ponytail: device codes aren't shown by any page yet; connect those from the server.
     const t = await browser(origin, token, "authorize", { mode: "redirect", nonce: "" });
     if (!t.ok || !t.r?.ticket) return fail(t.status >= 400 ? t.status : 502, t.r?.error?.code ?? "authorize_failed", t.r?.error?.message ?? "the runtime gave no ticket");

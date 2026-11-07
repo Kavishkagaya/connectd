@@ -1,18 +1,17 @@
 ---
 title: Connecting users
-description: Four ways to start a connection. A link through oc.routes, the browser connect UI, a hosted link, or from your server.
+description: Three ways to start a connection. A link through oc.routes, your own connect UI in the browser, or from your server.
 sidebar:
   order: 4
 ---
 
-There are four ways to get a user from "not connected" to `active`. They all end in the same place. They differ in where the user is and how much UI you want to own.
+There are three ways to get a user from "not connected" to `active`. They all end in the same place. connectd draws no connect screens of its own: the buttons and forms are your app's, in your design.
 
 | Way | Use when | You write |
 | --- | --- | --- |
 | [**A link through `oc.routes`**](#1-a-link-through-ocroutes) | The user is in your web app. The default. | An `<a href>` |
-| [**The connect UI**](#2-the-connect-ui-in-the-browser) | You want a popup, or a button or form inside a page | `mount()` or `connect()` |
-| [**A hosted link**](#3-a-hosted-link-email-chat) | The user isn't in your app (an email, a Slack message) | `link()` |
-| [**From your server**](#4-from-your-server) | API keys you already have, device codes, scripts | `connect()` |
+| [**Your connect UI in the browser**](#2-your-connect-ui-in-the-browser) | You want a popup, or a form inside a page | `connect()` |
+| [**From your server**](#3-from-your-server) | API keys your form collected, device codes, scripts | `connect()` |
 
 ## Connection ids
 
@@ -63,7 +62,7 @@ sequenceDiagram
 
 When it finishes, the user lands on `return` with `?connectd=connected&definition=github&id=alice`, or with `?connectd=error&code=access_denied`. Treat that as a hint for the UI, and call `status()` before trusting it.
 
-For API-key definitions, the same link shows connectd's hosted form, and the key is confirmed on your page for the signed-in user.
+The link is for OAuth definitions. For API-key definitions, collect the key in your own form and connect [from your server](#3-from-your-server); the link answers `400` for them.
 
 **What `oc.routes` checks for you:**
 
@@ -74,13 +73,13 @@ For API-key definitions, the same link shows connectd's hosted form, and the key
 
 Your app's origin must be in `sessions.origins` in `oc.config.ts`.
 
-## 2. The connect UI in the browser
+## 2. Your connect UI in the browser
 
 :::note
 `@kavishkagaya/connectd-connect` isn't published yet. Until it is, connect with a link to `oc.routes` (above).
 :::
 
-`@kavishkagaya/connectd-connect` is a zero-dependency browser package for a popup flow or an inline form. Your backend creates a short-lived **session token**, and the browser uses only that.
+`@kavishkagaya/connectd-connect` is a zero-dependency, headless browser package: it runs the popup or redirect flow, and your page draws the button. Your backend creates a short-lived **session token**, and the browser uses only that.
 
 ```ts title="server: an endpoint your page calls"
 export async function POST(req: Request) {
@@ -90,21 +89,7 @@ export async function POST(req: Request) {
 }
 ```
 
-**Prebuilt UI.** A button, or a form for API-key definitions:
-
-```ts title="browser"
-import { mount } from "@kavishkagaya/connectd-connect";
-
-const unmount = mount(document.getElementById("github")!, {
-  url: "https://connect.example.com",                     // your connectd URL
-  token: () => fetch("/api/github-session", { method: "POST" }).then((r) => r.json()).then((r) => r.token),
-  onResult: (r) => { if (r.status === "connected") location.reload(); },
-});
-```
-
-The markup is unstyled, with `oc-*` classes. In React: `useEffect(() => mount(ref.current!, opts), [])`. The returned `unmount` is the cleanup.
-
-**Headless.** Build your own UI on `connect()`:
+Wire your own button to `connect()`:
 
 ```ts
 import { connect, resume } from "@kavishkagaya/connectd-connect";
@@ -122,21 +107,7 @@ const r = await resume({ url, token });
 - **Redirect** needs `session({ returnUrl })`, and the return page calls `resume()`.
 - **API keys:** `connect({ url, token, fields: { key: "…" } })` submits the form with fetch, and no window opens.
 
-## 3. A hosted link (email, chat)
-
-For a user who isn't in your app right now:
-
-```ts
-const { url } = await oc.connection("slack", user.id).link({
-  next: "https://app.example.com/settings",   // where they land once connected
-  ttlMs: 15 * 60_000,
-});
-await sendEmail(user.email, `Connect Slack: ${url}`);
-```
-
-The link opens connectd's own page (`/connect`): a button for OAuth providers, or a form for API keys. **It works once, for whoever opens it first**, so send it only to that user and keep `ttlMs` short.
-
-## 4. From your server
+## 3. From your server
 
 ```ts
 const gh = oc.connection("github", user.id);
@@ -144,7 +115,7 @@ const gh = oc.connection("github", user.id);
 // OAuth: a provider URL (server-side flows only, see the warning below)
 const { url } = await gh.connect();
 
-// API key you already hold: finishes inline, url is null
+// API key from your own form (or one you already hold): finishes inline, url is null
 await oc.connection("notes", user.id).connect({ key: "sk_live_…" });
 
 // device flow: show the code, connectd polls
@@ -156,7 +127,7 @@ await oc.connection("gcal-sa", "ops").connect({ subject: "ops@example.com" });
 ```
 
 :::caution
-The URL from `connect()` isn't tied to a browser. If it reaches someone else, *their* provider account can land on *your* user's connection (login CSRF). For users in a browser, use `oc.routes`, the connect UI or `link()`.
+The URL from `connect()` isn't tied to a browser. If it reaches someone else, *their* provider account can land on *your* user's connection (login CSRF). For users in a browser, use `oc.routes` or `connect()` from the browser package.
 :::
 
 ## Checking and ending connections

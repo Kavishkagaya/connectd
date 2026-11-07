@@ -18,7 +18,7 @@ Routes are keyed by their first path segment. All of them need `Authorization: B
 | `POST` | `/connections/:def/:id/connect` | Start an authorization. Body: input strings (`{ scope }`, API-key fields, `{ subject }`). → `{ url, device? }` |
 | `POST` | `/connections/:def/:id/token` | The credential, refreshed if due |
 | `POST` | `/connections/:def/:id/revoke` | Body: `{ reason? }`. → status |
-| `POST` | `/connections/:def/:id/session` | A browser session token. Body: `{ origin?, returnUrl?, ttlMs?, hosted?, next?, confirm? }` |
+| `POST` | `/connections/:def/:id/session` | A browser session token. Body: `{ origin?, returnUrl?, ttlMs? }` |
 | `POST` | `/connections/:def/:id/actions/:name` | Run an action. Body: its input. |
 | `POST` | `/connections/:def/:id/:method` | Any extension method: `events.status`, `events.flush`, `events.redeliver`, `webhooks.subscribe`, `webhooks.list`, `webhooks.unsubscribe`, `webhooks.status`, `webhooks.endpoint`, `actions.status`, `index.sync` |
 
@@ -48,7 +48,6 @@ The request and response bodies stream through. Your `authorization` and `host` 
 | `POST` | `/session/authorize` | The browser: `{ mode, nonce }` → `{ ticket }` (single use, 60 s) |
 | `GET` | `/session/authorize?ticket=` | Popup or page navigation: sets the binding cookie, then redirects to the provider |
 | `POST` | `/session/complete` | The browser: `{ completion }` → activates |
-| `GET` | `/connect?token=` | The hosted connect page (`link()`) |
 | `GET` | `/dashboard` | The dashboard page. Its `/dashboard/api/*` calls need the API key. |
 
 ## Errors
@@ -76,7 +75,7 @@ Every error the runtime answers is JSON, with a `connectd-error: <code>` header:
 | `not_configured` | 503 | Missing connector config or a deployment setting (events, webhooks) |
 | `delivery_failed` | 503 | An app-wide webhook didn't reach every connection, so the provider should retry |
 | `upstream_timeout` | 504 | No response headers from the provider in time |
-| `session_expired`, `session_used`, `bad_ticket` | 401 | Browser session problems |
+| `session_expired`, `bad_ticket` | 401 | Browser session problems |
 | `session_mismatch` | 403 | The callback came back in a different browser than the one that started the flow |
 
 OAuth errors from the provider pass through with the provider's code (`access_denied`, `invalid_grant`, …) and status `400`.

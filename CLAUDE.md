@@ -57,20 +57,19 @@ packages/runtime/
   src/cloudflare.ts   the runtime on the Cloudflare platform: DO class + Worker fetch (`/cloudflare` export); test/ runs it in workerd
   src/directory.ts    connection index extension: keeps each connection's row in platform.db.connections, list route (api.index)
   src/webhooks.ts     webhooks() extension: public /webhooks/:def[/:id], verify + parse per definition, app-level fan-out via the index, emit(); auto-register/renew/unregister per connection, or explicit subscriptions (subscribe/list/unsubscribe) when the definition has a `subscription` schema; webhooks.status
-  src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step; GET /connect, the hosted connect page (`link()`)
+  src/session.ts      sessions() extension (#29): browser session tokens, /session routes (CORS) + single-use tickets, /callback redirect or popup page, confirm step; no connect UI of its own (the app draws it)
 
 packages/sdk/         server SDK (#28): fetch only, no Node APIs (tsconfig.web.json typechecks it without Bun/Node types)
-  src/client.ts       connectd<R = Registry>({ url?, apiKey?, user?, listeners? }) (CONNECTD_* env defaults, read on first use): connection(def, id) status/connect/token/revoke/session/link/actions/webhooks/call/fetch, connections.page/list, ConnectdError
+  src/client.ts       connectd<R = Registry>({ url?, apiKey?, user?, listeners? }) (CONNECTD_* env defaults, read on first use): connection(def, id) status/connect/token/revoke/session/actions/webhooks/call/fetch, connections.page/list, ConnectdError
   src/registry.ts     interface Registry (filled by the CLI's generated .connectd/registry.d.ts), RegistryOf<typeof config, Exports<modules>>, the typed client's helper types, EventsOf (the events the app gets, typed per connection)
   src/events.ts       oc.events({ secret }): on(type, handler), handle(Request) → Response (verify, dedupe, dispatch)
   src/listen.ts       listen(id).on(type, handler): a folder's events.ts (app side), one connection's events
-  src/routes.ts       oc.routes { GET, POST } (#54, app side): connect/:def (server-started redirect session), return (page + confirm), events (to listeners)
+  src/routes.ts       oc.routes { GET, POST } (#54, app side): connect/:def (server-started redirect session; OAuth only, API keys go through the app's form + connect), return (page + confirm), events (to listeners)
   src/node.ts         toNode(handle): a (Request) => Response handler as Node/Express (req, res) (`/node` export)
   src/testing.ts      the real runtime on the memory platform + fake providers, for the SDK's tests
 
-packages/connect/     browser package (#29), zero dependencies, DOM only (tsconfig.web.json; the root tsc skips it)
+packages/connect/     headless browser package (#29), draws nothing, zero dependencies, DOM only (tsconfig.web.json; the root tsc skips it)
   src/connect.ts      headless: connect({ url, token, mode: popup | redirect, fields? }) → Result, resume() on the return URL, session(), claims()
-  src/ui.ts           mount(el, opts): prebuilt button, or a form for API-key definitions; returns unmount
   src/fake.ts         fake window/DOM in front of the real runtime, for the tests
   e2e/chromium.ts     one real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 

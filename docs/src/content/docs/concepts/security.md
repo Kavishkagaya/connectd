@@ -45,7 +45,7 @@ That's isolation by API inside one isolate. A definition can still burn CPU or h
 
 ## Your backend → connectd
 
-- All routes except `/callback`, `/webhooks`, `/session`, `/connect` and the dashboard page require `Authorization: Bearer <CONNECTD_API_KEY>`. The key is compared by digest, so the comparison leaks no timing.
+- All routes except `/callback`, `/webhooks`, `/session` and the dashboard page require `Authorization: Bearer <CONNECTD_API_KEY>`. The key is compared by digest, so the comparison leaks no timing.
 - The proxy refuses paths that climb out of `/proxy/:def/:id/`, both in the SDK and in the runtime, so a crafted path can't turn the proxy into a call to the admin API.
 - Internal methods (`kernel.*`, extension-internal ones) can't be called over HTTP.
 
