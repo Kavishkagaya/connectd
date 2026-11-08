@@ -8,7 +8,7 @@ import { deploy } from "./deploy.ts";
 import { workdir } from "./env.ts";
 import { CONFIG_FILES, findConfig, loadProject } from "./load.ts";
 import { sdkNote } from "./discover.ts";
-import { admin, deployment, duration, envLine, findKey, loginUrl, type Made, writeEnv } from "./admin.ts";
+import { admin, deployment, duration, envLine, findKey, loginUrl, type Made } from "./admin.ts";
 import { DEV_ENV, ENV } from "./keys.ts";
 import type { KeyInfo } from "@kavishkagaya/connectd-runtime";
 import { spawn } from "node:child_process";
@@ -69,9 +69,10 @@ connectd deploy
 connectd keys [ls | create <name> | roll <id|name> | revoke <id|name>]
   --env <name>     the deployment (default dev: CONNECTD_URL in .env); a deployed one by its last deploy's URL
   --url <url>      its URL instead (works outside the project, with CONNECTD_ROOT_KEY in the shell)
-  --events         create: an events signing secret (CONNECTD_EVENTS_SECRET) instead of an API key
+  --events         an events signing secret (CONNECTD_EVENTS_SECRET) instead of an API key: create makes one, roll and revoke find one by name
   --grace <time>   roll: how long the old secret keeps working (0, 30m, 24h, 7d; default 0)
-  A new secret is shown once. In dev, create and roll also write it into .env.
+  A new secret is shown once; put it where it's used (keys never writes .env). Dev makes the
+  app's first dev key itself, into .env, when .env has no working one.
 
 connectd dashboard
   --env <name>, --url <url>   which deployment (as for keys)
@@ -215,11 +216,9 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
       try {
         const d = deployment(dir, { ...(str("env") ? { environment: str("env") } : {}), ...(str("url") ? { url: str("url") } : {}) });
         const dev = d.environment === DEV_ENV;
-        const show = (m: Made, verb: string) => {
-          log(`${verb} ${m.info.kind === "events" ? "events secret" : "API key"} ${m.info.name} (${m.info.prefix}) in ${d.environment}. The secret, shown once:\n\n  ${envLine(m)}\n`);
-          // Dev's are the app's own .env lines; a deployed one goes in the app host's environment.
-          if (dev) log(`${writeEnv(dir, m.info.kind === "events" ? ENV.events : ENV.apiKey, m.key) === "added" ? "added to" : "replaced in"} .env`);
-        };
+        // Shown, never written anywhere: it goes where it's used (.env, the app host, CI), by you.
+        const show = (m: Made, verb: string) =>
+          log(`${verb} ${m.info.kind === "events" ? "events secret" : "API key"} ${m.info.name} (${m.info.prefix}) in ${d.environment}. The secret, shown once (put it where it's used):\n\n  ${envLine(m)}\n`);
         if (sub === "ls" && !which) {
           const all = await admin<KeyInfo[]>(d, "GET", "/admin/keys");
           if (!all.length) return log(`no keys in ${d.environment}: connectd keys create <name>${dev ? "" : ` --env ${d.environment}`}`), 0;
@@ -239,14 +238,14 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           return 0;
         }
         if (sub === "roll") {
-          const k = await findKey(d, which);
+          const k = await findKey(d, which, a.flags.events ? "events" : "api");
           const graceMs = duration(str("grace") ?? "0");
           show(await admin<Made>(d, "POST", `/admin/keys/${k.id}/roll`, { graceMs }), "rolled");
           log(graceMs ? `the old secret works until ${new Date(Date.now() + graceMs).toISOString()}` : "the old secret stopped working");
           return 0;
         }
         if (sub === "revoke") {
-          const k = await findKey(d, which);
+          const k = await findKey(d, which, a.flags.events ? "events" : "api");
           await admin(d, "POST", `/admin/keys/${k.id}/revoke`, {});
           log(`revoked ${k.kind === "events" ? "events secret" : "API key"} ${k.name} (${k.prefix}) in ${d.environment}${k.kind === "api" ? ": calls with it fail within 30 seconds" : ""}`);
           return 0;

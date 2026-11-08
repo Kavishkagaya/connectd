@@ -111,10 +111,10 @@ connectd keys revoke <id|name>
 | --- | --- |
 | `--env <name>` | Which deployment: dev (default; `CONNECTD_URL` in `.env`), or an environment at the URL its last deploy from here used |
 | `--url <url>` | The deployment's URL instead. With `CONNECTD_ROOT_KEY` in the shell, this works outside the project. |
-| `--events` | `create`: an events secret (`CONNECTD_EVENTS_SECRET`) instead of an API key |
+| `--events` | An events secret (`CONNECTD_EVENTS_SECRET`) instead of an API key: `create` makes one, `roll` and `revoke` find one by name |
 | `--grace <time>` | `roll`: how long the old secret keeps working (`0`, `30m`, `24h`, `7d`; default `0`) |
 
-Keys live in the deployment's database, so the dashboard shows and manages the same ones. A secret is shown once; in dev, `create` and `roll` also write it into `.env`. The CLI signs each request with the deployment's admin key, derived from the root key: the root key itself is never sent.
+Keys live in the deployment's database, so the dashboard shows and manages the same ones. A secret is shown once, and `keys` never writes it anywhere: put it where it's used (your app's `.env`, its host, CI). The only key written for you is the one `connectd dev` makes when `.env` has no working `CONNECTD_API_KEY`. The CLI signs each request with the deployment's admin key, derived from the root key: the root key itself is never sent.
 
 ## `connectd dashboard`
 

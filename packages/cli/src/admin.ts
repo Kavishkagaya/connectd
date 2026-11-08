@@ -85,14 +85,14 @@ export async function loginUrl(d: Deployment) {
 
 export type Made = { key: string; info: KeyInfo };
 
-/** A key by id, or by name when one live key has it. */
-export async function findKey(d: Deployment, which: string, f?: typeof fetch): Promise<KeyInfo> {
+/** A key by id, or by name when one live key of `kind` has it (an API key and an events secret can share a name). */
+export async function findKey(d: Deployment, which: string, kind: "api" | "events" = "api", f?: typeof fetch): Promise<KeyInfo> {
   const all = await admin<KeyInfo[]>(d, "GET", "/admin/keys", undefined, f);
   const byId = all.find((k) => k.id === which);
   if (byId) return byId;
-  const named = all.filter((k) => k.name === which && k.status !== "revoked");
+  const named = all.filter((k) => k.name === which && k.kind === kind && k.status !== "revoked");
   if (named.length === 1) return named[0] as KeyInfo;
-  throw new Error(named.length ? `${named.length} live keys are named ${which}: use the id (connectd keys)` : `no key ${which} in ${d.environment} (connectd keys lists them)`);
+  throw new Error(named.length ? `${named.length} live keys are named ${which}: use the id (connectd keys)` : `no ${kind === "events" ? "events secret" : "API key"} ${which} in ${d.environment} (connectd keys lists them${kind === "api" ? "; --events for an events secret" : ""})`);
 }
 
 /** `30m`, `24h`, `7d`, `0`: milliseconds. */
@@ -106,8 +106,9 @@ export function duration(s: string): number {
 export const envLine = (k: Made) => `${k.info.kind === "events" ? ENV.events : ENV.apiKey}=${k.key}`;
 
 /**
- * Put a dev key in `.env` (the app's and connectd's one file): a line of that name is replaced, else
- * appended. Dev only: a deployed environment's keys belong in its host's environment.
+ * Put dev's own key in `.env` (the app's and connectd's one file): a line of that name is replaced,
+ * else appended. Only `connectd dev` does, for the key it makes when `.env` has no working one;
+ * `connectd keys` prints a new secret and leaves `.env` to you.
  */
 export function writeEnv(dir: string, name: string, value: string): "added" | "replaced" {
   const f = join(dir, ".env");

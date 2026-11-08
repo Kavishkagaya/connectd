@@ -108,6 +108,7 @@ packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, ur
 
 examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` checks it): github (OAuth app), oc.routes, APP_URL in .env; `connectd dev` and `next dev` run side by side
 
+scripts/e2e/          run.sh: the developer walkthrough end to end (local, no Cloudflare); app.mjs, worker-vars.mjs, browser.mjs its helpers
 scripts/pack.ts       `bun run pack`: the two published packages built to JavaScript (tsc in the Node, Workers and DOM type environments), each carrying its private workspace dependencies (imports rewritten to relative paths), npm-packed into .pack/
 
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers copied in by `connectd add`, one custom, github/actions.ts)
@@ -124,6 +125,7 @@ Published: `@kavishkagaya/connectd` and `@kavishkagaya/connectd-cloudflare` only
 - Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); a shadcn component: `bunx --bun shadcn@4.23.0 add <name>` there (fix its `cn` import to `@/lib/utils`); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts` (playwright-core: add `CHROME=/usr/bin/google-chrome`)
 - One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`
 - Dev server on the example: `cd examples/basic && bunx connectd init` once (keys into .env), then `bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `connectd --help`)
+- End to end as a developer (packed tarballs on Node: init, dev, SDK, keys, dashboard, the generated Worker on `wrangler dev`): `scripts/e2e/run.sh` (`PLAYWRIGHT=… CHROME=…` adds the browser). Before a merge, run what the change touches from docs/src/content/docs/contributing/validation.md (levels 1–4, incl. a real Cloudflare redeploy) and say in the PR what ran
 - Deploy plan without Cloudflare: `cd examples/basic && bunx connectd deploy --dry-run` (then `wrangler deploy --dry-run -c .connectd/deploy/wrangler.json` bundles it offline)
 
 ## Patterns

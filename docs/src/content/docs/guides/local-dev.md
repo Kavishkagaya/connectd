@@ -33,7 +33,7 @@ It prints one line per request after that, and `reloaded: …` when you save a f
 - State is saved to `.connectd/state.json` and restored on start, so connections survive restarts. `--reset` starts empty. If the config fails to load on start, the file is left as it was and its timers wait for the first good load.
 - The config and the connection folders are bundled with esbuild and **swapped in place on save**, without losing state. The watcher ignores build output, hidden folders and generated types.
 - Its keys derive from the project's root key, `CONNECTD_ROOT_KEY` in `.env` (written by `connectd init`).
-- API keys, events secrets and dashboard accounts live in SQLite, `.connectd/dev.db`, so they outlive restarts and `--reset`. dev writes your app's `CONNECTD_API_KEY` (and `CONNECTD_EVENTS_SECRET`, when events are on) into `.env` when they're missing or no longer valid. More keys: `connectd keys create <name>`.
+- API keys, events secrets and dashboard accounts live in SQLite, `.connectd/dev.db`, so they outlive restarts and `--reset`. dev writes your app's `CONNECTD_API_KEY` (and `CONNECTD_EVENTS_SECRET`, when events are on) into `.env` when they're missing or no longer valid. More keys: `connectd keys create <name>`, which prints the secret for you to put where it's used (it doesn't touch `.env`).
 - The port comes from `CONNECTD_URL` in `.env` (default 8787), or `--port`.
 
 Run your app next to it in another terminal. `dev` doesn't start your app.

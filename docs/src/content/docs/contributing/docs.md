@@ -2,7 +2,7 @@
 title: Working on these docs
 description: How the docs site is built, written and published.
 sidebar:
-  order: 3
+  order: 4
 ---
 
 The site is [Astro Starlight](https://starlight.astro.build) in `docs/`, published to GitHub Pages on every push to `main` that changes it.

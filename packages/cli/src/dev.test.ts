@@ -420,7 +420,7 @@ test("env reads are by name: a config spreading env is refused", async () => {
   expect(resolve((env) => ({ definitions: [], ...(env.EVENTS_URL ? { events: { url: env.EVENTS_URL } } : {}) }), { EVENTS_URL: "https://a.test", PATH: "/bin" }).envNames).toEqual(["EVENTS_URL"]);
 });
 
-test("connectd keys against dev: create (written into .env), list, roll with a grace period, revoke; dashboard prints a sign-in link", async () => {
+test("connectd keys against dev: shown, never written into .env; list, roll with a grace period, revoke, --events by name; dashboard prints a sign-in link", async () => {
   const w = world();
   const dir = project();
   const { d } = await start(dir, w.env);
@@ -430,11 +430,16 @@ test("connectd keys against dev: create (written into .env), list, roll with a g
     const code = await main([...args, "--url", d.url], { log: (l) => void out.push(l), dir });
     return { code, text: out.join("\n") };
   };
+  const call = (key: string | undefined) => fetch(`${d.url}/connections/keyed/x`, { headers: { authorization: `Bearer ${key}` } }).then((r) => r.status);
+  // Dev made the app's own key; keys never changes .env after that.
+  const before = readFileSync(join(dir, ".env"), "utf8");
+  expect(envOf(dir).CONNECTD_API_KEY).toStartWith("ock_");
+
   const made = await run("keys", "create", "worker");
   expect(made.code).toBe(0);
   const key = /CONNECTD_API_KEY=(ock_\S+)/.exec(made.text)?.[1] ?? "";
-  expect(envOf(dir).CONNECTD_API_KEY).toBe(key);
-  expect((await fetch(`${d.url}/connections/keyed/x`, { headers: { authorization: `Bearer ${key}` } })).status).toBe(404);
+  expect(made.text).toContain("put it where it's used");
+  expect(await call(key)).toBe(404);
   const ls = await run("keys");
   expect(ls.text).toMatch(/dev .*\n.*ID.*\n.*api .*dev .*active[\s\S]*worker/);
   expect(ls.text).not.toContain(key);
@@ -442,12 +447,16 @@ test("connectd keys against dev: create (written into .env), list, roll with a g
   const rolled = await run("keys", "roll", "worker", "--grace", "1h");
   const key2 = /CONNECTD_API_KEY=(ock_\S+)/.exec(rolled.text)?.[1] ?? "";
   expect(key2).not.toBe(key);
-  expect((await fetch(`${d.url}/connections/keyed/x`, { headers: { authorization: `Bearer ${key}` } })).status).toBe(404); // in its grace period
+  expect(await call(key)).toBe(404); // in its grace period
   expect((await run("keys", "roll", "worker", "--grace", "soon")).text).toContain("a duration like");
   expect((await run("keys", "revoke", "worker")).text).toContain("revoked API key worker");
-  expect((await fetch(`${d.url}/connections/keyed/x`, { headers: { authorization: `Bearer ${key2}` } })).status).toBe(401);
-  expect((await run("keys", "revoke", "nobody")).text).toContain("no key nobody in dev");
+  expect(await call(key2)).toBe(401);
+  expect((await run("keys", "revoke", "nobody")).text).toContain("no API key nobody in dev");
+
+  // An API key and an events secret share the name dev: --events picks the secret.
   expect((await run("keys", "create", "hooks", "--events")).text).toContain("CONNECTD_EVENTS_SECRET=whsec_");
+  expect((await run("keys", "roll", "dev", "--events")).text).toContain("rolled events secret dev");
+  expect(readFileSync(join(dir, ".env"), "utf8")).toBe(before);
 
   const link = await run("dashboard", "--print");
   expect(link.text).toContain(`${d.url}/dashboard#login=`);
@@ -455,7 +464,7 @@ test("connectd keys against dev: create (written into .env), list, roll with a g
   const other = await main(["keys", "--url", d.url], { log: (l) => void out.push(l), dir: project({ ".env": `CONNECTD_ROOT_KEY=${newRootKey()}\n` }) });
   expect(other).toBe(1);
   expect(out.join("\n")).toContain("refused the admin request");
-});
+}, 20_000);
 
 test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-by-hop headers dropped, HEAD", async () => {
   let seen: Headers | undefined;
