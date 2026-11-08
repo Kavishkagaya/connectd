@@ -8,8 +8,25 @@ import type { Env, Resolved } from "./project.ts";
  */
 export type Target = { adapter: string; options: Record<string, unknown> };
 
+/**
+ * What a target's `setup` gets (#86): `connectd init` calls it after installing the target's packages,
+ * and `deploy` before deploying, so the target's own tool is installed and signed in (Cloudflare:
+ * wrangler, `wrangler login`).
+ */
+export type SetupContext = {
+  dir: string;
+  env: Env;
+  log: (line: string) => void;
+  /** Questions for the person at the terminal; absent in CI and tests, where setup says what to do instead. */
+  prompts?: Prompts;
+  /** Install dev dependencies with the project's package manager; false when it failed. */
+  install(packages: string[]): boolean;
+  /** The deploy tool's binary, when the caller names one (tests). */
+  bin?: string;
+};
+
 /** What the CLI hands an adapter: the project resolved against the production env, and the secrets to set. */
-export type DeployContext = {
+export type DeployContext = Omit<SetupContext, "bin"> & {
   dir: string;
   /** The module to bundle as the config (the generated entry with the connection folders, or the config itself). */
   entry: string;
@@ -45,5 +62,19 @@ export type DeployContext = {
 /** `keys`: the app's credentials a first deploy made (shown once). */
 export type Deployed = { name: string; url?: string; dryRun: boolean; pushed?: string[]; keys?: { key: string; info: { kind: string; name: string; id: string } }[]; [k: string]: unknown };
 
-/** An adapter module's export. */
-export type Adapter = { deploy(ctx: DeployContext): Promise<Deployed> };
+/** An adapter module's export. `setup` readies the target's tool (installed, signed in); deploy calls it too. */
+export type Adapter = { deploy(ctx: DeployContext): Promise<Deployed>; setup?(ctx: SetupContext): Promise<void> };
+
+/** The questions the CLI asks in a terminal (init's setup, deploy's wrangler checks). Tests pass their own. */
+export type Prompts = {
+  /** One of `choices`; Enter picks the first. */
+  choose(question: string, choices: { value: string; label: string }[]): Promise<string>;
+  /** Yes or no; Enter gives `fallback`. */
+  confirm(question: string, fallback?: boolean): Promise<boolean>;
+  /** A line of text; Enter gives `fallback`. */
+  text(question: string, fallback: string): Promise<string>;
+  /** Several of `choices`, ticked in a list. A choice with `alone` (e.g. "Add later") clears the others, and they clear it. */
+  checklist(question: string, choices: Choice[]): Promise<string[]>;
+};
+
+export type Choice = { value: string; label: string; hint?: string; alone?: boolean };

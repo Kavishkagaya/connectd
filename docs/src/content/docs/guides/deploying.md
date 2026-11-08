@@ -24,11 +24,11 @@ flowchart TB
 ## First deploy
 
 ```sh
-npm i -D wrangler
-npx wrangler login                     # or set CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID
 cp .env .env.production                # then replace the values (see below)
 npx connectd deploy
 ```
+
+Deploy checks wrangler first. `connectd init` installed it in your project when you picked Cloudflare; if it's missing, deploy offers to install it (a dev dependency, with your package manager). If wrangler isn't logged in to Cloudflare, deploy offers `wrangler login`, which opens your browser. In CI there's nobody to ask, so it stops before any step and says what to set: `CLOUDFLARE_API_TOKEN` (Workers Scripts and D1: edit) and `CLOUDFLARE_ACCOUNT_ID`.
 
 **`.env.production`** holds production's **provider credentials** only: usually a separate OAuth app, since the callback URL differs.
 

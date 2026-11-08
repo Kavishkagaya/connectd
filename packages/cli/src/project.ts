@@ -75,7 +75,7 @@ export type Config = Project | ((env: Env) => Project);
 export const defineConfig = <T extends Config>(c: T) => c;
 
 export { DEV_ENV, deploymentKeys, derive, ENV, isDerived, newRootKey } from "./keys.ts";
-export type { Adapter, DeployContext, Deployed, Target } from "./target.ts";
+export type { Adapter, Choice, DeployContext, Deployed, Prompts, SetupContext, Target } from "./target.ts";
 
 /** One connection folder, as the generated entry passes it: the folder's name and its files' default exports. */
 export type Folder = { id: string; file: string; connection: unknown; actions: unknown };

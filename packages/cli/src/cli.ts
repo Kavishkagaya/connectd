@@ -26,11 +26,13 @@ Commands
   diff      what changed upstream in a copied provider: connectd diff github
   help      this text
 
-connectd init
-  --port <n>       where connectd dev will run (default ${PORT}; written as CONNECTD_URL)
+connectd init     in a terminal, a step-by-step setup; each flag answers its question
   --app-url <url>  your app's origin (default APP_URL from .env, else http://localhost:3000)
-  --target <t>     where it deploys: ${Object.keys(TARGETS).join(", ")} or none (default: asked in a terminal); installs the target's packages
-  --skip-install   don't install the target's packages
+  --port <n>       where connectd dev will run (default ${PORT}; written as CONNECTD_URL)
+  --target <t>     where it deploys: ${Object.keys(TARGETS).join(", ")} or none; installs the target's packages (and wrangler login)
+  --add <ids>      catalog providers to add, comma-separated (github,slack)
+  --yes            no questions: the flags, then .env, then the defaults (always so in CI)
+  --skip-install   install nothing (@kavishkagaya/connectd, the target's packages)
   Writes only what's missing. The root key (CONNECTD_ROOT_KEY) is the project's for good: every
   environment's keys derive from it. Keep a copy in your password manager; CI needs it as a secret.
 
@@ -62,7 +64,8 @@ connectd deploy
   --rotate key     add an encryption key version (CONNECTD_KEY_V<n+1>); old ones stay to open older data
   --dry-run        write .connectd/deploy/ (entry, wrangler.json, migrations) and print the plan; no Cloudflare calls
   --config <file>  config file (default ${CONFIG_FILES[0]})
-  Needs wrangler (npm i -D wrangler) logged in (wrangler login, or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID).
+  Checks wrangler first: in a terminal it offers the install (a dev dependency) and wrangler login;
+  in CI it needs CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID.
   The first deploy of an environment makes the app's API key (and events secret) and prints them once.
   In CI, set CONNECTD_ROOT_KEY as a secret. Managed deploys (--managed) wait for the managed service (#34).
 
@@ -104,6 +107,8 @@ const SPEC = {
   "app-url": "string",
   target: "string",
   "skip-install": "boolean",
+  yes: "boolean",
+  add: "string",
 } as const;
 
 /** Runs a command; resolves to an exit code, or to a running dev server's stop function. */
@@ -131,6 +136,8 @@ export async function main(argv: string[], o: { dir?: string; log?: (s: string) 
           ...(typeof a.flags["app-url"] === "string" ? { appUrl: a.flags["app-url"] } : {}),
           ...(typeof target === "string" ? { target: target as keyof typeof TARGETS | "none" } : {}),
           ...(a.flags["skip-install"] ? { skipInstall: true } : {}),
+          ...(a.flags.yes ? { yes: true } : {}),
+          ...(typeof a.flags.add === "string" ? { providers: a.flags.add.split(",").map((p) => p.trim()).filter(Boolean) } : {}),
           log,
         });
         return 0;

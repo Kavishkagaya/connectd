@@ -25,6 +25,8 @@ Runs on Node 22+ or Bun. `npx connectd --help` prints this list.
 
 ## `connectd init`
 
+In a terminal, a step-by-step setup: your app's origin, the dev port, installing `@kavishkagaya/connectd` (a dependency of your app), where it deploys (Cloudflare installs its package and wrangler, then offers `wrangler login`), and a checklist of providers, popular first, with "Add later". Each flag answers its question; `--yes` (and CI) asks nothing.
+
 Writes only what's missing, and never overwrites:
 
 - `.env`: `APP_URL`, `CONNECTD_URL`, and the project's root key, `CONNECTD_ROOT_KEY`. It's made owner-only (`0600`).
@@ -34,10 +36,12 @@ Writes only what's missing, and never overwrites:
 
 | Flag | |
 | --- | --- |
-| `--port <n>` | Where `connectd dev` will run (default 8787), written as `CONNECTD_URL` |
 | `--app-url <url>` | Your app's origin (default `APP_URL` from `.env`, else `http://localhost:3000`) |
+| `--port <n>` | Where `connectd dev` will run (default 8787), written as `CONNECTD_URL` |
 | `--target <t>` | Where it deploys: `cloudflare`, or `none` to decide later (default: asked in a terminal; none in CI) |
-| `--skip-install` | Write the target into the config without installing its packages |
+| `--add <ids>` | Catalog providers to add, comma-separated (`github,slack`); default: the checklist in a terminal |
+| `--yes` | No questions: the flags, then `.env`, then the defaults |
+| `--skip-install` | Install nothing: neither `@kavishkagaya/connectd` nor the target's packages |
 
 The root key is the project's for good: every environment's keys derive from it ([security](/concepts/security/#keys)), and it never changes. init never replaces one, so a teammate copies theirs into `.env` before running it. Keep a copy in your password manager, and give CI the same one as a secret.
 
@@ -91,7 +95,7 @@ A unified diff between your copied `connection.ts` and the catalog's current ver
 | `--dry-run` | Write `.connectd/deploy/` (entry, `wrangler.json`, migrations) and print the plan, with no Cloudflare calls |
 | `--config <file>` | Config file (default `oc.config.ts`) |
 
-Needs `wrangler` (`npm i -D wrangler`), logged in with `wrangler login` or with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` set, and the root key (`.env`, the shell, or in CI a secret). The first deploy of an environment makes your app's API key (and events secret) and prints them once. See [deploying](/guides/deploying/).
+Checks wrangler first: the project's (`init` installed it), else in a terminal it offers the install and then `wrangler login`; in CI it needs `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. It also needs the root key (`.env`, the shell, or in CI a secret). The first deploy of an environment makes your app's API key (and events secret) and prints them once. See [deploying](/guides/deploying/).
 
 ## `connectd types`
 

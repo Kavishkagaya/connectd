@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # connectd end to end, the way a developer uses it (docs: contributing/validation). The packed
-# tarballs installed with npm into a new project and run on Node: init, add, dev, the SDK, keys,
+# tarballs, installed by `npx @kavishkagaya/connectd init` itself into a new project (and once in a
+# real terminal, answered by keys), run on Node: init, add, dev, the SDK, keys,
 # dashboard, restarts; then the Worker deploy generates, on wrangler dev (local Durable Objects and
 # D1), with the keys a deploy derives. Nothing reaches Cloudflare or GitHub.
 #
@@ -38,23 +39,37 @@ bg() { local log=$1; shift; setsid "$@" >"$log" 2>&1 & BG=$!; PIDS+=("$BG"); }
 status() { curl -s -o /dev/null -w '%{http_code}' -H "authorization: Bearer $2" "$1/connections"; }
 envv() { sed -n "s/^$1=//p" "${2:-.env}"; }
 
-step "pack and install, as from npm"
+step "init, as a new developer runs it: npx @kavishkagaya/connectd init"
 (cd "$REPO" && bun run pack >/dev/null)
+# Our packages from this build's tarballs (npm has the released ones); the catalog from this checkout.
+export CONNECTD_TARBALLS="$REPO/.pack" CONNECTD_REGISTRY="$REPO/registry"
+CLI=$(ls "$REPO"/.pack/kavishkagaya-connectd-[0-9]*.tgz)
 cd "$DIR"
 npm init -y >/dev/null && npm pkg set type=module
-npm i -D "$REPO"/.pack/kavishkagaya-connectd-*.tgz wrangler@4 >/dev/null 2>&1
 cp "$HERE"/*.mjs .
-check "connectd runs on Node" bash -c 'npx --no-install connectd --help 2>/dev/null | grep -q "connectd <command>"'
-
-step "init and add"
-cx init --port "$DEV_PORT" --target cloudflare --skip-install >/dev/null
+npx --yes --package "$CLI" connectd init --yes --port "$DEV_PORT" --target cloudflare --add github >init.log 2>&1 || { cat init.log; fail "init"; }
+dep() { node -e 'const p=require("./package.json");process.exit(p[process.argv[1]]?.[process.argv[2]]?0:1)' "$1" "$2"; }
+check "init installed @kavishkagaya/connectd as the app's dependency" dep dependencies @kavishkagaya/connectd
+check "init installed the Cloudflare target and wrangler as dev dependencies" bash -c "$(declare -f dep); dep devDependencies @kavishkagaya/connectd-cloudflare && dep devDependencies wrangler && test -x node_modules/.bin/wrangler"
+check "connectd runs on Node from the project" bash -c 'npx --no-install connectd --help 2>/dev/null | grep -q "connectd <command>"'
 check "init wrote the root key into .env" grep -q '^CONNECTD_ROOT_KEY=ocroot_' .env
 check "init wrote oc.config.ts with the Cloudflare target" grep -q 'cloudflare({' oc.config.ts
+check "init --add copied the provider and its env names" bash -c 'test -f oc/github/connection.ts && grep -q "^GITHUB_CLIENT_ID=" .env'
+check "init wrote the typed registry" test -f .connectd/registry.d.ts
 ROOT=$(envv CONNECTD_ROOT_KEY)
-cx init --port "$DEV_PORT" --skip-install >/dev/null
+cx init --yes >/dev/null
 check "init again never replaces the root key" test "$(envv CONNECTD_ROOT_KEY)" = "$ROOT"
-cx add github >/dev/null
-check "add copied the provider" test -f oc/github/connection.ts
+
+if command -v python3 >/dev/null; then
+  step "init in a terminal: the step-by-step setup, answered by keys"
+  mkdir tty && (cd tty && npm init -y >/dev/null && npm pkg set type=module)
+  python3 "$HERE/init-tty.py" tty npx --yes --package "$CLI" connectd init >tty.log 2>&1 || { cat tty.log; fail "init in a terminal"; }
+  check "the answers landed: port, providers ticked in the checklist" bash -c 'grep -q "^CONNECTD_URL=http://localhost:8795" tty/.env && test -f tty/oc/github/connection.ts && test -f tty/oc/slack/connection.ts && test ! -e tty/oc/google'
+  check "it installed what it asked to" bash -c "cd tty && $(declare -f dep); dep dependencies @kavishkagaya/connectd && dep devDependencies wrangler"
+else
+  echo; echo "(skipped init in a terminal: needs python3)"
+fi
+
 sed -i 's/^GITHUB_CLIENT_ID=.*/GITHUB_CLIENT_ID=dev-id/; s/^GITHUB_CLIENT_SECRET=.*/GITHUB_CLIENT_SECRET=dev-secret/' .env
 
 step "dev"

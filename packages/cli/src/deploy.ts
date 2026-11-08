@@ -3,6 +3,8 @@ import { createRequire } from "node:module";
 import { join, relative, resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { admin, type Made, rememberUrl } from "./admin.ts";
+import { installer } from "./init.ts";
+import { interactive, type Prompts, terminal } from "./prompt.ts";
 import { parseEnv, workdir } from "./env.ts";
 import { deploymentKeys, derive, ENV, type Env, isDerived, resolve, unconfiguredText } from "./project.ts";
 import type { Adapter, Deployed } from "./target.ts";
@@ -42,6 +44,10 @@ export type DeployOptions = {
   env?: Env;
   /** Calls the deployed `/admin` (tests pass one). */
   fetch?: typeof fetch;
+  /** Questions (wrangler missing, not logged in). Default: the terminal's when there's a person at it; none in CI. */
+  prompts?: Prompts | null;
+  /** Runs an install (tests pass one). */
+  run?: (cmd: string, args: string[], cwd: string) => number;
   log?: (line: string) => void;
 };
 
@@ -102,7 +108,8 @@ export async function deploy(o: DeployOptions): Promise<Deployed> {
 
   const target = project.target;
   if (!target) throw new Error('deploy needs a target in oc.config.ts: `target: cloudflare({ name: "my-app" })` from @kavishkagaya/connectd-cloudflare (npm i -D @kavishkagaya/connectd-cloudflare)');
-  const adapter = await load(o.dir, target.adapter);
+  const adapter = await loadAdapter(o.dir, target.adapter);
+  const prompts = o.prompts === undefined ? (interactive() ? terminal : undefined) : (o.prompts ?? undefined);
   const missing = unconfiguredText(project);
   const r = await adapter.deploy({
     dir: o.dir,
@@ -124,6 +131,8 @@ export async function deploy(o: DeployOptions): Promise<Deployed> {
       ...(unsent.length ? [`  not sent     ${unsent.join(", ")}   (nothing in the project reads them)`] : []),
     ],
     ...(o.wrangler ? { bin: o.wrangler } : {}),
+    ...(prompts ? { prompts } : {}),
+    install: installer(o.dir, log, o.run, env),
     env,
     log,
   });
@@ -179,7 +188,7 @@ async function firstKeys(d: { url: string; environment: string; root: string }, 
 }
 
 /** The target's adapter module, resolved from the project, where it's installed. */
-async function load(dir: string, id: string): Promise<Adapter> {
+export async function loadAdapter(dir: string, id: string): Promise<Adapter> {
   let path: string;
   try {
     path = createRequire(join(dir, "package.json")).resolve(id);

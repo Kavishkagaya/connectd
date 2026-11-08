@@ -31,6 +31,8 @@ export type AddOptions = {
   env?: Record<string, string | undefined>;
   log?: (line: string) => void;
   fetch?: typeof fetch;
+  /** The connection folders' parent, when the caller knows it (init, which just wrote the config): the config isn't imported. */
+  folders?: string;
 };
 
 export const registryOf = (o: Pick<AddOptions, "registry" | "env">) =>
@@ -69,6 +71,7 @@ function checked(e: Entry, from: string): Entry {
 
 /** The connection folders' parent: the config's `dir`, else `src/oc` (created). */
 async function foldersDir(o: AddOptions): Promise<string> {
+  if (o.folders) return o.folders;
   const config = findConfig(o.dir, o.config);
   const c = await importConfig(config, join(workdir(o.dir), "build"), `add-${Date.now()}`);
   return dirOf(c, { ...o.env }, config) ?? join(o.dir, "src/oc");
@@ -76,10 +79,13 @@ async function foldersDir(o: AddOptions): Promise<string> {
 
 const shown = (o: AddOptions, p: string) => relative(o.dir, p) || p;
 
+/** The catalog's providers (id, version, description). */
+export const catalog = (o: AddOptions): Promise<Listed[]> => read<Listed[]>(o, "index.json");
+
 /** `connectd add`: the catalog. */
 export async function list(o: AddOptions): Promise<void> {
   const log = o.log ?? console.log;
-  const all = await read<Listed[]>(o, "index.json");
+  const all = await catalog(o);
   const w = Math.max(...all.map((e) => e.id.length));
   log(["Providers (connectd add <provider>):", ...all.map((e) => `  ${e.id.padEnd(w)}  ${e.description}`)].join("\n"));
 }

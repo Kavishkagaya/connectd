@@ -35,12 +35,12 @@ HEADED=1 PLAYWRIGHT=/path/to/playwright-core/index.mjs CHROME=/usr/bin/google-ch
 KEEP=1 scripts/e2e/run.sh
 ```
 
-It packs the two published packages, installs the tarballs with npm in a new project, and runs everything on Node, the way a developer's project does. Nothing reaches Cloudflare or GitHub. Each check prints `PASS` or `FAIL`, and the script stops at the first failure.
+It packs the two published packages and starts a new project the way a developer does: `npx @kavishkagaya/connectd init`, which installs `@kavishkagaya/connectd`, the Cloudflare target and wrangler itself (ours from this build's tarballs through `CONNECTD_TARBALLS`, wrangler from npm). Then it runs everything on Node, as a developer's project does. Nothing reaches Cloudflare or GitHub. Each check prints `PASS` or `FAIL`, and the script stops at the first failure.
 
 | Step | Checks |
 | --- | --- |
-| Install | `npx connectd` runs on Node from the tarball |
-| `init`, `add` | the root key and `oc.config.ts` are written; running `init` again keeps the root key; `add github` copies the provider |
+| `init --yes` | installs `@kavishkagaya/connectd` as the app's dependency, the Cloudflare target and wrangler as dev dependencies; writes the root key, `oc.config.ts` with the target, and the typed registry; `--add github` copies the provider and its env names; running `init` again keeps the root key |
+| `init` in a terminal (python3) | the step-by-step setup in a real pty, answered by keys: the default origin, port 8795, yes to the install, Cloudflare (wrangler login offered if it isn't logged in), github and slack ticked in the checklist with arrows and space; the answers land in `.env`, `oc/` and `package.json` |
 | `dev` | dev writes the app's API key and events secret into `.env`; no key and a wrong key get 401, the app's key gets 200; through the SDK, `connect` returns GitHub's authorize URL, `status` is `pending` and `connections.list` shows the connection |
 | `keys` against dev | `create` shows the secret once, and the key works; `ls` never shows a secret; `roll --grace` keeps the old secret working, `revoke` stops it; `--events` finds the events secret by name; **`keys` never changes `.env`** |
 | `dashboard --print` | prints a sign-in link |
@@ -55,12 +55,11 @@ The helpers live next to the script: `app.mjs` (the app's SDK calls), `worker-va
 
 This is the part the local Worker can't show: what `deploy` does to a Worker that already exists. Use a scratch project (`KEEP=1 scripts/e2e/run.sh` leaves one, with wrangler installed) and a Cloudflare account.
 
-Install wrangler first, then log in: it's a dev dependency of the repo root (`bun install`), and the scratch project has its own.
+Wrangler is the project's, never the repo's: `init` installed it in the scratch project (a developer's gets it the same way), and `connectd deploy` offers to install it when it's missing and to run `wrangler login` when it isn't logged in. To log in ahead of time, from the scratch project:
 
 ```sh
-bun install                         # in the repo: wrangler is a root dev dependency
-bunx wrangler login                 # once; or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
-bunx wrangler whoami                # the account deploys go to
+npx wrangler login                  # once; or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+npx wrangler whoami                 # the account deploys go to
 ```
 
 Without a browser on the machine, `wrangler login --browser=false` prints the link; open it on the same machine, since it returns to `localhost:8976`.
@@ -74,6 +73,7 @@ npx connectd deploy                 # redeploy
 npx connectd deploy --rotate key
 ```
 
+- [ ] Logged out (`npx wrangler logout`), `connectd deploy` in a terminal offers `wrangler login` and then deploys; with `CI=true` it stops before any step and names `CLOUDFLARE_API_TOKEN`.
 - [ ] The first deploy prints the app's `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` once. With them in an app's env, `node --env-file=<file> app.mjs` passes against the Worker.
 - [ ] `secret list` shows `CONNECTD_KEY_V1`, `CONNECTD_STATE_KEY`, `CONNECTD_SESSIONS_KEY`, `CONNECTD_WEBHOOKS_KEY` and `CONNECTD_ADMIN_KEY`, plus the project's own names. It never shows `CONNECTD_ROOT_KEY`.
 - [ ] **A redeploy changes no key.** Its `secrets set` line lists only the project's own names, no `CONNECTD_*`. The app's key still works, and the sealed connection's `token()` returns the same key.

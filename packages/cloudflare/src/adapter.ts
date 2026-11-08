@@ -1,8 +1,8 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve as resolvePath } from "node:path";
-import type { DeployContext, Deployed, Env } from "@kavishkagaya/connectd";
+import type { DeployContext, Deployed, Env, SetupContext } from "@kavishkagaya/connectd";
 import { ENV } from "@kavishkagaya/connectd/keys";
 import { workdir } from "@kavishkagaya/connectd/workdir";
 import { type Generated, generate, publicUrl, workerName } from "./generate.ts";
@@ -20,8 +20,58 @@ import type { CloudflareOptions } from "./index.ts";
 const json = <T>(out: string) => JSON.parse(out.slice(Math.max(0, out.search(/^\s*\[/m)))) as T;
 
 export const NO_WRANGLER = `connectd deploy runs wrangler, which isn't installed here:
-  bun add -d wrangler     (or npm i -D wrangler)
-  bunx wrangler login     (or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)`;
+  npm i -D wrangler       (or bun add -d, pnpm add -D, yarn add -D)
+  npx wrangler login      (or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)`;
+
+export const NOT_LOGGED_IN = `wrangler isn't logged in to Cloudflare:
+  npx wrangler login      (opens your browser; --browser=false prints the link)
+  in CI: set CLOUDFLARE_API_TOKEN (Workers Scripts, D1: edit) and CLOUDFLARE_ACCOUNT_ID`;
+
+/** wrangler: `bin` (tests), CONNECTD_WRANGLER, the project's own, else one on PATH; null when there's none. */
+function findWrangler(o: Pick<SetupContext, "dir" | "env" | "bin">): string | null {
+  if (o.bin) return o.bin;
+  if (o.env.CONNECTD_WRANGLER) return o.env.CONNECTD_WRANGLER;
+  const own = join(o.dir, "node_modules", ".bin", process.platform === "win32" ? "wrangler.cmd" : "wrangler");
+  if (existsSync(own)) return own;
+  // On the PATH the deploy runs with (its env), as whoami and deploy will run it.
+  return spawnSync("wrangler", ["--version"], { stdio: "ignore", env: o.env as NodeJS.ProcessEnv, shell: process.platform === "win32" }).error ? null : "wrangler";
+}
+
+/** Who wrangler is signed in as, or null. */
+function whoami(bin: string, o: Pick<SetupContext, "dir" | "env">): string | null {
+  const r = spawnSync(bin, ["whoami"], { cwd: o.dir, env: o.env as NodeJS.ProcessEnv, encoding: "utf8", shell: process.platform === "win32" });
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") throw new Error(NO_WRANGLER);
+  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  if (r.status !== 0 || !/You are logged in/i.test(out)) return null;
+  return /associated with the email (\S+?)\.?\s/.exec(out)?.[1] ?? (/API Token/i.test(out) ? "an API token" : "your account");
+}
+
+/**
+ * wrangler installed and signed in (`connectd init` after installing the target, and every deploy).
+ * At a terminal it offers the install and `wrangler login`; elsewhere (CI) it says what to do.
+ * Returns the binary to run.
+ */
+async function ready(o: SetupContext): Promise<string> {
+  let bin = findWrangler(o);
+  if (!bin) {
+    if (!o.prompts || !(await o.prompts.confirm("Cloudflare deploys go through wrangler, which isn't installed in this project. Install it now?"))) throw new Error(NO_WRANGLER);
+    if (!o.install(["wrangler"]) || !(bin = findWrangler(o))) throw new Error(`installing wrangler didn't work\n${NO_WRANGLER}`);
+  }
+  let who = whoami(bin, o);
+  if (!who) {
+    if (o.env.CLOUDFLARE_API_TOKEN) throw new Error(`wrangler can't sign in with CLOUDFLARE_API_TOKEN: check the token (\`npx wrangler whoami\` says why)`);
+    if (!o.prompts || !(await o.prompts.confirm("wrangler isn't logged in to Cloudflare. Log in now (opens your browser)?"))) throw new Error(NOT_LOGGED_IN);
+    spawnSync(bin, ["login"], { cwd: o.dir, env: o.env as NodeJS.ProcessEnv, stdio: "inherit", shell: process.platform === "win32" });
+    if (!(who = whoami(bin, o))) throw new Error(NOT_LOGGED_IN);
+  }
+  o.log(`  cloudflare   wrangler, logged in as ${who}`);
+  return bin;
+}
+
+/** The target's setup: wrangler installed and logged in. */
+export async function setup(o: SetupContext): Promise<void> {
+  await ready(o);
+}
 
 /**
  * Cloudflare's "no such Worker", the only failure of `secret list` that means a new Worker: API
@@ -64,7 +114,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
     return { name, url, dryRun: true as const, generated: g };
   }
 
-  const bin = o.bin ?? env.CONNECTD_WRANGLER ?? (existsSync(join(o.dir, "node_modules", ".bin", "wrangler")) ? join(o.dir, "node_modules", ".bin", "wrangler") : "wrangler");
+  const bin = await ready(o);
   const w = (args: string[]) => wrangler(bin, args, o.dir, env, log);
 
   // What the Worker already has: how many encryption key versions it holds.

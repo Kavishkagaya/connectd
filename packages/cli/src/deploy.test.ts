@@ -1,10 +1,10 @@
 import { parseEnv } from "./env.ts";
 import { afterAll, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { main } from "./cli.ts";
-import { type CloudflareDeployed, generate, NO_WRANGLER } from "@kavishkagaya/connectd-cloudflare/adapter";
+import { type CloudflareDeployed, generate, NO_WRANGLER, NOT_LOGGED_IN } from "@kavishkagaya/connectd-cloudflare/adapter";
 import { importHmacKey } from "@kavishkagaya/connectd-kernel";
 import { readToken } from "@kavishkagaya/connectd-runtime";
 import { deploy, type DeployOptions } from "./deploy.ts";
@@ -25,6 +25,10 @@ const FAKE = `#!/usr/bin/env bun
 import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 const [log, path] = [process.env.FAKE_LOG, process.env.FAKE_ACCOUNT];
 const argv = process.argv.slice(2);
+// Signed in unless FAKE_LOGGED_OUT; \`login\` signs in (a file next to the account). Not recorded: every deploy asks.
+const signedIn = () => !process.env.FAKE_LOGGED_OUT || existsSync(path + ".login");
+if (argv[0] === "whoami") { if (signedIn()) console.log("👋 You are logged in with an OAuth Token, associated with the email dev@example.com."); else console.error("✘ [ERROR] Not logged in."); process.exit(signedIn() ? 0 : 1); }
+if (argv[0] === "login") { writeFileSync(path + ".login", ""); console.log("Successfully logged in."); process.exit(0); }
 const sf = argv.includes("--secrets-file") ? argv[argv.indexOf("--secrets-file") + 1] : null;
 const secrets = sf ? { body: readFileSync(sf, "utf8"), mode: statSync(sf).mode & 0o777 } : null;
 appendFileSync(log, JSON.stringify({ argv, secrets }) + "\\n");
@@ -267,6 +271,49 @@ test("refused before anything changes: derived keys or the app's keys in the env
   writeFileSync(join(s.dir, ".env"), `CONNECTD_ROOT_KEY=${ROOT}\n`);
   const r = await s.run({ env: { ...s.env, CONNECTD_ROOT_KEY: "" } });
   expect(s.account().workers[r.name]!.secrets.CONNECTD_ADMIN_KEY).toBe((await deploymentKeys(ROOT, "production")).CONNECTD_ADMIN_KEY!);
+});
+
+/** Yes or no to every question, recorded. */
+const answer = (yes: boolean, asked: string[] = []) => ({
+  asked,
+  prompts: { confirm: async (q: string) => (asked.push(q), yes), text: async () => "", choose: async () => "", checklist: async () => [] },
+});
+
+test("wrangler not logged in: refused before any step in CI; at a terminal, deploy offers wrangler login and goes on", async () => {
+  const s = setup();
+  s.env.FAKE_LOGGED_OUT = "1";
+  await expect(s.run()).rejects.toThrow(NOT_LOGGED_IN);
+  expect(s.calls()).toEqual([]);
+  // A no stops there too.
+  const no = answer(false);
+  await expect(s.run({ prompts: no.prompts })).rejects.toThrow(NOT_LOGGED_IN);
+  expect(no.asked[0]).toContain("Log in now");
+  const yes = answer(true);
+  const r = await s.run({ prompts: yes.prompts });
+  expect(r.url).toBeDefined();
+  expect(s.lines.join("\n")).toContain("wrangler, logged in as dev@example.com");
+});
+
+test("no wrangler in the project or on PATH: at a terminal, deploy offers to install it with the project's package manager", async () => {
+  const s = setup();
+  // An npm project (its lockfile), whatever runs the test.
+  writeFileSync(join(s.dir, "package-lock.json"), "{}");
+  // No wrangler on PATH: bun's own directory only (the fake runs on bun).
+  s.env.PATH = `${dirname(process.execPath)}:/usr/bin:/bin`;
+  await expect(s.run({ wrangler: undefined })).rejects.toThrow(NO_WRANGLER);
+  const ran: string[][] = [];
+  // The "install": the fake wrangler into node_modules/.bin, as npm would put it there.
+  const run = (cmd: string, args: string[]) => {
+    ran.push([cmd, ...args]);
+    mkdirSync(join(s.dir, "node_modules", ".bin"), { recursive: true });
+    symlinkSync(join(s.dir, "wrangler-fake"), join(s.dir, "node_modules", ".bin", "wrangler"));
+    return 0;
+  };
+  const yes = answer(true);
+  const r = await s.run({ wrangler: undefined, prompts: yes.prompts, run });
+  expect(yes.asked[0]).toContain("Install it now?");
+  expect(ran).toEqual([["npm", "install", "-D", "wrangler"]]);
+  expect(r.url).toBeDefined();
 });
 
 test("wrangler failures: missing binary explained, a failing step stops the deploy", async () => {

@@ -33,9 +33,8 @@ You write one small file per provider. connectd runs each connection as its own 
 ## Quickstart
 
 ```sh
-npm i @kavishkagaya/connectd
-npx connectd init          # the root key, config, client and one API route
-npx connectd add github    # copies the GitHub provider into src/oc/github/
+npx @kavishkagaya/connectd init   # step by step: installs it, the deploy target, providers (github…)
+npx connectd add github    # more providers later: copies one into src/oc/<id>/
 npx connectd dev           # the runtime on :8787; writes your app's dev API key into .env
 npx connectd dashboard     # the dashboard, signed in
 ```
