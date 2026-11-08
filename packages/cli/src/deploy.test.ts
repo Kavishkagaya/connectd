@@ -36,7 +36,7 @@ if (process.env.FAKE_FAIL === argv.slice(0, 2).join(" ")) { console.error(proces
 const [c1, c2] = argv;
 if (c1 === "secret" && c2 === "list") {
   const w = a.workers[opt("--name")];
-  if (!w) { console.error("This Worker does not exist on your account. [code: 10007]"); process.exit(1); }
+  if (!w) { console.error(process.env.FAKE_OLD ? "This Worker does not exist on your account. [code: 10007]" : \`✘ [ERROR] Worker "\${opt("--name")}" not found.\`); process.exit(1); }
   console.log(JSON.stringify(Object.keys(w.secrets).map((name) => ({ name, type: "secret_text" }))));
 } else if (c1 === "d1" && c2 === "list") console.log(JSON.stringify(a.dbs));
 else if (c1 === "d1" && c2 === "create") { a.dbs.push({ uuid: "db-" + a.dbs.length, name: argv[2] }); save(); console.log("Created"); }
@@ -227,7 +227,7 @@ test("a deploy with another root key replaces no key: what's sealed still opens,
   expect(s.account().workers[first.name]!.secrets).toEqual(before);
   // Its /admin calls fail: no app key made, and the output says why.
   expect(again.keys).toBeUndefined();
-  expect(s.lines.join("\n")).toContain("aren't this root key's");
+  expect(s.lines.join("\n")).toContain("holds keys from another CONNECTD_ROOT_KEY than this one: deploy left them as they were");
 });
 
 test("custom domain: --url sets the var and a custom-domain route, deployed once", async () => {
@@ -284,7 +284,7 @@ test("wrangler failures: missing binary explained, a failing step stops the depl
 
 test("a deployment that can't be reached after deploying: the deploy stands, the app's key is made later", async () => {
   const s = setup();
-  const r = await s.run({ fetch: (async () => Response.json({ error: { code: "x", message: "nope" } }, { status: 401 })) as unknown as typeof fetch });
+  const r = await s.run({ fetch: (async () => Response.json({ error: { code: "x", message: "nope" } }, { status: 403 })) as unknown as typeof fetch });
   expect(r.url).toBeDefined();
   expect(s.lines.join("\n")).toContain("connectd keys create app --env production");
 });
@@ -332,13 +332,20 @@ test("existing Worker without state.json (CI): refused until --url, its vars nev
   expect(s.account().workers[first.name]!.history).toEqual([{}, { CONNECTD_PUBLIC_URL: first.url! }, { CONNECTD_PUBLIC_URL: first.url! }]);
 });
 
-test("new-Worker detection: only Cloudflare's 10007; an index without its Worker gets the same keys back", async () => {
+test("new-Worker detection: only Cloudflare's no such Worker (either wording); an index without its Worker gets the same keys back", async () => {
   const s = setup();
   s.env.FAKE_FAIL = "secret list";
-  s.env.FAKE_ERROR = "✘ [ERROR] A request to the Cloudflare API failed: route not found";
-  await expect(s.run()).rejects.toThrow(/route not found/);
-  expect(s.calls().length).toBe(1);
+  for (const error of ["✘ [ERROR] A request to the Cloudflare API failed: route not found", '✘ [ERROR] Worker "someone-else" not found.']) {
+    s.env.FAKE_ERROR = error;
+    s.reset();
+    await expect(s.run()).rejects.toThrow(error.slice(10));
+    expect(s.calls().length).toBe(1);
+  }
   delete s.env.FAKE_FAIL;
+  // Older wranglers' wording: a new Worker too.
+  const old = setup();
+  old.env.FAKE_OLD = "1";
+  expect((await old.run()).pushed).toContain("CONNECTD_ADMIN_KEY");
 
   const first = await s.run();
   const before = { ...s.account().workers[first.name]!.secrets };

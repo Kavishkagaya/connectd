@@ -7,6 +7,7 @@
 #   scripts/e2e/run.sh                       (from the repo; needs bun, node >= 22.5, npm)
 #   PLAYWRIGHT=/path/to/playwright-core/index.mjs CHROME=/usr/bin/google-chrome scripts/e2e/run.sh
 #                                            (adds the dashboard in a real browser)
+#   HEADED=1 PLAYWRIGHT=… scripts/e2e/run.sh   (the browser part in a visible window)
 #   KEEP=1 scripts/e2e/run.sh                (keeps the project to poke at; its path is printed)
 #
 # Ports: DEV_PORT (8791) and WORKER_PORT (8792). Exits non-zero on the first failed check.

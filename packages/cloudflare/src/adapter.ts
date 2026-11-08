@@ -23,8 +23,11 @@ export const NO_WRANGLER = `connectd deploy runs wrangler, which isn't installed
   bun add -d wrangler     (or npm i -D wrangler)
   bunx wrangler login     (or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)`;
 
-/** Cloudflare's "no such Worker" (API error 10007), the only failure of `secret list` that means a new Worker. */
-const NEW_WORKER = /\[code: 10007\]|does not exist on your account/;
+/**
+ * Cloudflare's "no such Worker", the only failure of `secret list` that means a new Worker: API
+ * error 10007 (older wranglers print it), or `Worker "<name>" not found.` (wrangler 4.15x).
+ */
+const newWorker = (name: string, message: string) => /\[code: 10007\]|does not exist on your account/.test(message) || message.includes(`Worker "${name}" not found`);
 
 type State = { name?: string; url?: string; databaseId?: string };
 
@@ -67,7 +70,7 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
   // What the Worker already has: how many encryption key versions it holds.
   // Only Cloudflare's own "no such Worker" counts as new.
   const list = await w(["secret", "list", "--name", name, "--format", "json"]).catch((e: Error) => {
-    if (NEW_WORKER.test(e.message)) return null;
+    if (newWorker(name, e.message)) return null;
     throw e;
   });
   if (list !== null && !url)

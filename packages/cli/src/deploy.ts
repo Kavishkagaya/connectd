@@ -131,7 +131,10 @@ export async function deploy(o: DeployOptions): Promise<Deployed> {
   rememberUrl(o.dir, environment, r.url);
   // The app's credentials: made on the first deploy (the database has none), shown once.
   const first = await firstKeys({ url: r.url, environment, root: root as string }, !!project.events, o.fetch ?? fetch).catch((e: Error) => {
-    log(`\ncouldn't reach /admin yet (${e.message}); \`connectd keys create app --env ${environment}\` makes the app's key`);
+    // Another root key than the one that made the deployment's keys: deploy replaced none of them.
+    if (/refused the admin request/.test(e.message))
+      log(`\n${r.url} holds keys from another ${ENV.root} than this one: deploy left them as they were, so its connections and your app's keys still work. Use the project's root key (the one its first deploy had) for deploy, \`connectd keys\` and \`connectd dashboard\`.`);
+    else log(`\ncouldn't reach /admin yet (${e.message}); \`connectd keys create app --env ${environment}\` makes the app's key`);
     return null;
   });
   if (first) {

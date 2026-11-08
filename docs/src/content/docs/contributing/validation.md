@@ -29,6 +29,8 @@ Both must pass on every PR.
 scripts/e2e/run.sh
 # with the dashboard in a real browser:
 PLAYWRIGHT=/path/to/playwright-core/index.mjs CHROME=/usr/bin/google-chrome scripts/e2e/run.sh
+# the browser part in a visible window, slowed down, to watch it:
+HEADED=1 PLAYWRIGHT=/path/to/playwright-core/index.mjs CHROME=/usr/bin/google-chrome scripts/e2e/run.sh
 # keep the project afterwards to look around (its path is printed):
 KEEP=1 scripts/e2e/run.sh
 ```
@@ -51,7 +53,19 @@ The helpers live next to the script: `app.mjs` (the app's SDK calls), `worker-va
 
 ## 3. A real deploy and redeploy
 
-This is the part the local Worker can't show: what `deploy` does to a Worker that already exists. Use a scratch project (`KEEP=1 scripts/e2e/run.sh` leaves one) and a Cloudflare account (`npx wrangler login`).
+This is the part the local Worker can't show: what `deploy` does to a Worker that already exists. Use a scratch project (`KEEP=1 scripts/e2e/run.sh` leaves one, with wrangler installed) and a Cloudflare account.
+
+Install wrangler first, then log in: it's a dev dependency of the repo root (`bun install`), and the scratch project has its own.
+
+```sh
+bun install                         # in the repo: wrangler is a root dev dependency
+bunx wrangler login                 # once; or CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+bunx wrangler whoami                # the account deploys go to
+```
+
+Without a browser on the machine, `wrangler login --browser=false` prints the link; open it on the same machine, since it returns to `localhost:8976`.
+
+To prove nothing sealed is stranded, connect something whose credential is sealed before redeploying: an API-key connection (`connectd add --custom keyed --template api-key`, without its identity call), connected with `connect({ key })`, then `token()` after each deploy below returns the same key.
 
 ```sh
 npx connectd deploy                 # first deploy
@@ -62,10 +76,10 @@ npx connectd deploy --rotate key
 
 - [ ] The first deploy prints the app's `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` once. With them in an app's env, `node --env-file=<file> app.mjs` passes against the Worker.
 - [ ] `secret list` shows `CONNECTD_KEY_V1`, `CONNECTD_STATE_KEY`, `CONNECTD_SESSIONS_KEY`, `CONNECTD_WEBHOOKS_KEY` and `CONNECTD_ADMIN_KEY`, plus the project's own names. It never shows `CONNECTD_ROOT_KEY`.
-- [ ] **A redeploy changes no key.** Its `secrets set` line lists only the project's own names, no `CONNECTD_*`. The app's key still works, and a connection made before still reads as it was (`status`, `token`).
-- [ ] **A redeploy with another root key changes nothing either.** Put a different `CONNECTD_ROOT_KEY` in the shell and deploy: `secrets set` has no `CONNECTD_*` names, the app keeps working, and the CLI reports that the deployment's keys "aren't this root key's".
+- [ ] **A redeploy changes no key.** Its `secrets set` line lists only the project's own names, no `CONNECTD_*`. The app's key still works, and the sealed connection's `token()` returns the same key.
+- [ ] **A redeploy with another root key changes nothing either.** Put a different `CONNECTD_ROOT_KEY` in the shell and deploy: `secrets set` has no `CONNECTD_*` names, the app and the sealed connection keep working, and deploy says the Worker "holds keys from another CONNECTD_ROOT_KEY than this one".
 - [ ] `--rotate key` sets `CONNECTD_KEY_V2` and nothing else. V1 stays, and old connections still read.
-- [ ] `connectd keys --env production` lists the keys, and `connectd dashboard --env production` opens the dashboard signed in.
+- [ ] `connectd keys --env production` lists the keys, and `connectd dashboard --env production` opens the dashboard signed in. `scripts/e2e/browser.mjs` runs the dashboard checks against it: `node browser.mjs "$(connectd dashboard --print --env production | grep -o 'https://[^ ]*#login=[^ ]*')" <playwright> <chrome>` (`HEADED=1` to watch). It makes the first account, so run it on a fresh environment.
 - [ ] `--env staging` makes its own Worker and database, and its own keys: production's API key gets 401 there.
 - [ ] A CI-style deploy (`CI=true`, the root key and the provider secrets in the shell, `.connectd/` deleted, `--url` passed) deploys the same Worker, and its keys still work.
 
