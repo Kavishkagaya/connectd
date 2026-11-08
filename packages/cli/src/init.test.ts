@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { main } from "./cli.ts";
 import { parseEnv } from "./env.ts";
-import { init, installCommand, packageManager } from "./init.ts";
+import { init, installCommand, oldNode, packageManager } from "./init.ts";
 
 const app = (files: Record<string, string> = {}) => {
   const dir = mkdtempSync(join(tmpdir(), "connectd-init-"));
@@ -50,6 +50,21 @@ test("init in a Next.js app: .env (the root key, CONNECTD_URL, APP_URL), .gitign
   await init({ skipInstall: true, dir, log: (l) => void again.push(l) });
   expect(read(dir, ".env")).toBe(before);
   expect(again.join("\n")).toContain("nothing to write: already set up");
+});
+
+test("init says up front when Node is too old for connectd dev (node:sqlite) and wrangler", async () => {
+  expect(oldNode({ node: "20.19.4" })).toContain("Node 20.19.4: connectd dev needs Node 22.5 or later (or Bun)");
+  expect(oldNode({ node: "22.4.1" })).not.toBeNull();
+  expect(oldNode({ node: "22.5.0" })).toBeNull();
+  expect(oldNode({ node: "24.1.0" })).toBeNull();
+  expect(oldNode({ node: "18.0.0", bun: "1.3.14" })).toBeNull();
+  const dir = app({ "package.json": JSON.stringify({ name: "web" }) });
+  const lines: string[] = [];
+  await init({ skipInstall: true, yes: true, dir, log: (l) => void lines.push(l), versions: { node: "20.19.4" } });
+  expect(lines[0]).toStartWith("note: this is Node 20.19.4");
+  const fine: string[] = [];
+  await init({ skipInstall: true, yes: true, dir: app({ "package.json": JSON.stringify({ name: "web" }) }), log: (l) => void fine.push(l), versions: { node: "22.23.0" } });
+  expect(fine.some((l) => l.includes("Node 22.5"))).toBe(false);
 });
 
 test("init elsewhere: a new .env (owner only), the config at the root, the route left to mount; --port, --app-url", async () => {

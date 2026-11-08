@@ -111,7 +111,14 @@ export function Connections({ o, query }: { o: Overview; query: URLSearchParams 
                   </TableHeader>
                   <TableBody>
                     {rows.map((c) => (
-                      <TableRow key={`${c.def}/${c.id}`}>
+                      // The whole row opens the connection; the id's link is there for the keyboard and new tabs.
+                      <TableRow
+                        key={`${c.def}/${c.id}`}
+                        className="cursor-pointer"
+                        onClick={(e) => {
+                          if (!(e.target as Element).closest("a") && !window.getSelection()?.toString()) window.location.hash = hash("c", c.def, c.id);
+                        }}
+                      >
                         <TableCell>{c.def}</TableCell>
                         <TableCell>
                           <a className="text-primary font-medium underline-offset-4 hover:underline" href={hash("c", c.def, c.id)}>

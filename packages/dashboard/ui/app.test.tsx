@@ -115,6 +115,19 @@ test("a connection: connect with its fields, run an action from its schema's for
   await screen.findByText(/"starred": "o\/r"/);
 });
 
+test("connections: a click anywhere on a row opens that connection", async () => {
+  const u = await ui("#/c/keyed/k1", { root: true });
+  await screen.findByText("No connection with this id yet.");
+  await u.user.type(screen.getByLabelText("apiKey"), "sk_live_1");
+  await u.user.click(screen.getByRole("button", { name: "Connect" }));
+  await screen.findByText("Connected.");
+  await u.user.click(screen.getByRole("link", { name: "Connections" }));
+  const row = (await screen.findByRole("link", { name: "k1" })).closest("tr") as HTMLElement;
+  // The definition's cell, not the id's link.
+  await u.user.click(within(row).getByText("keyed"));
+  await waitFor(() => expect(window.location.hash).toBe("#/c/keyed/k1"));
+});
+
 test("a hostile id is text, never markup", async () => {
   const evil = `<img src=x onerror="window.pwned=1">`;
   await ui(`#/c/keyed/${encodeURIComponent(evil)}`, { root: true });
