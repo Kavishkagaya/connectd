@@ -66,6 +66,8 @@ export type InitOptions = {
   /** Runs the install command; resolves to its exit code (tests pass one). */
   run?: (cmd: string, args: string[], cwd: string) => number;
   log?: (line: string) => void;
+  /** The runtime's versions (default `process.versions`): tests pass an old Node. */
+  versions?: { node?: string; bun?: string };
 };
 
 /** Whether git ignores `file` (parent .gitignores and negations included); outside a repo, the directory's own .gitignore. */
@@ -150,6 +152,17 @@ const spec = (from: string, to: string) => {
 /** Popular first in the checklist; the rest of the catalog after them. */
 const POPULAR = ["github", "google", "slack"];
 
+/**
+ * Said before anything installs: `connectd dev` needs `node:sqlite` (Node 22.5+) or Bun, and wrangler
+ * Node 22, so an older Node would only fail later, at `connectd dev`. Null when the runtime is fine.
+ */
+export function oldNode(versions: { node?: string; bun?: string } = process.versions): string | null {
+  if (versions.bun || !versions.node) return null;
+  const [major = 0, minor = 0] = versions.node.split(".").map(Number);
+  if (major > 22 || (major === 22 && minor >= 5)) return null;
+  return `this is Node ${versions.node}: connectd dev needs Node 22.5 or later (or Bun), and wrangler Node 22. Switch (nvm install 22) before connectd dev`;
+}
+
 export async function init(o: InitOptions): Promise<void> {
   const log = o.log ?? console.log;
   const dir = o.dir;
@@ -160,6 +173,8 @@ export async function init(o: InitOptions): Promise<void> {
   const q = (s: string) => `\n${++n}. ${s}`;
   const here = relative(process.cwd(), dir);
   if (ask) log(`connectd init: set up connectd in ${!here ? "this folder" : here.startsWith("..") ? dir : here}  (Enter keeps the default)`);
+  const old = oldNode(o.versions);
+  if (old) log(`note: ${old}`);
   const wrote: string[] = [];
   const kept: string[] = [];
   const write = (file: string, text: string) => {
