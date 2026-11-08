@@ -186,7 +186,7 @@ test("first deploy: D1 created, migrations, deploy with the secrets, again for t
   expect(existsSync(join(r.generated.migrations, "0001_index.sql"))).toBe(true);
 });
 
-test("re-deploy: the same derived keys again, no new app key; --rotate key adds V2", async () => {
+test("re-deploy: no key replaced, no new app key; --rotate key adds V2", async () => {
   const s = setup();
   const first = await s.run();
   const before = { ...s.account().workers[first.name]!.secrets };
@@ -198,22 +198,36 @@ test("re-deploy: the same derived keys again, no new app key; --rotate key adds 
     `d1 migrations apply ${first.name}-index --remote --config`,
     "deploy --config --secrets-file",
   ]);
-  // Every deploy sends them all: derived, so the same values.
-  expect(again.pushed?.sort()).toEqual(Object.keys(before).sort());
+  // Only the project's secrets: every key the Worker holds stays as it is.
+  expect(again.pushed?.sort()).toEqual(["GH_ID", "GH_SECRET"]);
   expect(s.account().workers[first.name]!.secrets).toEqual(before);
   expect(s.account().dbs.length).toBe(1);
   expect(again.keys).toEqual([]);
   expect(s.lines.join("\n")).toContain("CONNECTD_API_KEY=the one you stored (1 live");
 
   const rot = await s.run({ rotate: ["key"] });
-  expect(rot.pushed).toContain("CONNECTD_KEY_V2");
+  expect(rot.pushed?.sort()).toEqual(["CONNECTD_KEY_V2", "GH_ID", "GH_SECRET"]);
   const after = s.account().workers[first.name]!.secrets;
   expect(after.CONNECTD_KEY_V1).toBe(before.CONNECTD_KEY_V1!);
   expect(after.CONNECTD_KEY_V2).not.toBe(before.CONNECTD_KEY_V1!);
-  // Kept from then on, without the flag.
-  expect((await s.run()).pushed).toContain("CONNECTD_KEY_V2");
+  // Kept from then on, without the flag, and never sent again.
+  expect((await s.run()).pushed).not.toContain("CONNECTD_KEY_V2");
+  expect(s.account().workers[first.name]!.secrets.CONNECTD_KEY_V2).toBe(after.CONNECTD_KEY_V2!);
   await expect(s.run({ rotate: ["api-key"] })).rejects.toThrow("connectd keys roll");
   await expect(s.run({ rotate: ["state"] })).rejects.toThrow("--rotate takes key");
+});
+
+test("a deploy with another root key replaces no key: what's sealed still opens, /admin refuses it", async () => {
+  const s = setup();
+  const first = await s.run();
+  const before = { ...s.account().workers[first.name]!.secrets };
+  s.env.CONNECTD_ROOT_KEY = newRootKey();
+  const again = await s.run();
+  expect(again.pushed?.sort()).toEqual(["GH_ID", "GH_SECRET"]);
+  expect(s.account().workers[first.name]!.secrets).toEqual(before);
+  // Its /admin calls fail: no app key made, and the output says why.
+  expect(again.keys).toBeUndefined();
+  expect(s.lines.join("\n")).toContain("aren't this root key's");
 });
 
 test("custom domain: --url sets the var and a custom-domain route, deployed once", async () => {

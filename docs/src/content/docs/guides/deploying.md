@@ -43,7 +43,7 @@ Register the callback with the provider: `https://<your-worker>.workers.dev/call
 Deploy then:
 
 1. Resolves the project against `.env.production`, and refuses dev values (anything identical to `.env`).
-2. Derives this environment's runtime keys from the project's root key (`CONNECTD_ROOT_KEY`, which `connectd init` put in `.env`). The same values on every deploy, from any machine; the root key itself is never sent.
+2. Derives this environment's runtime keys from the project's root key (`CONNECTD_ROOT_KEY`, which `connectd init` put in `.env`). The same values on every deploy, from any machine; the root key itself is never sent. Only keys the deployment doesn't have yet are set: a redeploy never replaces a key it holds, so what it stored stays readable.
 3. Creates the D1 database if needed and applies migrations.
 4. Deploys the Worker with its secrets, through a temporary `0600` file that's removed right after.
 5. On the first deploy, makes your app's API key (and events secret, when events are on) in the deployment's database, and prints **your app's env** for this environment:

@@ -25,7 +25,8 @@ export type DeployContext = {
   secrets: Record<string, string>;
   /**
    * The deployment's own keys (#86), derived from the root key for this environment, with encryption
-   * key versions 1..`versions`: the same values on every call, so a deploy sends them all every time.
+   * key versions 1..`versions`: the same values on every call. A deploy sends only the ones the
+   * deployment doesn't hold yet, and never replaces one it holds.
    */
   keys(versions: number): Promise<Record<string, string>>;
   /** Where `secrets` came from (`.env.production`, the shell environment), for messages. */

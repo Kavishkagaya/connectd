@@ -76,13 +76,15 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
     );
   const have = new Set(list === null ? [] : json<{ name: string }[]>(list).map((s) => s.name));
 
-  // The deployment's keys derive from the root key (#86): the same values every time, so they're all
-  // sent on every deploy. Encryption keys keep every version up to the highest; --rotate key adds one.
+  // The deployment's keys derive from the root key (#86). Only the ones the Worker doesn't have yet
+  // are sent: a key it holds is never replaced, so a redeploy (even from a wrong root key) can't
+  // strand what was sealed under it. --rotate key adds one encryption key version; older ones stay.
   // ponytail: the version count is read from the Worker's secret names; a deleted Worker forgets it
   // (V1 comes back): pass --rotate key once per lost version to restore them.
   const versions = [...have].flatMap((k) => (k.startsWith(ENV.key) ? [Number(k.slice(ENV.key.length))] : [])).filter(Number.isInteger);
   const top = Math.max(1, ...versions) + (rotate.includes("key") && versions.length ? 1 : 0);
-  const push: Record<string, string> = { ...secrets, ...(await o.keys(top)) };
+  const derived = Object.entries(await o.keys(top)).filter(([k]) => !have.has(k));
+  const push: Record<string, string> = { ...secrets, ...Object.fromEntries(derived) };
 
   // The index database: found by name, so a deploy from another machine finds the same one.
   const find = async () => json<{ uuid: string; name: string }[]>(await w(["d1", "list", "--json"])).find((d) => d.name === db)?.uuid;

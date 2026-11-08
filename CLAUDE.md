@@ -101,7 +101,7 @@ packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bu
 
 packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, url })` in oc.config.ts; the adapter deploys through wrangler
   src/index.ts        cloudflare(): a Target, data only (Workers-safe: the config is bundled into the Worker)
-  src/adapter.ts      deploy(ctx) (`/adapter` export, Node): per environment its own Worker/D1 (`<name>-<env>`, cloudflare({ environments })) and state file; wrangler secret list (encryption key versions), d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, every derived key every time, with the version)
+  src/adapter.ts      deploy(ctx) (`/adapter` export, Node): per environment its own Worker/D1 (`<name>-<env>`, cloudflare({ environments })) and state file; wrangler secret list (encryption key versions), d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version; only derived keys the Worker lacks: a held key is never replaced)
   src/generate.ts     deploy's files in .connectd/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
