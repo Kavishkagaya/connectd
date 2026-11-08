@@ -2,7 +2,7 @@
 title: Adding a provider
 description: Put a new provider in the catalog that connectd add copies from.
 sidebar:
-  order: 2
+  order: 3
 ---
 
 The catalog's source is `packages/providers/src/`, one file per provider. `bun run registry` turns it into `registry/*.json`, which `connectd add` fetches at the CLI's version tag.

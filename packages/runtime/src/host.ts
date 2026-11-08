@@ -18,15 +18,19 @@ export type Settings = {
   keys: Keys;
   /** HMAC key for handshake `state`. */
   stateKey: CryptoKey;
-  /** Bearer token for every non-public route. */
-  apiKey: string;
+  /**
+   * HMAC key of the deployment's signed tokens (#86): CLI requests to `/admin`, dashboard sign-in
+   * links, invites, session cookies. Derived from the project's root key, which never leaves the CLI.
+   * API keys themselves are in the management database (access.ts).
+   */
+  admin: CryptoKey;
   /** This deployment's `/callback` URL, registered with every provider. */
   redirectUri: string;
   /** Connector config per definition id (client id/secret). */
   // ponytail: one app per deployment; per-app config moves to an app instance via `secrets` (#10) when multi-app.
   config: Record<string, unknown>;
-  /** Where the events extension delivers, and the `whsec_...` secret it signs with (#24). */
-  events?: { url: string; secret: string };
+  /** Where the events extension delivers (#24). It signs with the deployment's events secrets (`/admin/keys`, kind `events`). */
+  events?: { url: string };
   /** Public base URL of the `/webhooks` route, and the HMAC key each connection's webhook secret derives from (#25). */
   webhooks?: { url: string; key: CryptoKey };
   /**

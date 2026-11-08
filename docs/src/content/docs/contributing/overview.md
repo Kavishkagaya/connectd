@@ -30,7 +30,7 @@ Try it end to end with the examples:
 
 ```sh
 cd examples/basic
-bunx connectd init   # once: dev's keys into .env
+bunx connectd init   # once: the root key into .env
 bun run dev          # connectd dev on :8787
 ```
 
@@ -81,6 +81,7 @@ CLAUDE.md        a dense map of the codebase
 | The Cloudflare platform, the Cloudflare runtime, the generated Worker | `test/` | vitest (workerd) |
 | Providers | `providers/src/providers.test.ts`, against fakes | `bun test` |
 | Real browser | `packages/*/e2e/chromium.ts` | By hand, with Playwright |
+| The developer walkthrough: npm install, init, dev, SDK, keys, dashboard, the generated Worker | `scripts/e2e/run.sh` | By hand; see [validating a change](/contributing/validation/) |
 
 New platform behaviour goes into **parity**, not one platform's tests. One file: `cd packages/kernel && bun test src/limiter.test.ts`.
 

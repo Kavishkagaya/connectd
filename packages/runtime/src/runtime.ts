@@ -2,6 +2,7 @@ import { type AnyAction, type AnyConnection, definitionOf } from "@kavishkagaya/
 import { actions, group } from "./actions.ts";
 import { type AnyDefinition, type Hooks, type Hosted, host, type Settings } from "./host.ts";
 import { http, type Route, routes } from "./http.ts";
+import { adminRoute } from "./admin.ts";
 
 /** A runtime feature (proxy, events, webhooks, index): HTTP routes, per-connection hooks, or both. */
 export type Extension = {
@@ -40,7 +41,7 @@ export function runtime(o: RuntimeOptions) {
     program: host({ definitions, settings, connection: exts.flatMap((e) => (e.connection ? [e.connection] : [])) }),
     // Built-in routes win on a name clash, like built-in methods.
     fetch: http({
-      routes: Object.assign({}, ...exts.map((e) => e.routes), routes),
+      routes: Object.assign({}, ...exts.map((e) => e.routes), routes, { admin: adminRoute }),
       definitions,
       actions: by ? Object.fromEntries(by) : {},
       settings,

@@ -35,13 +35,35 @@ sequenceDiagram
 - A Next.js app using the App Router. Any framework with `Request → Response` handlers works the same way; Next.js just gets its files generated for you.
 - A GitHub account
 
-## 2. Install
+## 2. Set up
+
+In your app's folder:
 
 ```sh
-npm i @kavishkagaya/connectd
+npx @kavishkagaya/connectd init
 ```
 
-`@kavishkagaya/connectd` is the `connectd` command (`init`, `add`, `dev`, `deploy`) and everything your code imports. The deploy target is its own package, since it's the part you can swap: `connectd init` asks where you'll deploy and installs it.
+In a terminal it's a step-by-step setup (Enter keeps the default):
+
+```text
+1. Your app's origin in dev [http://localhost:3000]:
+2. Port for connectd dev [8787]:
+3. Install @kavishkagaya/connectd (your app imports its SDK; the connectd CLI comes with it)? [Y/n]
+4. Where will connectd run when you deploy?
+     1) Cloudflare Workers  (installs @kavishkagaya/connectd-cloudflare and wrangler)
+     2) Decide later
+   → then, if wrangler isn't logged in: Log in now (opens your browser)? [Y/n]
+5. Providers to add  (↑/↓ move, space ticks, enter confirms)
+   › [x] github        GitHub OAuth app: user tokens, the REST API, repo webhook subscriptions
+     [ ] google        Google OAuth (OIDC): Calendar and the Google APIs, calendar watch channels
+     [ ] slack         Slack OAuth v2: bot and user tokens, Events API webhooks
+     [ ] github-app    GitHub App: one installation per connection, minted installation tokens
+     [ ] Add later     connectd add <provider>, or --custom for your own
+```
+
+Every flag answers its question (`--app-url`, `--port`, `--target`, `--add github,slack`), and `--yes` asks nothing: the flags, then `.env`, then the defaults. Without a terminal (CI) it never asks.
+
+`@kavishkagaya/connectd` is the `connectd` command (`init`, `add`, `dev`, `deploy`) and everything your code imports, so it's a dependency of your app. The deploy target is its own package, since it's the part you can swap; wrangler is a dev dependency of your app too, never global.
 
 | Import | What it's for |
 | --- | --- |
@@ -50,33 +72,29 @@ npm i @kavishkagaya/connectd
 | `@kavishkagaya/connectd/connections` | What connection files import: `connection()`, `action()` |
 | `@kavishkagaya/connectd-cloudflare` | The deploy target for `connectd deploy` |
 
-## 3. Set up the project
-
-```sh
-npx connectd init
-```
-
-It asks where connectd runs when you deploy. Pick Cloudflare Workers and it installs `@kavishkagaya/connectd-cloudflare` and `wrangler` with your package manager, or decide later. Without a terminal (CI), pass `--target cloudflare` or `--target none`.
+## 3. What init wrote
 
 `init` writes only what's missing and never overwrites:
 
 ```text
-.env                                    keys for dev, CONNECTD_URL, APP_URL
-.gitignore                              adds .env (it holds keys now)
+.env                                    the root key, CONNECTD_URL, APP_URL
+.gitignore                              adds .env (it holds the root key now)
 oc.config.ts                            the project config
 src/lib/oc.ts                           the client
 src/app/api/connectd/[...path]/route.ts one route: connect, return, events
 ```
 
-`.env` is shared: your app reads `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` from it, and `connectd dev` reads the rest.
+`.env` is shared: your app reads `CONNECTD_URL`, `CONNECTD_API_KEY` and `CONNECTD_EVENTS_SECRET` from it (`connectd dev` writes the two keys on its first run), and `connectd dev` reads the rest. Keep a copy of `CONNECTD_ROOT_KEY` in your password manager: every environment's keys derive from it.
 
-## 4. Add GitHub
+## 4. GitHub
+
+If you didn't tick it in the setup:
 
 ```sh
 npx connectd add github
 ```
 
-This copies the GitHub provider into `src/oc/github/connection.ts`, adds an empty `src/oc/github/events.ts`, and appends `GITHUB_CLIENT_ID=` and `GITHUB_CLIENT_SECRET=` to `.env`. The file is now yours to read and change. See [providers are code](/concepts/providers-as-code/).
+Either way, this copies the GitHub provider into `src/oc/github/connection.ts`, adds an empty `src/oc/github/events.ts`, and appends `GITHUB_CLIENT_ID=` and `GITHUB_CLIENT_SECRET=` to `.env`. The file is now yours to read and change. See [providers are code](/concepts/providers-as-code/).
 
 Create a GitHub OAuth app at **github.com/settings/developers → OAuth Apps → New OAuth App**:
 

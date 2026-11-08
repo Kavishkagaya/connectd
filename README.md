@@ -27,15 +27,16 @@ You write one small file per provider. connectd runs each connection as its own 
 - **Rate limits** per connection and per app.
 - **One file per provider.** A typed builder, copied from the catalog with `connectd add` or written from a template. Provider code is yours to read and change.
 - **Typed actions.** Functions that run next to the token, called from your app, on a schedule, or when a connection changes state.
-- **Runs where you run.** `connectd dev` runs everything in memory on your laptop, with a dashboard. `connectd deploy` puts it on your own Cloudflare account, one Durable Object per connection.
+- **Runs where you run.** `connectd dev` runs everything on your laptop, with a dashboard. `connectd deploy` puts it on your own Cloudflare account, one Durable Object per connection.
+- **Keys like any API service.** One root key per project, kept by the CLI. Your app's API keys and events secrets are made, rolled with a grace period and revoked from the CLI (`connectd keys`) or the dashboard, which you sign in to with a passkey.
 
 ## Quickstart
 
 ```sh
-npm i @kavishkagaya/connectd
-npx connectd init          # keys, config, client and one API route
-npx connectd add github    # copies the GitHub provider into src/oc/github/
-npx connectd dev           # the runtime on :8787, dashboard at /dashboard
+npx @kavishkagaya/connectd init   # step by step: installs it, the deploy target, providers (github…)
+npx connectd add github    # more providers later: copies one into src/oc/<id>/
+npx connectd dev           # the runtime on :8787; writes your app's dev API key into .env
+npx connectd dashboard     # the dashboard, signed in
 ```
 
 A connection is a folder. The provider is one file:
@@ -116,6 +117,7 @@ Templates: `oauth2`, `oidc`, `api-key`, `client-credentials`, `jwt-bearer`, `dev
 ```sh
 npx connectd deploy                  # production
 npx connectd deploy --env staging    # its own Worker, database and keys
+npx connectd keys --env production   # your app's keys there: create, roll, revoke
 ```
 
 Each environment is a separate deployment on your Cloudflare account, with its own keys, so staging never reads production's connections. See [deploying](https://kavishkagaya.github.io/connectd/guides/deploying/).
@@ -125,7 +127,7 @@ Each environment is a separate deployment on your Cloudflare account, with its o
 Five layers, and a layer only uses the one below it:
 
 ```
-L4  DevX         SDK · CLI (init / add / dev / deploy) · dashboard
+L4  DevX         SDK · CLI (init / add / dev / deploy / keys) · dashboard
 L3  Runtime      proxy · webhook ingress · signed event delivery · connection index
 L2  Connections  connection() builder · lifecycle · OAuth and other auth flows · actions
 L1  Kernel       cell · flight · mutex · timer · queue · ticket · limiter · seal

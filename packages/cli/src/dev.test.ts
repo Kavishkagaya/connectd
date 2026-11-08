@@ -8,7 +8,8 @@ import { type Dev, dev, ignored, serve, swappable } from "./dev.ts";
 import type { Program } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { parseEnv } from "./env.ts";
-import { generateKeys } from "./keys.ts";
+import { deployment, loginUrl } from "./admin.ts";
+import { deploymentKeys, newRootKey } from "./keys.ts";
 import { NO_CLOUDFLARED, tunnel, tunnelUrl } from "./tunnel.ts";
 
 // Projects live under packages/cli/.tmp so their imports resolve through this package's node_modules.
@@ -56,11 +57,18 @@ export default (env) => ({
 });
 `;
 
-/** The dev keys `connectd init` writes into .env. */
-const KEYS = generateKeys();
-const keyLines = Object.entries(KEYS)
-  .map(([k, v]) => `${k}=${v}\n`)
-  .join("");
+/** The root key `connectd init` writes into .env. */
+const ROOT = newRootKey();
+const keyLines = `CONNECTD_ROOT_KEY=${ROOT}\n`;
+const envOf = (dir: string) => parseEnv(readFileSync(join(dir, ".env"), "utf8"));
+
+/** A dashboard session on a running dev, as `connectd dashboard` gives one: its cookie. */
+async function session(d: Dev, dir: string) {
+  const link = await loginUrl(deployment(dir, { url: d.url, env: {} }));
+  const res = await fetch(`${d.url}/dashboard/api/auth/login`, { method: "POST", headers: { origin: d.url, "content-type": "application/json" }, body: JSON.stringify({ token: decodeURIComponent(link.split("#login=")[1] as string) }) });
+  expect(res.status).toBe(200);
+  return (res.headers.get("set-cookie") ?? "").split(";")[0] as string;
+}
 
 function project(files: Record<string, string> = {}) {
   const dir = mkdtempSync(join(TMP, "p-"));
@@ -104,22 +112,35 @@ async function authorize(d: Dev, oc: ReturnType<typeof connectd>, id: string) {
   expect(res.status).toBe(200);
 }
 
-test("keys: dev reads them from .env, never makes its own; without them, connectd init", async () => {
+test("keys: dev derives its keys from the root key, and writes the app's dev API key and events secret into .env", async () => {
   const w = world();
   const dir = project({ ".env": "CLIENT_ID=cid\n" });
-  await expect(start(dir, w.env)).rejects.toThrow(/no CONNECTD_API_KEY, CONNECTD_KEY_V1, .* in \.env: run `connectd init` first$/);
-  expect(existsSync(join(dir, ".connectd", "dev.vars"))).toBe(false);
-  // A project an older dev ran: init moves its keys.
-  writeFileSync(join(dir, ".connectd", "dev.vars"), "CONNECTD_API_KEY=oc_old\n");
-  await expect(start(dir, w.env)).rejects.toThrow("it moves the keys from .connectd/dev.vars into .env");
+  await expect(start(dir, w.env)).rejects.toThrow("no CONNECTD_ROOT_KEY in .env: run `connectd init` first");
   writeFileSync(join(dir, ".env"), `CLIENT_ID=cid\n${keyLines}`);
   const a = await start(dir, w.env);
-  expect(a.d.apiKey).toBe(KEYS.CONNECTD_API_KEY!);
-  expect(a.lines.join("\n")).toContain(a.d.apiKey);
+  const env = envOf(dir);
+  expect(a.d.apiKey).toBe(env.CONNECTD_API_KEY!);
+  expect(env.CONNECTD_API_KEY).toMatch(/^ock_[0-9a-f]{12}_/);
+  expect(env.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
+  expect(a.lines.join("\n")).toContain("wrote CONNECTD_API_KEY in .env");
+  expect(a.lines.join("\n")).not.toContain(env.CONNECTD_API_KEY!);
   expect(readFileSync(join(dir, ".connectd", ".gitignore"), "utf8")).toBe("*\n");
+  expect(existsSync(join(dir, ".connectd", "dev.db"))).toBe(true);
+  expect((await fetch(`${a.d.url}/connections/keyed/x`, { headers: { authorization: `Bearer ${a.d.apiKey}` } })).status).toBe(404);
   await a.d.stop();
-  // The process environment wins over .env.
-  expect((await start(dir, { ...w.env, CONNECTD_API_KEY: "mine" })).d.apiKey).toBe("mine");
+
+  // A restart, and --reset: the same keys (they're in dev.db, not the snapshot).
+  const b = await start(dir, w.env, { reset: true });
+  expect(b.d.apiKey).toBe(env.CONNECTD_API_KEY!);
+  expect(envOf(dir)).toEqual(env);
+  await b.d.stop();
+  // A deleted dev.db: new ones, replacing the stale lines.
+  rmSync(join(dir, ".connectd", "dev.db"));
+  const c = await start(dir, w.env);
+  expect(c.d.apiKey).not.toBe(env.CONNECTD_API_KEY!);
+  expect(envOf(dir).CONNECTD_API_KEY).toBe(c.d.apiKey);
+  expect(envOf(dir).CONNECTD_EVENTS_SECRET).not.toBe(env.CONNECTD_EVENTS_SECRET);
+  expect(c.lines.join("\n")).toContain("replaced CONNECTD_API_KEY in .env");
 });
 
 test("config: function of the env (.env < process env), banner, unconfigured definitions", async () => {
@@ -139,7 +160,7 @@ test("config: function of the env (.env < process env), banner, unconfigured def
   // The dashboard is on by default: the page is public, its API needs the key.
   expect((await fetch(`${d.url}/dashboard`)).headers.get("content-security-policy")).toContain("script-src 'self'");
   expect((await fetch(`${d.url}/dashboard/api/overview`)).status).toBe(401);
-  const ov = (await (await fetch(`${d.url}/dashboard/api/overview`, { headers: { authorization: `Bearer ${d.apiKey}` } })).json()) as Overview;
+  const ov = (await (await fetch(`${d.url}/dashboard/api/overview`, { headers: { cookie: await session(d, dir) } })).json()) as Overview;
   expect(ov.definitions.map((x) => [x.id, x.configured])).toEqual([
     ["example", false],
     ["keyed", true],
@@ -201,7 +222,7 @@ test("dev server through the SDK: oauth2 and API-key connect, list, proxy, signe
   const w = world();
   const dir = project();
   const { d, oc } = await start(dir, w.env);
-  const secret = KEYS.CONNECTD_EVENTS_SECRET!;
+  const secret = envOf(dir).CONNECTD_EVENTS_SECRET!;
   const got: ConnectionEvent[] = [];
   const ev = oc.events({ secret }).on("*", (e) => void got.push(e));
   w.receive((req) => ev.handle(req));
@@ -295,7 +316,7 @@ test("restart with a broken config: due timers wait for a good load, stop still 
 
 test("key versions: V0 is a key like any other", async () => {
   const { settings } = await import("./project.ts");
-  const { CONNECTD_KEY_V1, ...rest } = KEYS;
+  const { CONNECTD_KEY_V1, ...rest } = await deploymentKeys(ROOT, "dev");
   const env: Record<string, string | undefined> = { ...rest, CONNECTD_KEY_V0: CONNECTD_KEY_V1, CONNECTD_PUBLIC_URL: "https://dev.test" };
   expect((await settings({}, (n) => env[n])).keys.current).toBe(0);
 });
@@ -344,7 +365,7 @@ test("cli: help, flags, deploy slot", async () => {
 test("examples/basic loads", async () => {
   const dir = join(import.meta.dir, "..", "..", "..", "examples", "basic");
   const lines: string[] = [];
-  const d = await dev({ dir, port: 0, env: { ...KEYS, GITHUB_CLIENT_ID: "x", GITHUB_CLIENT_SECRET: "y", DATABASE_URL: "postgres://app" }, watch: false, log: (l) => lines.push(l) });
+  const d = await dev({ dir, port: 0, env: { CONNECTD_ROOT_KEY: ROOT, GITHUB_CLIENT_ID: "x", GITHUB_CLIENT_SECRET: "y", DATABASE_URL: "postgres://app" }, watch: false, log: (l) => lines.push(l) });
   running.push(d);
   expect(d.loaded()!.project.definitions.map((x) => x.id)).toEqual(["github", "google", "notes", "slack"]);
   expect(d.loaded()!.unconfigured).toEqual(["google", "slack"]);
@@ -393,16 +414,57 @@ test("state.json: owner-only, its writes don't trigger reloads, stop is idempote
   await d.stop();
 });
 
-test("env reads are by name: a config spreading env is refused; `connectd keys` prints fresh values", async () => {
+test("env reads are by name: a config spreading env is refused", async () => {
   const { resolve } = await import("./project.ts");
   expect(() => resolve((env) => ({ ...env, definitions: [] }), { PATH: "/bin", CLOUDFLARE_API_TOKEN: "t" })).toThrow("spreading or listing env isn't supported");
   expect(resolve((env) => ({ definitions: [], ...(env.EVENTS_URL ? { events: { url: env.EVENTS_URL } } : {}) }), { EVENTS_URL: "https://a.test", PATH: "/bin" }).envNames).toEqual(["EVENTS_URL"]);
-  const out: string[] = [];
-  expect(await main(["keys"], { log: (l) => void out.push(l), dir: TMP })).toBe(0);
-  const k = parseEnv(out.join("\n"));
-  expect(k.CONNECTD_API_KEY).toMatch(/^oc_[A-Za-z0-9]{32}$/);
-  expect(k.CONNECTD_EVENTS_SECRET).toStartWith("whsec_");
 });
+
+test("connectd keys against dev: shown, never written into .env; list, roll with a grace period, revoke, --events by name; dashboard prints a sign-in link", async () => {
+  const w = world();
+  const dir = project();
+  const { d } = await start(dir, w.env);
+  const out: string[] = [];
+  const run = async (...args: string[]) => {
+    out.length = 0;
+    const code = await main([...args, "--url", d.url], { log: (l) => void out.push(l), dir });
+    return { code, text: out.join("\n") };
+  };
+  const call = (key: string | undefined) => fetch(`${d.url}/connections/keyed/x`, { headers: { authorization: `Bearer ${key}` } }).then((r) => r.status);
+  // Dev made the app's own key; keys never changes .env after that.
+  const before = readFileSync(join(dir, ".env"), "utf8");
+  expect(envOf(dir).CONNECTD_API_KEY).toStartWith("ock_");
+
+  const made = await run("keys", "create", "worker");
+  expect(made.code).toBe(0);
+  const key = /CONNECTD_API_KEY=(ock_\S+)/.exec(made.text)?.[1] ?? "";
+  expect(made.text).toContain("put it where it's used");
+  expect(await call(key)).toBe(404);
+  const ls = await run("keys");
+  expect(ls.text).toMatch(/dev .*\n.*ID.*\n.*api .*dev .*active[\s\S]*worker/);
+  expect(ls.text).not.toContain(key);
+
+  const rolled = await run("keys", "roll", "worker", "--grace", "1h");
+  const key2 = /CONNECTD_API_KEY=(ock_\S+)/.exec(rolled.text)?.[1] ?? "";
+  expect(key2).not.toBe(key);
+  expect(await call(key)).toBe(404); // in its grace period
+  expect((await run("keys", "roll", "worker", "--grace", "soon")).text).toContain("a duration like");
+  expect((await run("keys", "revoke", "worker")).text).toContain("revoked API key worker");
+  expect(await call(key2)).toBe(401);
+  expect((await run("keys", "revoke", "nobody")).text).toContain("no API key nobody in dev");
+
+  // An API key and an events secret share the name dev: --events picks the secret.
+  expect((await run("keys", "create", "hooks", "--events")).text).toContain("CONNECTD_EVENTS_SECRET=whsec_");
+  expect((await run("keys", "roll", "dev", "--events")).text).toContain("rolled events secret dev");
+  expect(readFileSync(join(dir, ".env"), "utf8")).toBe(before);
+
+  const link = await run("dashboard", "--print");
+  expect(link.text).toContain(`${d.url}/dashboard#login=`);
+  // Another project's root key is refused.
+  const other = await main(["keys", "--url", d.url], { log: (l) => void out.push(l), dir: project({ ".env": `CONNECTD_ROOT_KEY=${newRootKey()}\n` }) });
+  expect(other).toBe(1);
+  expect(out.join("\n")).toContain("refused the admin request");
+}, 20_000);
 
 test("the dev server's node:http adapter: streamed bodies, each Set-Cookie, hop-by-hop headers dropped, HEAD", async () => {
   let seen: Headers | undefined;

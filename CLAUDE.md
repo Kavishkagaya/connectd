@@ -9,7 +9,7 @@ OAuth connection platform: open-source self-host path plus a low-cost managed se
  L3  Runtime     ConnectionDO · proxy · webhooks · events      (done)
  L2  Connections defineConnection(), lifecycle, OAuth, providers   (in progress)
  L1  Kernel      cell · flight · mutex · timer · queue · ticket · limiter · seal (#53)   (done)
- L0  Platform    Platform (env · fetch · log · defer · atoms · db · limits) + Atom (store · timer) on: Durable Objects + D1 · memory · server (deferred)
+ L0  Platform    Platform (env · fetch · log · defer · atoms · db · limits) + Atom (store · timer) on: Durable Objects + D1 · memory (+ SQLite in dev) · server (deferred)
 ```
 
 A layer only uses the one below it. The kernel never imports Cloudflare; the Cloudflare platform (`kernel/src/drivers/do.ts`) and the Cloudflare target's Worker template are the only places `cloudflare:workers` appears.
@@ -19,9 +19,9 @@ A layer only uses the one below it. The kernel never imports Cloudflare; the Clo
 ```
 packages/kernel/
   src/index.ts        public API (re-exports only)
-  src/platform.ts     L0 contract: Platform (per deployment: version, now, env, fetch, log, defer, atoms.call/destroy, db: Management, limits) + Atom (per connection: name, now, store, timer); Handler, Program = (atom, platform) => Handler; Unavailable, LimitExceeded, LIMITS (every platform's); the connection index's row types and cursors
-  src/drivers/        the platforms: memory.ts (tests + dev; `unreachable` fault injection, memoryDb()), do.ts (Durable Objects + D1: durableObject(), cloudflarePlatform()), parity.ts (two shared suites: `parity` for an atom, `platformParity` for the deployment)
-  migrations/         the D1 schema of the Cloudflare platform's management db (copied by `connectd deploy`)
+  src/platform.ts     L0 contract: Platform (per deployment: version, now, env, fetch, log, defer, atoms.call/destroy, db: Management, limits) + Atom (per connection: name, now, store, timer); Handler, Program = (atom, platform) => Handler; Unavailable, LimitExceeded, LIMITS (every platform's); Management's groups (connections index, keys, accounts, passkeys, nonces) and their row types
+  src/drivers/        the platforms: memory.ts (tests + dev; `unreachable` fault injection, memoryDb()), do.ts (Durable Objects + D1: durableObject(), cloudflarePlatform()), sql.ts (the management db in SQL, any SQLite: D1's and dev's), sqlite.ts (`bun:sqlite` / `node:sqlite` in dev, migrations), parity.ts (two shared suites: `parity` for an atom, `platformParity` for the deployment)
+  migrations/         the management db's schema: D1 (copied by `connectd deploy`) and dev's SQLite (`.connectd/dev.db`)
   src/kernel.ts        kernel(atom, platform, { keys, stateKey }): the management layer of one atom (#53): name claims, seal/unseal, serve (the Handler)
   src/cell.ts         cell (read-decide-cas update + outbox, take) and `loop`, the one cas loop every tool uses
   src/sync.ts         flight / flights (single-flight), mutex (one at a time); in memory
@@ -48,7 +48,9 @@ registry/             <provider>.json + index.json, generated and committed; the
 
 packages/runtime/
   src/host.ts         the Program every connection's atom runs: one kernel per atom, registry lookup, bind, extensions' hooks (Hosted.k, Hosted.platform), methods, faults
-  src/http.ts         the front door's fetch(req, platform): routes table by first path segment, API key, /connections, /callback
+  src/http.ts         the front door's fetch(req, platform): routes table by first path segment, API key (or dashboard session), /connections, /callback
+  src/access.ts       who may call (#86): API keys (`ock_<id>_<secret>`, digests in platform.db.keys, cached per isolate) and events secrets (sealed; every live one signs), create/roll/revoke; signed tokens under the admin key (admin requests, login links, invites, sessions, WebAuthn challenges); the dashboard session cookie
+  src/admin.ts        /admin (#86): keys for the CLI (`Authorization: Admin <token>`) and the dashboard (session); never an API key
   src/runtime.ts      runtime({ definitions, settings, extensions }) and the Extension type
   src/actions.ts      actions on the connection's instance (added by runtime({ actions })): actions.<id> methods + /actions/:id route, actions.status, input validation, .every timers while active, .on per state entry, <action>.completed/failed events, conn.emit for the connection's own .events()
   src/proxy.ts        proxy() extension: /proxy/:def/:id/<path>, token + rate permits in one DO call
@@ -73,36 +75,40 @@ packages/connect/     headless browser package (#29), draws nothing, zero depend
   src/fake.ts         fake window/DOM in front of the real runtime, for the tests
   e2e/chromium.ts     one real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
 
-packages/dashboard/   self-host dashboard (#32): dashboard() extension serving /dashboard from the runtime's Worker; runtime is a peer dep; the root tsc skips it
-  src/index.ts        the extension: the page (strict CSP), assets, /dashboard/api/overview, /connections/:def/:id (actions.status, webhooks.list) and /failures (API key)
-  src/app.ts          the UI, zero dependencies, DOM only (tsconfig.web.json via main.ts); API key in sessionStorage, Bearer on same-origin fetch; actions panel + Run form (from JSON Schema), subscriptions, #/actions
-  src/assets.ts       generated by `bun run build` (build.ts) from app.ts/main.ts/app.css and committed; a test fails when it's stale
-  src/fake.ts         the real runtime + dashboard() on the memory platform and a fake DOM, for the tests and e2e
-  e2e/chromium.ts     real-Chromium check, run by hand (needs Playwright; not in `bun run test`)
+packages/dashboard/   self-host dashboard (#32, #86): dashboard() extension serving /dashboard from the runtime's Worker; runtime is a peer dep; the root tsc skips it
+  src/index.ts        the extension: the page (CSP: own script; style also by per-page nonce), assets, /dashboard/api/overview, /connections/:def/:id and /failures (session)
+  src/accounts.ts     /dashboard/api/auth/*: CLI sign-in link → root session, accounts (passkey and/or password), invites, sign out (everywhere), rate-limited sign-ins (kernel limiter on `dashboard.login:<user>` atoms)
+  src/webauthn.ts, password.ts   passkeys on WebCrypto alone (ES256/RS256, no CBOR: the browser's getPublicKey()) · PBKDF2 at workerd's 100k cap
+  ui/                 the UI: React + shadcn (ui/components/ui, copied by the shadcn CLI) + Tailwind; session cookie only, no key in the tab; tsconfig.web.json via main.tsx; app.test.tsx (happy-dom + Testing Library against the real runtime)
+  src/assets.ts       generated by `bun run build` (build.ts: Bun bundles ui/, the Tailwind CLI the CSS) and committed; a test fails when it's stale
+  src/fake.ts         the real runtime + dashboard() on the memory platform with a seeded key and a root session, for the tests and e2e
+  e2e/chromium.ts     real-Chromium check, run by hand (needs Playwright or playwright-core + CHROME; passkeys via the virtual authenticator; not in `bun run test`)
 
 packages/cli/         `connectd` bin (#30, #31; Bun in the workspace, Node or Bun once packed). `@kavishkagaya/connectd`, the one package an app installs: exports project.ts, and src/sdk.ts, sdk-node.ts, connections.ts, connections-testing.ts, runtime*.ts, kernel*.ts re-export the private packages (`/sdk`, `/sdk/node`, `/connections`, `/connections/testing`, `/runtime`, `/runtime/cloudflare`, `/runtime/signature`, `/kernel`, `/kernel/memory`, `/kernel/do`); `bun run pack` carries those packages inside it
   src/project.ts      the project shape: defineConfig, Project (incl. deploy: { name, url }, dashboard: false to opt out), resolve() (connections' env config, `envNames`, `missing`), workerEnv(), settings(), options() = runtime() input from config + env + index. Workers-safe: the deployed Worker imports it
-  src/keys.ts         ENV names + generateKeys(), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
+  src/keys.ts         ENV names, the root key (`CONNECTD_ROOT_KEY`, #86) and derive()/deploymentKeys() (every environment's keys from it), no imports; src/workdir.ts the self-gitignoring .connectd/ dir
+  src/admin.ts        the CLI's side of /admin: which deployment (dev, --env from .connectd/environments.json, --url), requests signed with the derived admin key, dashboard sign-in links, writing dev keys into .env
   src/env.ts          dotenv parsing; dev's env (.env < process env; .dev.vars refused)
-  src/init.ts         `connectd init`: dev's keys + CONNECTD_URL + APP_URL into .env (keys from an old .connectd/dev.vars moved), .gitignore, oc.config.ts, <src>/lib/oc.ts, the Next.js route; never overwrites
+  src/init.ts         `connectd init`: step by step in a terminal (src/prompt.ts: text, confirm, choose, a keyboard checklist; --yes and CI ask nothing): app origin, dev port, @kavishkagaya/connectd installed as the app's dependency, the target (its packages + wrangler as dev deps, then the adapter's setup: wrangler login), providers (checklist, popular first, "Add later"; --add); the root key + CONNECTD_URL + APP_URL into .env, .gitignore, oc.config.ts, <src>/lib/oc.ts, the Next.js route; never overwrites. installer()/packageSpec(): the project's package manager; CONNECTD_TARBALLS installs ours from a local build
   src/load.ts         findConfig, importConfig (esbuild bundle to .mjs + import; dev reloads and deploy's plan), loadProject (config + connection folders); CONFIG_FILES: oc.config.ts
   src/discover.ts     connection folders (#54): dir (default src/oc or oc), <id>/connection.ts + <id>/actions.ts (export default actions({ name: action() }), #83; an actions/ folder without it is refused as the 0.2 layout) + <id>/events.ts (never in the Worker), .connectd/entry.ts (withFolders), registry.d.ts and app.ts (the listeners, for the app). Node APIs only
-  src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, Adapter
-  src/deploy.ts       `connectd deploy`, what every target shares: the environment (--env <name>, default production: .env.<name> or --env-file, the shell in CI; only names read are sent), dev values refused, the target's adapter loaded from the project, the app's env lines
-  src/dev.ts          `connectd dev`: memory platform on a real clock behind node:http, keys from .env (init's; never made here), port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save (watcher skips build output, hidden dirs, generated types)
+  src/target.ts       deploy targets (#54): Target ({ adapter, options }: data, bundled with the config), DeployContext, SetupContext, Adapter ({ deploy, setup? }: setup readies the target's tool, init and deploy call it), Prompts
+  src/deploy.ts       `connectd deploy`, what every target shares: the environment (--env <name>, default production: .env.<name> or --env-file, the shell in CI; only names read are sent), dev values refused, the keys derived from the root key, the target's adapter loaded from the project; a first deploy makes the app's API key through /admin and prints the app's env lines
+  src/dev.ts          `connectd dev`: memory platform on a real clock behind node:http, keys derived from the root key in .env, management db in SQLite (.connectd/dev.db: keys and accounts outlive --reset), the app's dev API key/events secret written into .env, port from CONNECTD_URL, snapshot in .connectd/state.json, config bundled with esbuild and swapped in place on save
   src/tunnel.ts       cloudflared quick tunnel (spawned, URL parsed from its log)
   src/add.ts          `connectd add <provider>` (copy from registry/ into <dir>/<id>/, events.ts, .env names) `connectd add --custom <id> --template <flow>` (the same folder from src/templates.ts: oauth2, oidc, api-key, client-credentials, jwt-bearer, device) and `connectd diff <id>` (unified diff against the catalog)
-  src/cli.ts, args.ts commands (init, dev, deploy, types, keys, add, diff, help) and a declared-flags parser; src/bin.ts the entry
+  src/cli.ts, args.ts commands (init, dev, deploy, types, keys, dashboard, add, diff, help) and a declared-flags parser; src/bin.ts the entry
 
 packages/cloudflare/  the Cloudflare deploy target (#54): `cloudflare({ name, url })` in oc.config.ts; the adapter deploys through wrangler
   src/index.ts        cloudflare(): a Target, data only (Workers-safe: the config is bundled into the Worker)
-  src/adapter.ts      deploy(ctx) (`/adapter` export, Node): per environment its own Worker/D1 (`<name>-<env>`, cloudflare({ environments })) and state file; wrangler secret list, d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version)
+  src/adapter.ts      setup(ctx): wrangler found (the project's, else PATH; offered as an install), `wrangler whoami` (offers `wrangler login`; in CI it says what to set); deploy(ctx) (`/adapter` export, Node), after setup: per environment its own Worker/D1 (`<name>-<env>`, cloudflare({ environments })) and state file; wrangler secret list (encryption key versions), d1 list/create, migrations apply --remote, deploy --secrets-file (0600 temp file, with the version; only derived keys the Worker lacks: a held key is never replaced)
   src/generate.ts     deploy's files in .connectd/deploy/: entry (template, imports resolved), wrangler.json, copied migrations. Node only (vitest config uses it)
   src/worker.ts       the Worker entry template (Workers types, tsconfig.workers.json); src/config.d.ts types its config import
   test/               the generated Worker for test/fixture run in workerd from its own wrangler.json (vitest)
 
 examples/nextjs/      a Next.js app (excluded from the root tsc; `next build` checks it): github (OAuth app), oc.routes, APP_URL in .env; `connectd dev` and `next dev` run side by side
 
+scripts/e2e/          run.sh: the developer walkthrough end to end (local, no Cloudflare); app.mjs, worker-vars.mjs, browser.mjs its helpers
 scripts/pack.ts       `bun run pack`: the two published packages built to JavaScript (tsc in the Node, Workers and DOM type environments), each carrying its private workspace dependencies (imports rewritten to relative paths), npm-packed into .pack/
 
 examples/basic/       a user project (workspace): oc.config.ts (dir, connector config, events, sessions); src/oc/<id>/ per connection (three providers copied in by `connectd add`, one custom, github/actions.ts)
@@ -116,9 +122,10 @@ Published: `@kavishkagaya/connectd` and `@kavishkagaya/connectd-cloudflare` only
 - `bun run typecheck`: root tsc (`packages/*/src`, `examples/*`), plus Workers-types passes for `drivers/do.ts`, `runtime/src/cloudflare.ts`, the Cloudflare Worker template + the CLI's `project.ts`, and each `test/`, a web-only pass for the SDK, and DOM passes for `packages/connect` and `packages/dashboard`
 - Packages as npm tarballs that run on Node: `bun run pack` (into .pack/: `@kavishkagaya/connectd` and `-cloudflare`; install them in a scratch project to try `npx connectd` without Bun)
 - Provider changed: `cd packages/providers && bun run registry` (rewrites registry/)
-- Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts`
+- Dashboard UI changed: `cd packages/dashboard && bun run build` (rewrites src/assets.ts); a shadcn component: `bunx --bun shadcn@4.23.0 add <name>` there (fix its `cn` import to `@/lib/utils`); real browser: `PLAYWRIGHT=/path/to/playwright/index.mjs bun packages/dashboard/e2e/chromium.ts` (playwright-core: add `CHROME=/usr/bin/google-chrome`)
 - One kernel file: `cd packages/kernel && bun test src/limiter.test.ts`
 - Dev server on the example: `cd examples/basic && bunx connectd init` once (keys into .env), then `bun run dev` (flags: `--port`, `--config`, `--tunnel`, `--url`, `--reset`; `connectd --help`)
+- End to end as a developer (packed tarballs on Node: init, dev, SDK, keys, dashboard, the generated Worker on `wrangler dev`): `scripts/e2e/run.sh` (`PLAYWRIGHT=… CHROME=…` adds the browser). Before a merge, run what the change touches from docs/src/content/docs/contributing/validation.md (levels 1–4, incl. a real Cloudflare redeploy) and say in the PR what ran
 - Deploy plan without Cloudflare: `cd examples/basic && bunx connectd deploy --dry-run` (then `wrangler deploy --dry-run -c .connectd/deploy/wrangler.json` bundles it offline)
 
 ## Patterns
@@ -131,7 +138,7 @@ Published: `@kavishkagaya/connectd` and `@kavishkagaya/connectd-cloudflare` only
 - **Cross-atom:** a scope (app, workspace) is just another atom name reached with `platform.atoms.call`. Args and results must be `Json`; an atom that can't be reached throws `Unavailable`.
 - **Durability:** a change and its messages land in one `cas` (the cell's outbox: the record holds state + sealed credential + Transitions); `queue.relay` moves them on exactly once. Timers aren't atomic with `cas`; there's always an on-demand fallback.
 - **Time:** always `d.now()`, never `Date.now()`, so the fake clock works. Memory `advance(ms)` jumps once; step it to drive retries. `memory(p, { clock: Date.now })` is the real-clock mode (dev): timers fire on their own, `advance` still skews; `dump()`/`snapshot` restore state.
-- **Secrets:** AES-GCM with a key-version byte; values sealed under old keys are re-sealed on read.
+- **Secrets:** AES-GCM with a key-version byte; values sealed under old keys are re-sealed on read. One root key per project (CLI only, never sent); every deployment key is derived from it per environment. The app's API keys and events secrets live in `platform.db.keys`, managed through `/admin` by the CLI and the dashboard.
 - **Tests:** the kernel's tools and the lifecycle are tested on the memory platform with `bun:test`. Platforms prove equivalence through `parity.ts`: `parity` (an atom) and `platformParity` (atoms, destroy, limits, env, defer, every `db` operation), memory under bun, Durable Objects + D1 under vitest in workerd. New platform behaviour goes into parity, not one platform's tests.
 - **Style:** small, minimal code; no abstraction without a second use. Deliberate shortcuts carry a `// ponytail:` comment naming the ceiling and the upgrade path. Strict TS with `noUncheckedIndexedAccess`; `.ts` extensions in imports.
 

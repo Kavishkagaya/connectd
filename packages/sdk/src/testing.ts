@@ -2,7 +2,10 @@ import { apiKey, defineConnection, type OAuth2, oauth2 } from "@kavishkagaya/con
 import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { directory, emit, events, type Extension, proxy, runtime, sessions } from "@kavishkagaya/connectd-runtime";
+import { directory, emit, events, type Extension, importKey, proxy, runtime, sessions } from "@kavishkagaya/connectd-runtime";
+
+/** The harness's API key (seeded in the runtime's keys). */
+export const TEST_KEY = "ock_000000000000_secret";
 import { connectd } from "./client.ts";
 
 /** The real runtime on the memory driver, fake providers, and an SDK client pointed at its fetch. Tests only. */
@@ -52,10 +55,10 @@ export async function setup() {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null },
-    events: { url: EVENTS, secret: SECRET },
+    events: { url: EVENTS },
     sessions: { key: await importHmacKey(key(5)), origins: ["https://app.test"] },
   };
   const rt = runtime({
@@ -64,10 +67,12 @@ export async function setup() {
     extensions: [proxy(), events(), directory(), sessions(), hook],
   });
   const w = memory(rt.program, { fetch: p.fetch, now: T0 });
+  await importKey(w.platform, settings.keys, "api", "test", TEST_KEY);
+  await importKey(w.platform, settings.keys, "events", "test", SECRET);
   const sleeps: number[] = [];
   const oc = connectd({
     url: "https://oc.test/",
-    apiKey: "secret",
+    apiKey: TEST_KEY,
     fetch: (input, init) => rt.fetch(new Request(input, init), w.platform),
     sleep: (ms) => (sleeps.push(ms), w.advance(ms)),
   });

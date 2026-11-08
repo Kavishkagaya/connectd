@@ -2,16 +2,16 @@ import { action, apiKey, defineConnection, hmacHex, oauth2, type StandardSchemaV
 import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { directory, type Extension, events, runtime, webhooks } from "@kavishkagaya/connectd-runtime";
+import { directory, type Extension, events, importKey, newSession, runtime, SESSION_COOKIE, token, webhooks } from "@kavishkagaya/connectd-runtime";
 import { dashboard } from "./index.ts";
 
 /**
- * Tests only: the real runtime with dashboard() on the memory driver, and just enough of a browser
- * (elements, text, events, location.hash, sessionStorage, fetch) to drive app.ts against it.
+ * Tests and the e2e script only: the real runtime with dashboard() on the memory driver, an API key
+ * and an events secret seeded, and a root session (what a CLI link gives) for the dashboard's API.
  */
 
 export const OC = "https://oc.test";
-export const API_KEY = "test-api-key";
+export const API_KEY = "ock_000000000000_test-api-key";
 export const CLIENT_SECRET = "shh-client-secret";
 export const T0 = 1_700_000_000_000;
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -84,10 +84,10 @@ export async function setup(o: { extensions?: Extension[] } = {}) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: API_KEY,
+    admin: await importHmacKey(key(8)),
     redirectUri: `${OC}/callback`,
     config: { keyed: null, example: { clientId: "cid", clientSecret: CLIENT_SECRET }, half: { clientId: "", clientSecret: undefined } },
-    events: { url: "https://app.test/events?token=in-the-url", secret: EVENTS_SECRET },
+    events: { url: "https://app.test/events?token=in-the-url" },
     webhooks: { url: `${OC}/webhooks`, key: await importHmacKey(key(5)) },
     sessions: { key: await importHmacKey(key(4)), origins: ["https://app.test"] },
   };
@@ -99,110 +99,19 @@ export async function setup(o: { extensions?: Extension[] } = {}) {
     extensions: o.extensions ?? [events(), webhooks(), directory(), dashboard()],
   });
   w = memory(rt.program, { fetch: upstream, now: T0 });
+  await importKey(w.platform, settings.keys, "api", "test", API_KEY);
+  await importKey(w.platform, settings.keys, "events", "test", EVENTS_SECRET);
+  const root = await newSession(w.platform, settings.admin, null);
+  /** A root session's cookie (as a CLI link gives). */
+  const cookie = `${SESSION_COOKIE}=${encodeURIComponent(root!.token)}`;
   const send = (path: string, init: RequestInit = {}) => rt.fetch(new Request(new URL(path, OC), init), w!.platform);
-  const api = async (path: string, body?: Json, method = body === undefined ? "GET" : "POST") => {
-    const res = await send(path, { method, headers: { authorization: `Bearer ${API_KEY}` }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: res.status, body: (await res.json()) as any };
+  /** The API key for the runtime's routes, the root session for the dashboard's, this origin for writes. */
+  const api = async (path: string, body?: Json, method = body === undefined ? "GET" : "POST", headers: Record<string, string> = {}) => {
+    const res = await send(path, { method, headers: { authorization: `Bearer ${API_KEY}`, cookie, origin: OC, ...headers }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: res.status, body: (await res.json()) as any, headers: res.headers };
   };
-  return { w, rt, fetch: send, api, delivered, failEvents: (s: number) => void (status = s) };
+  /** A CLI sign-in link's token (what `connectd dashboard` puts after `#login=`). */
+  const loginToken = () => token(settings.admin, "login", w!.now(), 5 * 60_000);
+  return { w, rt, settings, fetch: send, api, cookie, loginToken, delivered, failEvents: (s: number) => void (status = s) };
 }
 
-// The fake browser.
-
-type Listener = (e: { type: string; preventDefault(): void }) => void;
-type Kid = El | string;
-
-export class El {
-  children: Kid[] = [];
-  parent: El | null = null;
-  attrs: Record<string, string> = {};
-  listeners: Record<string, Listener[]> = {};
-  private typed: string | undefined;
-  constructor(readonly tagName: string) {}
-  append(...ks: Kid[]) {
-    for (const k of ks) {
-      if (k instanceof El) (k.parent?.remove(k), (k.parent = this));
-      this.children.push(k);
-    }
-  }
-  replaceChildren(...ks: Kid[]) {
-    this.children = [];
-    this.append(...ks);
-  }
-  remove(k: El) {
-    this.children = this.children.filter((c) => c !== k);
-  }
-  get firstChild(): Kid | null {
-    return this.children[0] ?? null;
-  }
-  setAttribute(k: string, v: string) {
-    this.attrs[k] = v;
-  }
-  addEventListener(t: string, f: Listener) {
-    (this.listeners[t] ??= []).push(f);
-  }
-  /** An input's or select's value: what was typed (`set value`), else the markup's default. */
-  get value(): string {
-    if (this.typed !== undefined) return this.typed;
-    if (this.tagName === "select") {
-      const opts = this.all((e) => e.tagName === "option");
-      return (opts.find((x) => "selected" in x.attrs) ?? opts[0])?.attrs.value ?? "";
-    }
-    return this.attrs.value ?? "";
-  }
-  set value(v: string) {
-    this.typed = v;
-  }
-  get text(): string {
-    return this.children.map((c) => (typeof c === "string" ? c : c.text)).join("");
-  }
-  all(f: (e: El) => boolean): El[] {
-    return this.children.flatMap((c) => (typeof c === "string" ? [] : [...(f(c) ? [c] : []), ...c.all(f)]));
-  }
-  /** The first element with this tag whose text (or `name` / `aria-label`) is `label`. */
-  get(tag: string, label: string): El {
-    const e = this.all((x) => x.tagName === tag && (x.text === label || x.attrs.name === label || x.attrs["aria-label"] === label))[0];
-    if (!e) throw new Error(`no <${tag}> ${label} in: ${this.text}`);
-    return e;
-  }
-  fire(type: string) {
-    for (const f of this.listeners[type] ?? []) f({ type, preventDefault() {} });
-  }
-  /** A button's click, or a submit button's form submit. */
-  click() {
-    if (this.attrs.type === "submit") {
-      let f: El | null = this.parent;
-      while (f && f.tagName !== "form") f = f.parent;
-      return f?.fire("submit");
-    }
-    this.fire("click");
-  }
-}
-
-export function browser(fetch: (path: string, init?: RequestInit) => Promise<Response>) {
-  const root = new El("main");
-  const store = new Map<string, string>();
-  const listeners: (() => void)[] = [];
-  let hash = "";
-  const requests: { path: string; authorization: string | null }[] = [];
-  const win = {
-    confirmAnswer: true,
-    document: { getElementById: (id: string) => (id === "app" ? root : null), createElement: (t: string) => new El(t) },
-    location: {
-      get hash() {
-        return hash;
-      },
-      set hash(v: string) {
-        hash = v.startsWith("#") ? v : `#${v}`;
-        // Async, as in a browser.
-        queueMicrotask(() => listeners.forEach((f) => f()));
-      },
-    },
-    sessionStorage: { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v), removeItem: (k: string) => void store.delete(k) },
-    fetch: (path: string, init?: RequestInit) => (requests.push({ path, authorization: new Headers(init?.headers).get("authorization") }), fetch(path, init)),
-    addEventListener: (_t: string, f: () => void) => void listeners.push(f),
-    removeEventListener: (_t: string, f: () => void) => void listeners.splice(listeners.indexOf(f), 1),
-    confirm: () => win.confirmAnswer,
-  };
-  return { win, root, store, requests };
-}

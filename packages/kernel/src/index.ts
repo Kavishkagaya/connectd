@@ -1,5 +1,6 @@
 // L0: the platform contract (platform.ts). L1, the kernel (#53): the management layer of one atom. Mechanism only; connections live in @kavishkagaya/connectd-connections.
 export {
+  type AccountRow,
   type Atom,
   BadCursor,
   type ConnectionPage,
@@ -7,6 +8,8 @@ export {
   type ConnectionRow,
   type Handler,
   type Json,
+  type KeyKind,
+  type KeyRow,
   type Level,
   LimitExceeded,
   LIMITS,
@@ -14,6 +17,7 @@ export {
   MAX_PAGE,
   type Management,
   PAGE,
+  type PasskeyRow,
   type Platform,
   type Program,
   Unavailable,

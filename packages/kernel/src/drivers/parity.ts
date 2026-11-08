@@ -1,4 +1,4 @@
-import type { ConnectionRow, Json, Platform, Program } from "../platform.ts";
+import type { AccountRow, ConnectionRow, Json, KeyRow, PasskeyRow, Platform, Program } from "../platform.ts";
 
 /**
  * The behaviour every platform must show, in two suites: `parity` (an atom: store, versions, ttl,
@@ -350,5 +350,83 @@ export function platformParity(name: string, world: () => Promise<World> | World
     expect((await db.list({})).connections).toEqual([{ def: "a", id: "x", state: "revoked", reason: "user", external: { team: "T2" }, createdAt: 10, updatedAt: 30, version: 6 }]);
     expect(await db.byExternal("a", "team", "T1")).toEqual([]);
     expect(keys(await db.byExternal("a", "team", "T2"))).toEqual(["a/x"]);
+  });
+  const keyRow = (id: string, o: Partial<KeyRow> = {}): KeyRow => ({
+    id,
+    kind: "api",
+    name: id,
+    value: `v-${id}`,
+    previous: null,
+    previousUntil: null,
+    createdAt: 10,
+    rolledAt: null,
+    revokedAt: null,
+    lastUsedAt: null,
+    ...o,
+  });
+
+  test(`${name}: db.keys: create, list, roll with and without a grace period, revoke, used`, async () => {
+    const db = (await world()).platform.db.keys;
+    expect(await db.create(keyRow("b", { createdAt: 20, kind: "events" }))).toBe(true);
+    expect(await db.create(keyRow("a"))).toBe(true);
+    expect(await db.create(keyRow("a", { name: "again" }))).toBe(false);
+    expect((await db.list()).map((k) => k.id)).toEqual(["a", "b"]);
+    expect(await db.get("b")).toEqual(keyRow("b", { createdAt: 20, kind: "events" }));
+    expect(await db.get("none")).toBe(null);
+
+    expect(await db.roll("a", "v2", 100, 50)).toEqual(keyRow("a", { value: "v2", previous: "v-a", previousUntil: 100, rolledAt: 50 }));
+    // No grace (until <= at): the old value goes at once.
+    expect(await db.roll("a", "v3", 60, 60)).toEqual(keyRow("a", { value: "v3", rolledAt: 60 }));
+    expect(await db.roll("none", "v", 0, 0)).toBe(null);
+
+    await db.used("a", 70);
+    await db.used("a", 65);
+    expect((await db.get("a"))?.lastUsedAt).toBe(70);
+
+    expect(await db.revoke("a", 80)).toEqual(keyRow("a", { value: "v3", rolledAt: 60, lastUsedAt: 70, revokedAt: 80 }));
+    expect(await db.revoke("a", 90)).toBe(null);
+    expect(await db.roll("a", "v4", 0, 90)).toBe(null);
+    expect((await db.get("a"))?.revokedAt).toBe(80);
+  });
+
+  test(`${name}: db.accounts and db.passkeys: create, password, sign out everywhere, delete takes the passkeys`, async () => {
+    const { accounts, passkeys } = (await world()).platform.db;
+    const acct = (username: string, o: Partial<AccountRow> = {}): AccountRow => ({ username, password: null, sessions: 0, createdAt: 10, ...o });
+    expect(await accounts.create(acct("ann", { password: "h1" }))).toBe(true);
+    expect(await accounts.create(acct("bob", { createdAt: 5 }))).toBe(true);
+    expect(await accounts.create(acct("ann"))).toBe(false);
+    expect((await accounts.list()).map((a) => a.username)).toEqual(["bob", "ann"]);
+    expect(await accounts.password("ann", null)).toBe(true);
+    expect(await accounts.password("none", "h")).toBe(false);
+    expect(await accounts.signOut("ann")).toBe(1);
+    expect(await accounts.signOut("ann")).toBe(2);
+    expect(await accounts.signOut("none")).toBe(null);
+    expect(await accounts.get("ann")).toEqual(acct("ann", { sessions: 2 }));
+
+    const pk = (id: string, username: string, o: Partial<PasskeyRow> = {}): PasskeyRow => ({ id, username, publicKey: "spki", alg: -7, counter: 0, name: id, createdAt: 10, lastUsedAt: null, ...o });
+    expect(await passkeys.add(pk("p2", "ann", { createdAt: 20 }))).toBe(true);
+    expect(await passkeys.add(pk("p1", "ann"))).toBe(true);
+    expect(await passkeys.add(pk("p3", "bob"))).toBe(true);
+    expect(await passkeys.add(pk("p1", "bob"))).toBe(false);
+    expect((await passkeys.list("ann")).map((p) => p.id)).toEqual(["p1", "p2"]);
+    await passkeys.used("p1", 7, 30);
+    expect(await passkeys.get("p1")).toEqual(pk("p1", "ann", { counter: 7, lastUsedAt: 30 }));
+    expect(await passkeys.delete("p2")).toBe(true);
+    expect(await passkeys.delete("p2")).toBe(false);
+
+    expect(await accounts.delete("ann")).toBe(true);
+    expect(await accounts.delete("ann")).toBe(false);
+    expect(await accounts.get("ann")).toBe(null);
+    expect(await passkeys.get("p1")).toBe(null);
+    expect((await passkeys.list("bob")).map((p) => p.id)).toEqual(["p3"]);
+  });
+
+  test(`${name}: db.nonces: each claimed once until it expires`, async () => {
+    const db = (await world()).platform.db.nonces;
+    expect(await db.claim("n1", 100, 10)).toBe(true);
+    expect(await db.claim("n1", 100, 50)).toBe(false);
+    expect(await db.claim("n2", 60, 50)).toBe(true);
+    // Past its expiry it's gone, so the same value could be claimed again (callers check expiry first).
+    expect(await db.claim("n1", 200, 100)).toBe(true);
   });
 }

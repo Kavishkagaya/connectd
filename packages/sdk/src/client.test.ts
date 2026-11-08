@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { ConnectdError, connectd } from "./index.ts";
-import { API, setup, T0 } from "./testing.ts";
+import { API, setup, T0, TEST_KEY } from "./testing.ts";
 
 const rejects = async (p: Promise<unknown>) => {
   try {
@@ -59,7 +59,7 @@ test("errors are ConnectdError with the runtime's code and status", async () => 
   expect(await rejects(wrongKey.connection("keyed", "k").status())).toMatchObject({ code: "unauthorized", status: 401 });
 
   // Something in front of the runtime answering HTML.
-  const gateway = connectd({ url: "https://oc.test", apiKey: "secret", fetch: async () => new Response("<h1>Bad Gateway</h1>", { status: 502 }) });
+  const gateway = connectd({ url: "https://oc.test", apiKey: TEST_KEY, fetch: async () => new Response("<h1>Bad Gateway</h1>", { status: 502 }) });
   expect(await rejects(gateway.connection("keyed", "k").status())).toMatchObject({ code: "http_error", status: 502, message: "<h1>Bad Gateway</h1>" });
 });
 
@@ -148,7 +148,7 @@ test("paths can't climb out of the proxy or the connection: raw, %2e%2e and %2E%
   await t.authorize("u1");
   await t.authorize("u2");
   const sent: string[] = [];
-  const oc = connectd({ url: "https://oc.test", apiKey: "secret", fetch: (i, init) => (sent.push(i), t.rt.fetch(new Request(i, init), t.w.platform)) });
+  const oc = connectd({ url: "https://oc.test", apiKey: TEST_KEY, fetch: (i, init) => (sent.push(i), t.rt.fetch(new Request(i, init), t.w.platform)) });
   const c = oc.connection("example", "u1");
   for (const p of ["../../../connections/example/u2/token", "%2e%2e/%2e%2e/%2e%2e/connections/example/u2/token", "%2E%2e/%2E%2E/u2/x", "a/../../x", "./.."])
     expect(await rejects(c.fetch(p, { method: "POST" }))).toMatchObject({ code: "bad_request", status: 400 });

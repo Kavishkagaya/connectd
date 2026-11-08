@@ -1,5 +1,6 @@
 import type { State, Transition } from "@kavishkagaya/connectd-connections";
 import { type Delivery, type Json, type Kernel, type Queue, QueueError, type Summary } from "@kavishkagaya/connectd-kernel";
+import { eventSecrets } from "./access.ts";
 import { Fail, type Hosted, message } from "./host.ts";
 import type { Extension } from "./runtime.ts";
 import { sign } from "./signature.ts";
@@ -114,7 +115,8 @@ function queueFault(e: unknown): never {
 }
 
 /**
- * Delivers `ConnectionEvent`s to `settings.events.url`; without `settings.events`, does nothing.
+ * Delivers `ConnectionEvent`s to `settings.events.url`, signed with the deployment's events secrets;
+ * without `settings.events`, does nothing.
  */
 export function events(): Extension {
   return {
@@ -129,10 +131,14 @@ export function events(): Extension {
         const e = { type: m.msg.type, at: m.msg.at, data: m.msg.data, seq: m.seq, id: m.id, connection } as ConnectionEvent;
         const body = JSON.stringify(e);
         const ts = Math.floor(h.k.now() / 1000);
+        // Signed with every live events secret (a rolled one's old secret too, in its grace period). None yet: it waits, parked.
+        const secrets = await eventSecrets(h.platform, h.settings.keys);
+        if (!secrets.length) return "no events secret: make one with `connectd keys create <name> --events` (or in the dashboard)";
+        const signature = (await Promise.all(secrets.map((s) => sign(s, e.id, ts, body)))).join(" ");
         try {
           const res = await h.platform.fetch(cfg.url, {
             method: "POST",
-            headers: { "content-type": "application/json", "webhook-id": e.id, "webhook-timestamp": String(ts), "webhook-signature": await sign(cfg.secret, e.id, ts, body) },
+            headers: { "content-type": "application/json", "webhook-id": e.id, "webhook-timestamp": String(ts), "webhook-signature": signature },
             body,
             // A followed 302 would turn the POST into a GET, ack it falsely and send signed headers elsewhere.
             redirect: "manual",

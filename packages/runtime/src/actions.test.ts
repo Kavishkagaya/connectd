@@ -4,6 +4,7 @@ import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { type ConnectionEvent, events, runtime } from "./index.ts";
+import { BEARER, seed } from "./testkit.ts";
 
 const MIN = 60_000;
 const key = (n: number) => btoa(String.fromCharCode(...new Uint8Array(32).fill(n)));
@@ -87,15 +88,16 @@ async function setup() {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { gh: { clientId: "cid", clientSecret: "cs" }, bare: null },
-    events: { url: "https://app.test/events", secret: `whsec_${key(3)}` },
+    events: { url: "https://app.test/events" },
   };
   const rt = runtime({ definitions: { gh, bare }, actions: { gh: { star, last, forget, sync, welcome }, bare: { ping, noApi } }, settings: async () => settings, extensions: [events()] });
   const w = memory(rt.program, { fetch: p.fetch });
+  await seed(w.platform, settings, `whsec_${key(3)}`);
   const req = async (path: string, body?: Json) => {
-    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method: "POST", headers: { authorization: "Bearer secret" }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.platform);
+    const res = await rt.fetch(new Request(`https://oc.test${path}`, { method: "POST", headers: { authorization: BEARER }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }), w.platform);
     return { status: res.status, body: (await res.json()) as any };
   };
   const login = async (id: string) => {

@@ -4,6 +4,7 @@ import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys, type Json } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
 import { proxy, runtime } from "./index.ts";
+import { BEARER, seed } from "./testkit.ts";
 
 const TOKEN = "https://example.test/token";
 const API = "https://api.example.test/v1";
@@ -41,16 +42,17 @@ async function setup(o: { expiresIn?: number; timeoutMs?: number } = {}) {
   const settings = {
     keys: await importKeys({ 1: key(1) }, 1),
     stateKey: await importHmacKey(key(9)),
-    apiKey: "secret",
+    admin: await importHmacKey(key(8)),
     redirectUri: "https://oc.test/callback",
     config: { example: { clientId: "cid", clientSecret: "cs" }, keyed: null, hooked: null },
   };
   const rt = runtime({ definitions: { example, keyed, hooked }, settings: async () => settings, extensions: [proxy({ timeoutMs: o.timeoutMs ?? 1000 })] });
   const w = memory(rt.program, { fetch: p.fetch });
+  await seed(w.platform, settings);
   let settleThrows = false;
   const call = (i: string, m: string, a: Json) => (settleThrows && m === "proxy.settle" ? Promise.reject(new Error("DO gone")) : w.call(i, m, a));
   const send = (method: string, path: string, init: RequestInit = {}) =>
-    rt.fetch(new Request(`https://oc.test${path}`, { method, ...init, headers: { authorization: "Bearer secret", ...init.headers } }), { ...w.platform, atoms: { ...w.platform.atoms, call } });
+    rt.fetch(new Request(`https://oc.test${path}`, { method, ...init, headers: { authorization: BEARER, ...init.headers } }), { ...w.platform, atoms: { ...w.platform.atoms, call } });
   const connect = async (id: string) => {
     const url = ((await (await send("POST", `/connections/example/${id}/connect`)).json()) as { url: string }).url;
     const back = p.approve(url);

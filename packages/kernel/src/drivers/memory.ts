@@ -1,16 +1,19 @@
 import {
+  type AccountRow,
   after,
   allPages,
   type Atom,
   type ConnectionRow,
   type Handler,
   type Json,
+  type KeyRow,
   type Level,
   LIMITS,
   type Limits,
   type Management,
   PAGE,
   page,
+  type PasskeyRow,
   type Platform,
   type Program,
   Unavailable,
@@ -274,6 +277,85 @@ export function memoryDb(): Management {
       },
       list,
       byExternal: (def, k, value) => allPages(list, { def, external: { key: k, value } }),
+    },
+    ...access(),
+  };
+}
+
+/** The keys, accounts, passkeys and nonces of `memoryDb`, as maps. */
+function access(): Pick<Management, "keys" | "accounts" | "passkeys" | "nonces"> {
+  const keys = new Map<string, KeyRow>();
+  const accounts = new Map<string, AccountRow>();
+  const passkeys = new Map<string, PasskeyRow>();
+  const nonces = new Map<string, number>();
+  const by = <T,>(f: (r: T) => [number, string]) => (a: T, b: T) => {
+    const [x, i] = f(a);
+    const [y, j] = f(b);
+    return x - y || (i < j ? -1 : i > j ? 1 : 0);
+  };
+  const live = (id: string) => {
+    const k = keys.get(id);
+    return k && k.revokedAt === null ? k : undefined;
+  };
+  const insert = <T,>(m: Map<string, T>, id: string, row: T) => (m.has(id) ? false : (m.set(id, structuredClone(row)), true));
+  return {
+    keys: {
+      create: async (r) => insert(keys, r.id, r),
+      get: async (id) => structuredClone(keys.get(id) ?? null),
+      list: async () => structuredClone([...keys.values()].sort(by((k) => [k.createdAt, k.id]))),
+      async roll(id, value, until, at) {
+        const k = live(id);
+        if (!k) return null;
+        Object.assign(k, { previous: until > at ? k.value : null, previousUntil: until > at ? until : null, value, rolledAt: at });
+        return structuredClone(k);
+      },
+      async revoke(id, at) {
+        const k = live(id);
+        if (!k) return null;
+        k.revokedAt = at;
+        return structuredClone(k);
+      },
+      async used(id, at) {
+        const k = keys.get(id);
+        if (k && (k.lastUsedAt === null || k.lastUsedAt < at)) k.lastUsedAt = at;
+      },
+    },
+    accounts: {
+      create: async (r) => insert(accounts, r.username, r),
+      get: async (u) => structuredClone(accounts.get(u) ?? null),
+      list: async () => structuredClone([...accounts.values()].sort(by((a) => [a.createdAt, a.username]))),
+      async password(u, hash) {
+        const a = accounts.get(u);
+        if (!a) return false;
+        a.password = hash;
+        return true;
+      },
+      async signOut(u) {
+        const a = accounts.get(u);
+        return a ? ++a.sessions : null;
+      },
+      async delete(u) {
+        for (const [id, p] of passkeys) if (p.username === u) passkeys.delete(id);
+        return accounts.delete(u);
+      },
+    },
+    passkeys: {
+      add: async (r) => insert(passkeys, r.id, r),
+      get: async (id) => structuredClone(passkeys.get(id) ?? null),
+      list: async (u) => structuredClone([...passkeys.values()].filter((p) => p.username === u).sort(by((p) => [p.createdAt, p.id]))),
+      async used(id, counter, at) {
+        const p = passkeys.get(id);
+        if (p) Object.assign(p, { counter, lastUsedAt: at });
+      },
+      delete: async (id) => passkeys.delete(id),
+    },
+    nonces: {
+      async claim(nonce, expiresAt, now) {
+        for (const [n, exp] of nonces) if (exp <= now) nonces.delete(n);
+        if (nonces.has(nonce)) return false;
+        nonces.set(nonce, expiresAt);
+        return true;
+      },
     },
   };
 }

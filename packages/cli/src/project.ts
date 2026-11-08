@@ -43,7 +43,7 @@ export type Project = {
   actions?: Record<string, Record<string, AnyAction>>;
   /** Connector config by definition id (client id/secret). Definitions with no callback step (`apiKey`) default to null. */
   config?: Record<string, unknown>;
-  /** Where lifecycle and webhook events are POSTed (#24); signed with `CONNECTD_EVENTS_SECRET`. */
+  /** Where lifecycle and webhook events are POSTed (#24), signed with the deployment's events secrets (`connectd keys create <name> --events`). */
   events?: { url: string };
   /** Exact origins the frontend connect UI runs on (#29). */
   sessions?: { origins: string[] };
@@ -74,8 +74,8 @@ export type Config = Project | ((env: Env) => Project);
 
 export const defineConfig = <T extends Config>(c: T) => c;
 
-export { ENV, generateKeys } from "./keys.ts";
-export type { Adapter, DeployContext, Deployed, Target } from "./target.ts";
+export { DEV_ENV, deploymentKeys, derive, ENV, isDerived, newRootKey } from "./keys.ts";
+export type { Adapter, Choice, DeployContext, Deployed, Prompts, SetupContext, Target } from "./target.ts";
 
 /** One connection folder, as the generated entry passes it: the folder's name and its files' default exports. */
 export type Folder = { id: string; file: string; connection: unknown; actions: unknown };
@@ -154,11 +154,11 @@ export function resolve(config: Config, env: Env): Resolved {
   return { ...p, config: { ...p.config, ...own }, registry, missing, envNames: [...names].filter((n) => !n.startsWith("CONNECTD_")).sort() };
 }
 
-/** What the runtime gets of the env: the names the project reads, and `CONNECTD_*` (keys, URL, API key, events secret). */
+/** What the runtime gets of the env: the names the project reads, and `CONNECTD_*` (its keys and URL). Never the root key. */
 export const workerEnv =
   (read: EnvSource, names: string[]): EnvSource =>
   (n) =>
-    n.startsWith("CONNECTD_") || names.includes(n) ? read(n) : undefined;
+    n !== ENV.root && (n.startsWith("CONNECTD_") || names.includes(n)) ? read(n) : undefined;
 
 /** Definitions that need connector config and have none (they answer `not_configured`), or lack env names they read. */
 export const unconfigured = (p: Project & { missing?: Record<string, string[]> }) =>
@@ -190,11 +190,11 @@ export async function settings(p: Project, env: EnvSource): Promise<Settings> {
   return {
     keys: await importKeys(keys, Math.max(...versions)),
     stateKey: await importHmacKey(need(env, ENV.state)),
-    apiKey: need(env, ENV.apiKey),
+    admin: await importHmacKey(need(env, ENV.admin)),
     redirectUri: `${url}/callback`,
     config: { ...config, ...p.config },
     webhooks: { url: `${url}/webhooks`, key: await importHmacKey(need(env, ENV.webhooks)) },
-    ...(p.events ? { events: { url: p.events.url, secret: need(env, ENV.events) } } : {}),
+    ...(p.events ? { events: { url: p.events.url } } : {}),
     ...(p.sessions ? { sessions: { key: await importHmacKey(need(env, ENV.sessions)), origins: p.sessions.origins } } : {}),
   };
 }

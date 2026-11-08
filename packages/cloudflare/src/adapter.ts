@@ -1,9 +1,9 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve as resolvePath } from "node:path";
-import type { DeployContext, Deployed, Env } from "@kavishkagaya/connectd";
-import { ENV, generateKeys } from "@kavishkagaya/connectd/keys";
+import type { DeployContext, Deployed, Env, SetupContext } from "@kavishkagaya/connectd";
+import { ENV } from "@kavishkagaya/connectd/keys";
 import { workdir } from "@kavishkagaya/connectd/workdir";
 import { type Generated, generate, publicUrl, workerName } from "./generate.ts";
 import type { CloudflareOptions } from "./index.ts";
@@ -16,19 +16,68 @@ import type { CloudflareOptions } from "./index.ts";
  * and nowhere else.
  */
 
-/** Keys only the Worker holds: generated here, never read from a file, never printed. */
-const GENERATED = [ENV.state, ENV.sessions, ENV.webhooks] as const;
-/** The generated key each `--rotate` name replaces. */
-const ROTATES: Record<string, string> = { [ENV.state]: "state", [ENV.sessions]: "sessions" };
 /** The JSON array in a wrangler command's stdout (anything printed before it is skipped). */
 const json = <T>(out: string) => JSON.parse(out.slice(Math.max(0, out.search(/^\s*\[/m)))) as T;
 
 export const NO_WRANGLER = `connectd deploy runs wrangler, which isn't installed here:
-  bun add -d wrangler     (or npm i -D wrangler)
-  bunx wrangler login     (or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)`;
+  npm i -D wrangler       (or bun add -d, pnpm add -D, yarn add -D)
+  npx wrangler login      (or set CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID)`;
 
-/** Cloudflare's "no such Worker" (API error 10007), the only failure of `secret list` that means a new Worker. */
-const NEW_WORKER = /\[code: 10007\]|does not exist on your account/;
+export const NOT_LOGGED_IN = `wrangler isn't logged in to Cloudflare:
+  npx wrangler login      (opens your browser; --browser=false prints the link)
+  in CI: set CLOUDFLARE_API_TOKEN (Workers Scripts, D1: edit) and CLOUDFLARE_ACCOUNT_ID`;
+
+/** wrangler: `bin` (tests), CONNECTD_WRANGLER, the project's own, else one on PATH; null when there's none. */
+function findWrangler(o: Pick<SetupContext, "dir" | "env" | "bin">): string | null {
+  if (o.bin) return o.bin;
+  if (o.env.CONNECTD_WRANGLER) return o.env.CONNECTD_WRANGLER;
+  const own = join(o.dir, "node_modules", ".bin", process.platform === "win32" ? "wrangler.cmd" : "wrangler");
+  if (existsSync(own)) return own;
+  // On the PATH the deploy runs with (its env), as whoami and deploy will run it.
+  return spawnSync("wrangler", ["--version"], { stdio: "ignore", env: o.env as NodeJS.ProcessEnv, shell: process.platform === "win32" }).error ? null : "wrangler";
+}
+
+/** Who wrangler is signed in as, or null. */
+function whoami(bin: string, o: Pick<SetupContext, "dir" | "env">): string | null {
+  const r = spawnSync(bin, ["whoami"], { cwd: o.dir, env: o.env as NodeJS.ProcessEnv, encoding: "utf8", shell: process.platform === "win32" });
+  if ((r.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") throw new Error(NO_WRANGLER);
+  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  if (r.status !== 0 || !/You are logged in/i.test(out)) return null;
+  return /associated with the email (\S+?)\.?\s/.exec(out)?.[1] ?? (/API Token/i.test(out) ? "an API token" : "your account");
+}
+
+/**
+ * wrangler installed and signed in (`connectd init` after installing the target, and every deploy).
+ * At a terminal it offers the install and `wrangler login`; elsewhere (CI) it says what to do.
+ * Returns the binary to run.
+ */
+async function ready(o: SetupContext): Promise<string> {
+  let bin = findWrangler(o);
+  if (!bin) {
+    if (!o.prompts || !(await o.prompts.confirm("Cloudflare deploys go through wrangler, which isn't installed in this project. Install it now?"))) throw new Error(NO_WRANGLER);
+    if (!o.install(["wrangler"]) || !(bin = findWrangler(o))) throw new Error(`installing wrangler didn't work\n${NO_WRANGLER}`);
+  }
+  let who = whoami(bin, o);
+  if (!who) {
+    if (o.env.CLOUDFLARE_API_TOKEN) throw new Error(`wrangler can't sign in with CLOUDFLARE_API_TOKEN: check the token (\`npx wrangler whoami\` says why)`);
+    if (!o.prompts || !(await o.prompts.confirm("wrangler isn't logged in to Cloudflare. Log in now (opens your browser)?"))) throw new Error(NOT_LOGGED_IN);
+    spawnSync(bin, ["login"], { cwd: o.dir, env: o.env as NodeJS.ProcessEnv, stdio: "inherit", shell: process.platform === "win32" });
+    if (!(who = whoami(bin, o))) throw new Error(NOT_LOGGED_IN);
+  }
+  o.log(`  cloudflare   wrangler, logged in as ${who}`);
+  return bin;
+}
+
+/** The target's setup: wrangler installed and logged in. */
+export async function setup(o: SetupContext): Promise<void> {
+  await ready(o);
+}
+
+/**
+ * Cloudflare's "no such Worker", the only failure of `secret list` that means a new Worker: API
+ * error 10007 (older wranglers print it), or `Worker "<name>" not found.` (wrangler 4.15x).
+ */
+const newWorker = (name: string, message: string) => /\[code: 10007\]|does not exist on your account/.test(message) || message.includes(`Worker "${name}" not found`);
 
 type State = { name?: string; url?: string; databaseId?: string };
 
@@ -65,13 +114,13 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
     return { name, url, dryRun: true as const, generated: g };
   }
 
-  const bin = o.bin ?? env.CONNECTD_WRANGLER ?? (existsSync(join(o.dir, "node_modules", ".bin", "wrangler")) ? join(o.dir, "node_modules", ".bin", "wrangler") : "wrangler");
+  const bin = await ready(o);
   const w = (args: string[]) => wrangler(bin, args, o.dir, env, log);
 
-  // What the Worker already has: secrets are never rotated or regenerated unless asked.
-  // Only Cloudflare's own "no such Worker" counts as new: anything else misread here would put fresh keys over live ones.
+  // What the Worker already has: how many encryption key versions it holds.
+  // Only Cloudflare's own "no such Worker" counts as new.
   const list = await w(["secret", "list", "--name", name, "--format", "json"]).catch((e: Error) => {
-    if (NEW_WORKER.test(e.message)) return null;
+    if (newWorker(name, e.message)) return null;
     throw e;
   });
   if (list !== null && !url)
@@ -80,28 +129,21 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
     );
   const have = new Set(list === null ? [] : json<{ name: string }[]>(list).map((s) => s.name));
 
-  const fresh = generateKeys();
-  const push: Record<string, string> = { ...secrets };
+  // The deployment's keys derive from the root key (#86). Only the ones the Worker doesn't have yet
+  // are sent: a key it holds is never replaced, so a redeploy (even from a wrong root key) can't
+  // strand what was sealed under it. --rotate key adds one encryption key version; older ones stay.
+  // ponytail: the version count is read from the Worker's secret names; a deleted Worker forgets it
+  // (V1 comes back): pass --rotate key once per lost version to restore them.
   const versions = [...have].flatMap((k) => (k.startsWith(ENV.key) ? [Number(k.slice(ENV.key.length))] : [])).filter(Number.isInteger);
-  if (!versions.length) push[`${ENV.key}1`] = fresh[`${ENV.key}1`] as string;
-  else if (rotate.includes("key")) push[`${ENV.key}${Math.max(...versions) + 1}`] = fresh[`${ENV.key}1`] as string;
-  for (const k of GENERATED) if (!have.has(k) || rotate.includes(ROTATES[k] ?? "")) push[k] = fresh[k] as string;
-  // Never in CI: there the key comes from a CI secret (the CLI checked it's in `secrets`).
-  const newApiKey = !o.ci && !secrets[ENV.apiKey] && (!have.has(ENV.apiKey) || rotate.includes("api-key")) ? (fresh[ENV.apiKey] as string) : undefined;
-  if (newApiKey) push[ENV.apiKey] = newApiKey;
-  // The events secret, likewise: generated once per environment unless the env file sets it (CI always does).
-  const newEventsSecret = project.events && !o.ci && !secrets[ENV.events] && (!have.has(ENV.events) || rotate.includes("events")) ? (fresh[ENV.events] as string) : undefined;
-  if (newEventsSecret) push[ENV.events] = newEventsSecret;
+  const top = Math.max(1, ...versions) + (rotate.includes("key") && versions.length ? 1 : 0);
+  const derived = Object.entries(await o.keys(top)).filter(([k]) => !have.has(k));
+  const push: Record<string, string> = { ...secrets, ...Object.fromEntries(derived) };
 
   // The index database: found by name, so a deploy from another machine finds the same one.
   const find = async () => json<{ uuid: string; name: string }[]>(await w(["d1", "list", "--json"])).find((d) => d.name === db)?.uuid;
   let databaseId = await find();
-  // A database without its Worker: the Worker was deleted (its keys with it), or an earlier deploy
-  // stopped in between. Either way fresh keys can't open anything sealed before; say so first.
-  if (databaseId && list === null && !o.newKeys)
-    throw new Error(
-      `D1 database ${db} exists but Worker ${name} doesn't. Fresh keys can't open credentials sealed under the old ones. If an earlier deploy stopped before creating the Worker, or you mean to start over, re-run with --new-keys; to keep old connections, restore the Worker's secrets first.`,
-    );
+  // A database without its Worker (deleted, or an earlier deploy stopped in between): the derived keys come back with it.
+  if (databaseId && list === null) log(`  D1 database ${db} exists without Worker ${name}: deploying it again with the same derived keys`);
   if (!databaseId) {
     await w(["d1", "create", db]);
     databaseId = await find();
@@ -131,12 +173,6 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
       args.push("--secrets-file", join(tmp, "secrets.json"));
     }
     out = await wrangler(bin, args, o.dir, env, log, (p) => (child = p));
-  } catch (e) {
-    const hint = newApiKey
-      ? `\nThe new API key was not shown. If the deploy went through anyway (wrangler secret list --name ${name} shows ${ENV.apiKey}), re-run with --rotate api-key to get one you can see.`
-      : "";
-    const hint2 = newEventsSecret ? `\nThe new events secret was not shown either: if the deploy went through, --rotate events makes one you can see.` : "";
-    throw new Error(`${(e as Error).message}${hint}${hint2}`);
   } finally {
     process.off("SIGINT", abort);
     process.off("SIGTERM", abort);
@@ -160,11 +196,11 @@ export async function deploy(o: DeployContext): Promise<CloudflareDeployed> {
       `  URL           ${url}`,
       `  callback URL  ${url}/callback   (register this redirect URI with each OAuth provider)`,
       `  webhooks      ${url}/webhooks/:def[/:id]`,
-      ...(project.dashboard === false ? [] : [`  dashboard     ${url}/dashboard   (sign in with the API key)`]),
-      `  secrets set   ${Object.keys(push).sort().join(", ") || "none (all present)"}`,
+      ...(project.dashboard === false ? [] : [`  dashboard     ${url}/dashboard`]),
+      `  secrets set   ${Object.keys(push).sort().join(", ")}`,
     ].join("\n"),
   );
-  return { name, url, dryRun: false as const, generated: g, pushed: Object.keys(push), apiKey: newApiKey, eventsSecret: newEventsSecret };
+  return { name, url, dryRun: false as const, generated: g, pushed: Object.keys(push) };
 }
 
 /** Run wrangler; resolves to its stdout, rejects with stdout + stderr on a non-zero exit. Output is echoed except listings (it never holds a secret: those only go in through a file). */

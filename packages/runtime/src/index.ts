@@ -6,3 +6,5 @@ export * from "./proxy.ts";
 export * from "./events.ts";
 export * from "./webhooks.ts";
 export * from "./session.ts";
+export * from "./access.ts";
+export * from "./admin.ts";

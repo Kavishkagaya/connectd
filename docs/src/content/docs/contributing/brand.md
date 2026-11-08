@@ -2,7 +2,7 @@
 title: Brand and palette
 description: The connectd name, logo, colours and type, for the docs, the dashboard, posts and anything else that carries the name.
 sidebar:
-  order: 4
+  order: 5
 ---
 
 <div class="oc-brand-hero">

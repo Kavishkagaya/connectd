@@ -13,7 +13,9 @@ import { apiKey, defineConnection, oauth2 } from "@kavishkagaya/connectd-connect
 import { fakeOAuth } from "@kavishkagaya/connectd-connections/testing";
 import { importHmacKey, importKeys } from "@kavishkagaya/connectd-kernel";
 import { memory } from "@kavishkagaya/connectd-kernel/memory";
-import { runtime, sessions } from "@kavishkagaya/connectd-runtime";
+import { runtime, sessions, importKey } from "@kavishkagaya/connectd-runtime";
+
+const TEST_KEY = "ock_000000000000_secret";
 
 const RT = "http://localhost:8788",
   APP = "http://127.0.0.1:5173";
@@ -36,13 +38,14 @@ const p = fakeOAuth({
 const settings = {
   keys: await importKeys({ 1: key(1) }, 1),
   stateKey: await importHmacKey(key(9)),
-  apiKey: "secret",
+  admin: await importHmacKey(key(8)),
   redirectUri: `${RT}/callback`,
   config: { example: { clientId: "cid" }, coopy: { clientId: "cid" }, keyed: null },
   sessions: { key: await importHmacKey(key(5)), origins: [APP] },
 };
 const rt = runtime({ definitions: { example, coopy, keyed }, settings: async () => settings, extensions: [sessions()] });
 const w = memory(rt.program, { fetch: p.fetch, clock: Date.now });
+await importKey(w.platform, settings.keys, "api", "test", TEST_KEY);
 const rtServer = Bun.serve({
   port: 8788,
   hostname: "localhost",
@@ -71,7 +74,7 @@ const appServer = Bun.serve({
       const r = await rt.fetch(
         new Request(`${RT}/connections/${q.get("def")}/${q.get("id")}/session`, {
           method: "POST",
-          headers: { authorization: "Bearer secret" },
+          headers: { authorization: `Bearer ${TEST_KEY}` },
           body: JSON.stringify(args),
         }),
         w.platform,
@@ -85,7 +88,7 @@ const appServer = Bun.serve({
   },
 });
 const state = async (def: string, id: string) =>
-  (await (await rt.fetch(new Request(`${RT}/connections/${def}/${id}`, { headers: { authorization: "Bearer secret" } }), w.platform)).json()).state;
+  (await (await rt.fetch(new Request(`${RT}/connections/${def}/${id}`, { headers: { authorization: `Bearer ${TEST_KEY}` } }), w.platform)).json()).state;
 
 const { chromium } = await import(process.env.PLAYWRIGHT ?? "playwright");
 const browser = await chromium.launch();

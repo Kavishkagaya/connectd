@@ -1,22 +1,26 @@
 import type { ActionSpec, StandardSchemaV1 } from "@kavishkagaya/connectd-connections";
-import type { Json } from "@kavishkagaya/connectd-kernel";
-import { type Api, authorized, type EventsStatus, type Extension, Fail, instanceOf, type Reply, type Route } from "@kavishkagaya/connectd-runtime";
+import { type Json, randomId } from "@kavishkagaya/connectd-kernel";
+import { type Api, type EventsStatus, type Extension, Fail, instanceOf, type Reply, type Route, session } from "@kavishkagaya/connectd-runtime";
+import { auth } from "./accounts.ts";
 import { css, js, version } from "./assets.ts";
 
 /**
  * The self-host dashboard (#32): a small UI at `/dashboard` served by the runtime's own Worker, so a
  * deployment has it with nothing else to deploy. The page and its script are public (nothing secret
- * in them); everything it shows comes from API-key routes, and the browser holds the API key:
+ * in them); everything it shows needs a session (#86): an HttpOnly cookie from a CLI sign-in link or
+ * an account's passkey or password (accounts.ts). The browser never holds a key.
  *
- *   GET /dashboard                               the page (strict CSP: same-origin script and style only)
- *   GET /dashboard/app.js, /dashboard/app.css    the UI, built into assets.ts (`bun run build`)
- *   GET /dashboard/api/overview                  deployment + definitions: configured, URLs to register  (API key)
- *   GET /dashboard/api/connections/:def/:id      one connection: status, external ids, events, webhooks, actions, subscriptions   (API key)
- *   GET /dashboard/api/failures?def=             recent failed scheduled actions across connections   (API key)
+ *   GET /dashboard                               the page (strict CSP: same-origin script; style also by nonce, for the UI library)
+ *   GET /dashboard/app.js, /dashboard/app.css    the UI (React + shadcn, ui/), built into assets.ts (`bun run build`)
+ *   /dashboard/api/auth/...                      signing in, accounts, passkeys, invites (accounts.ts)
+ *   GET /dashboard/api/overview                  deployment + definitions: configured, URLs to register  (session)
+ *   GET /dashboard/api/connections/:def/:id      one connection: status, external ids, events, webhooks, actions, subscriptions   (session)
+ *   GET /dashboard/api/failures?def=             recent failed scheduled actions across connections   (session)
  *
  * Lists and actions use the runtime's own routes (`GET /connections?…`, `POST /connections/:def/:id/revoke`,
- * `index.sync`, `events.flush`, `events.redeliver`, `connect`, `actions/<name>`, `webhooks.unsubscribe`). Nothing it serves holds a secret: no
- * credential, token, config value, key or webhook secret.
+ * `index.sync`, `events.flush`, `events.redeliver`, `connect`, `actions/<name>`, `webhooks.unsubscribe`)
+ * and keys `/admin/keys`, which take the session too. Nothing it serves holds a secret: no
+ * credential, token, config value or webhook secret; a key's secret only once, to whoever made it.
  */
 
 /** One action (#54) as the dashboard shows it: its trigger, and its input's JSON Schema when the validator gives one. */
@@ -193,17 +197,25 @@ async function failures(api: Api, def: string | null): Promise<Failures> {
   return { failures: out, scanned: page.connections.length, more: page.cursor !== null };
 }
 
-/** Same-origin script and style only, no inline anything, no framing, no form posts, no referrer. */
-export const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/**
+ * Same-origin script only, no framing, no form posts, no referrer. Style: same-origin, and the
+ * `<style>` tags the UI library adds at runtime (a dialog's scroll lock) when they carry this page's
+ * nonce. Never inline script.
+ */
+export const csp = (nonce: string) =>
+  `default-src 'none'; script-src 'self'; style-src 'self' 'nonce-${nonce}'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
 const SAFE = { "x-content-type-options": "nosniff", "referrer-policy": "no-referrer" };
 
-const page = `<!doctype html>
+// The nonce goes to the UI in a meta tag; the UI hands it to the library's style injection.
+const page = (nonce: string) => `<!doctype html>
 <html lang="en">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="csp-nonce" content="${nonce}">
+<link rel="icon" href="data:,">
 <title>connectd</title>
 <link rel="stylesheet" href="/dashboard/app.css?v=${version}">
-<main id="app"><noscript>The dashboard needs JavaScript.</noscript></main>
+<div id="app"><noscript>The dashboard needs JavaScript.</noscript></div>
 <script type="module" src="/dashboard/app.js?v=${version}"></script>
 </html>
 `;
@@ -218,7 +230,8 @@ const route: Route = {
   public: true,
   async fetch(req, api, [part, ...rest]) {
     if (part === "api") {
-      if (!(await authorized(req, api.settings.apiKey))) throw new Fail("unauthorized", 401, "missing or wrong API key");
+      if (rest[0] === "auth") return auth(req, api, rest.slice(1));
+      if (!(await session(api.platform, api.settings.admin, req))) throw new Fail("unauthorized", 401, "not signed in");
       if (req.method !== "GET") throw new Fail("method_not_allowed", 405, "GET only");
       const [what, def, id, ...more] = rest;
       if (what === "overview" && !def) return Response.json(overview(api), { headers: { "cache-control": "no-store" } });
@@ -231,11 +244,14 @@ const route: Route = {
     if (part === "app.js") return asset(req, js, "text/javascript; charset=utf-8");
     if (part === "app.css") return asset(req, css, "text/css; charset=utf-8");
     if (part !== undefined) throw new Fail("not_found", 404, "no such route");
-    return new Response(req.method === "HEAD" ? null : page, {
-      headers: { ...SAFE, "content-type": "text/html; charset=utf-8", "content-security-policy": CSP, "cache-control": "no-store", "cross-origin-opener-policy": "same-origin" },
+    const nonce = randomId(16);
+    return new Response(req.method === "HEAD" ? null : page(nonce), {
+      headers: { ...SAFE, "content-type": "text/html; charset=utf-8", "content-security-policy": csp(nonce), "cache-control": "no-store", "cross-origin-opener-policy": "same-origin" },
     });
   },
 };
 
-/** `extensions: [dashboard()]`: the UI at `/dashboard`. Sign in with the deployment's API key. */
+/** `extensions: [dashboard()]`: the UI at `/dashboard`. Sign in with `connectd dashboard`, then an account. */
 export const dashboard = (): Extension => ({ routes: { dashboard: route } });
+
+export type { AccountInfo, Me, PasskeyInfo } from "./accounts.ts";
