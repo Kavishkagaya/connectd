@@ -26,7 +26,7 @@ Every connection runs as an isolated **instance**: a tiny actor with its own sto
 
 ```mermaid
 flowchart TB
-  subgraph inst["instance conn:github:alice"]
+  subgraph inst["conn:github:alice"]
     direction TB
     R[("record<br/>state + sealed credential")]
     T1["⏰ refresh timer"]

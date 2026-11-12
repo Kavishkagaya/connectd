@@ -1,4 +1,3 @@
-import { satteri } from "@astrojs/markdown-satteri";
 import starlight from "@astrojs/starlight";
 import { defineConfig } from "astro/config";
 import mermaid from "astro-mermaid";
@@ -37,6 +36,22 @@ const diagramsOutOfSearch = {
   code: (node) => (node.lang === "mermaid" ? { type: "html", value: `<pre class="mermaid" data-pagefind-ignore>${esc(node.value)}</pre>` } : undefined),
 };
 
+/**
+ * Adds the two Markdown steps above to Astro's own (Sätteri) processor, the way Starlight and Expressive
+ * Code register theirs. Listed after astro-mermaid (which swaps in its own processor) so it sees that one.
+ */
+const markdownSteps = {
+  name: "connectd-markdown-steps",
+  hooks: {
+    "astro:config:setup": ({ config }) => {
+      const p = config.markdown?.processor;
+      if (p?.name !== "satteri" || !Array.isArray(p.options?.mdastPlugins)) throw new Error("connectd docs: expected Astro's Sätteri Markdown processor");
+      if (!p.options.mdastPlugins.includes(diagramsOutOfSearch)) p.options.mdastPlugins.unshift(diagramsOutOfSearch); // before astro-mermaid's own step
+      if (!p.options.mdastPlugins.includes(baseLinks)) p.options.mdastPlugins.push(baseLinks);
+    },
+  },
+};
+
 // GitHub Pages serves a project site under /<repo>/. On a custom domain: set `site` to it and BASE to "".
 const BASE = "/connectd";
 
@@ -56,8 +71,6 @@ const baseLinks = {
 export default defineConfig({
   site: "https://kavishkagaya.github.io",
   base: BASE || undefined,
-  // Astro 7's Markdown engine: plugins go on the processor (markdown.remarkPlugins no longer runs).
-  markdown: { processor: satteri({ mdastPlugins: [diagramsOutOfSearch, baseLinks] }) },
   integrations: [
     // Before starlight, so its code blocks don't swallow ```mermaid.
     // `base` theme in both modes: the colours come from the site's tokens (custom.css), so no re-render on theme change.
@@ -73,6 +86,7 @@ export default defineConfig({
         state: { padding: 10 },
       },
     }),
+    markdownSteps,
     starlight({
       title: "connectd",
       description: "OAuth connections for your app: tokens, refresh, webhooks, events and rate limits, run for you.",
